@@ -3,6 +3,8 @@
 # 每個插座在 Home Assistant 裡的名稱用簡短英文（例如 tv、pc），
 # 這樣開關是 switch.tv，功率是 sensor.tv_current_consumption，
 # 累計用電是 sensor.tv_total_consumption。下面的範本都靠這個規則找感測器。
+# 沒有用電計量的插座（HS103、HS105、HS107、KP303）只有開關，
+# 所以只放進 power_plugs，不放進 power_plugs_metered。
 
 homeassistant:
   customize:
@@ -20,12 +22,21 @@ homeassistant:
       friendly_name: 本月電費（估算）
 
 group:
-  # 要管理的插座：新增插座時加在這裡
+  # 所有要管理的插座：「全部關閉」用這份清單
   power_plugs:
     name: 電源插座
     entities:
       - switch.tv # 範例：P110
       - switch.pc # 範例：KP115
+      - switch.lamp # 範例：HS103（沒有計量）
+      # 多孔插座（HS107、KP303）列每一孔，不要列整排的 switch.desk
+      - switch.desk_speaker # 範例：KP303 的一孔
+  # 有用電計量的插座（P110、KP115）：總功率、用電、電費、待機和功率過高都只看這份
+  power_plugs_metered:
+    name: 計量插座
+    entities:
+      - switch.tv
+      - switch.pc
   # 不能斷電的插座（冰箱、網路設備…）：「全部關閉」和待機關閉都會跳過
   power_plugs_keep_on:
     name: 常開插座
@@ -70,7 +81,7 @@ template:
         state_class: measurement
         state: >
           {% set ns = namespace(total=0) %}
-          {% for s in expand('group.power_plugs') %}
+          {% for s in expand('group.power_plugs_metered') %}
             {% set w = states('sensor.' ~ s.object_id ~ '_current_consumption') %}
             {% if is_number(w) %}{% set ns.total = ns.total + w | float %}{% endif %}
           {% endfor %}
@@ -86,7 +97,7 @@ template:
         state_class: total_increasing
         availability: >
           {% set ns = namespace(ok=true) %}
-          {% for s in expand('group.power_plugs') %}
+          {% for s in expand('group.power_plugs_metered') %}
             {% if not is_number(states('sensor.' ~ s.object_id ~ '_total_consumption')) %}
               {% set ns.ok = false %}
             {% endif %}
@@ -94,7 +105,7 @@ template:
           {{ ns.ok }}
         state: >
           {% set ns = namespace(total=0) %}
-          {% for s in expand('group.power_plugs') %}
+          {% for s in expand('group.power_plugs_metered') %}
             {% set ns.total = ns.total + states('sensor.' ~ s.object_id ~ '_total_consumption') | float(0) %}
           {% endfor %}
           {{ ns.total | round(3) }}
@@ -160,7 +171,7 @@ script:
             {% set keep = expand('group.power_plugs_keep_on') | map(attribute='entity_id') | list %}
             {% set limit = states('input_number.standby_threshold') | float(5) %}
             {% set ns = namespace(ids=[]) %}
-            {% for s in expand('group.power_plugs') if s.state == 'on' and s.entity_id not in keep %}
+            {% for s in expand('group.power_plugs_metered') if s.state == 'on' and s.entity_id not in keep %}
               {% set w = states('sensor.' ~ s.object_id ~ '_current_consumption') | float(-1) %}
               {% if 0.2 < w < limit %}{% set ns.ids = ns.ids + [s.entity_id] %}{% endif %}
             {% endfor %}

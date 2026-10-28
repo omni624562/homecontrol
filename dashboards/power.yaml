@@ -1,7 +1,8 @@
 # 手機用電儀表板
 # 用法：設定 → 儀表板 → 新增儀表板 →「從頭開始」→ 打開它 → 右上角 ⋮ → 編輯儀表板
 #      → ⋮ →「原始設定編輯器」→ 把整份貼上、儲存
-# 新增插座時，在「插座」和兩張圖表裡各加一組（照 tv、pc 的樣子）
+# 新增插座時，在「插座」和兩張圖表裡各加一組（照 tv、pc 的樣子）；
+# 沒有計量的插座只在「插座」加開關（照 lamp 的樣子）
 
 title: 用電
 views:
@@ -71,6 +72,17 @@ views:
           - type: tile
             entity: sensor.pc_current_consumption
             name: 電腦 功率
+          # 沒有計量的插座：只有開關，兩個排一列
+          - type: tile
+            entity: switch.lamp
+            name: 檯燈
+            icon_tap_action:
+              action: toggle
+          - type: tile
+            entity: switch.desk_speaker
+            name: 喇叭
+            icon_tap_action:
+              action: toggle
 
       - type: grid
         cards:

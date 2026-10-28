@@ -14,7 +14,7 @@ automation:
             {% set keep = expand('group.power_plugs_keep_on') | map(attribute='entity_id') | list %}
             {% set limit = states('input_number.standby_threshold') | float(5) %}
             {% set ns = namespace(items=[]) %}
-            {% for s in expand('group.power_plugs') if s.state == 'on' and s.entity_id not in keep %}
+            {% for s in expand('group.power_plugs_metered') if s.state == 'on' and s.entity_id not in keep %}
               {% set w = states('sensor.' ~ s.object_id ~ '_current_consumption') | float(-1) %}
               {% if 0.2 < w < limit %}{% set ns.items = ns.items + [s.name ~ ' ' ~ w ~ ' W'] %}{% endif %}
             {% endfor %}
@@ -49,7 +49,7 @@ automation:
         value_template: >
           {% set limit = states('input_number.overload_threshold') | float(1500) %}
           {% set ns = namespace(hit=false) %}
-          {% for s in expand('group.power_plugs') %}
+          {% for s in expand('group.power_plugs_metered') %}
             {% if states('sensor.' ~ s.object_id ~ '_current_consumption') | float(0) > limit %}
               {% set ns.hit = true %}
             {% endif %}
@@ -61,7 +61,7 @@ automation:
           limit: "{{ states('input_number.overload_threshold') | float(1500) | int }}"
           over: >
             {% set ns = namespace(items=[]) %}
-            {% for s in expand('group.power_plugs') %}
+            {% for s in expand('group.power_plugs_metered') %}
               {% set w = states('sensor.' ~ s.object_id ~ '_current_consumption') | float(0) %}
               {% if w > limit | float %}{% set ns.items = ns.items + [s.name ~ ' ' ~ w | round(0) | int ~ ' W'] %}{% endif %}
             {% endfor %}
