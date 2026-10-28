@@ -1,0 +1,81 @@
+# 插座用電的自動化：睡前待機提醒（通知上可一鍵關閉）、功率過高警告
+# 插座清單和門檻都在 power.yaml，這裡不用跟著改
+
+automation:
+  - id: power_standby_reminder
+    alias: 用電：睡前待機提醒
+    description: 每天 23:00 列出還在待機的插座，通知上按「全部關閉」就關掉
+    triggers:
+      - trigger: time
+        at: "23:00:00"
+    actions:
+      - variables:
+          standby: >
+            {% set keep = expand('group.power_plugs_keep_on') | map(attribute='entity_id') | list %}
+            {% set limit = states('input_number.standby_threshold') | float(5) %}
+            {% set ns = namespace(items=[]) %}
+            {% for s in expand('group.power_plugs') if s.state == 'on' and s.entity_id not in keep %}
+              {% set w = states('sensor.' ~ s.object_id ~ '_current_consumption') | float(-1) %}
+              {% if 0.2 < w < limit %}{% set ns.items = ns.items + [s.name ~ ' ' ~ w ~ ' W'] %}{% endif %}
+            {% endfor %}
+            {{ ns.items }}
+      - condition: template
+        value_template: "{{ standby | count > 0 }}"
+      - action: script.power_notify
+        data:
+          title: 有插座在待機
+          message: "{{ standby | join('、') }}"
+          data:
+            tag: power_standby
+            actions:
+              - action: PLUGS_STANDBY_OFF
+                title: 全部關閉
+
+  - id: power_standby_off_action
+    alias: 用電：通知按下「全部關閉」
+    triggers:
+      - trigger: event
+        event_type: mobile_app_notification_action
+        event_data:
+          action: PLUGS_STANDBY_OFF
+    actions:
+      - action: script.plugs_standby_off
+
+  - id: power_overload_alert
+    alias: 用電：功率過高警告
+    description: 任何一個插座超過功率過高門檻持續 1 分鐘就通知
+    triggers:
+      - trigger: template
+        value_template: >
+          {% set limit = states('input_number.overload_threshold') | float(1500) %}
+          {% set ns = namespace(hit=false) %}
+          {% for s in expand('group.power_plugs') %}
+            {% if states('sensor.' ~ s.object_id ~ '_current_consumption') | float(0) > limit %}
+              {% set ns.hit = true %}
+            {% endif %}
+          {% endfor %}
+          {{ ns.hit }}
+        for: "00:01:00"
+    actions:
+      - variables:
+          limit: "{{ states('input_number.overload_threshold') | float(1500) | int }}"
+          over: >
+            {% set ns = namespace(items=[]) %}
+            {% for s in expand('group.power_plugs') %}
+              {% set w = states('sensor.' ~ s.object_id ~ '_current_consumption') | float(0) %}
+              {% if w > limit | float %}{% set ns.items = ns.items + [s.name ~ ' ' ~ w | round(0) | int ~ ' W'] %}{% endif %}
+            {% endfor %}
+            {{ ns.items }}
+      - condition: template
+        value_template: "{{ over | count > 0 }}"
+      - action: script.power_notify
+        data:
+          title: 插座功率過高
+          message: "{{ over | join('、') }}（門檻 {{ limit }} W）"
+          data:
+            tag: power_overload
+            # Android 立刻送達、iOS 專注模式下也會顯示
+            priority: high
+            ttl: 0
+            push:
+              interruption-level: time-sensitive

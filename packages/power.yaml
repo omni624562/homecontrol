@@ -1,0 +1,191 @@
+# 插座用電：插座清單、電價與門檻、總功率、今日／本月用電與電費、全部關閉
+#
+# 每個插座在 Home Assistant 裡的名稱用簡短英文（例如 tv、pc），
+# 這樣開關是 switch.tv，功率是 sensor.tv_current_consumption，
+# 累計用電是 sensor.tv_total_consumption。下面的範本都靠這個規則找感測器。
+
+homeassistant:
+  customize:
+    sensor.plugs_power:
+      friendly_name: 插座總功率
+    sensor.plugs_energy_total:
+      friendly_name: 插座累計用電
+    sensor.plugs_energy_daily:
+      friendly_name: 插座今日用電
+    sensor.plugs_energy_monthly:
+      friendly_name: 插座本月用電
+    sensor.plugs_cost_daily:
+      friendly_name: 今日電費（估算）
+    sensor.plugs_cost_monthly:
+      friendly_name: 本月電費（估算）
+
+group:
+  # 要管理的插座：新增插座時加在這裡
+  power_plugs:
+    name: 電源插座
+    entities:
+      - switch.tv # 範例：P110
+      - switch.pc # 範例：KP115
+  # 不能斷電的插座（冰箱、網路設備…）：「全部關閉」和待機關閉都會跳過
+  power_plugs_keep_on:
+    name: 常開插座
+    entities: []
+
+input_number:
+  # 電費單上的「總金額 ÷ 總度數」
+  power_price:
+    name: 平均電價
+    icon: mdi:cash
+    min: 0
+    max: 20
+    step: 0.01
+    mode: box
+    unit_of_measurement: TWD/kWh
+  # 插座開著、但功率低於這個值，就當作電器在待機
+  standby_threshold:
+    name: 待機門檻
+    icon: mdi:power-sleep
+    min: 0.5
+    max: 50
+    step: 0.5
+    mode: box
+    unit_of_measurement: W
+  # 單一插座超過這個功率持續 1 分鐘就警告
+  overload_threshold:
+    name: 功率過高門檻
+    icon: mdi:flash-alert
+    min: 100
+    max: 2000
+    step: 50
+    mode: box
+    unit_of_measurement: W
+
+template:
+  - sensor:
+      - name: Plugs Power
+        unique_id: plugs_power
+        icon: mdi:flash
+        unit_of_measurement: W
+        device_class: power
+        state_class: measurement
+        state: >
+          {% set ns = namespace(total=0) %}
+          {% for s in expand('group.power_plugs') %}
+            {% set w = states('sensor.' ~ s.object_id ~ '_current_consumption') %}
+            {% if is_number(w) %}{% set ns.total = ns.total + w | float %}{% endif %}
+          {% endfor %}
+          {{ ns.total | round(1) }}
+
+      # 只有全部插座都讀得到時才有值：其中一個斷線時總數會變小，
+      # utility_meter 會誤以為歸零重新累計，所以這時讓它暫時無法使用
+      - name: Plugs Energy Total
+        unique_id: plugs_energy_total
+        icon: mdi:lightning-bolt
+        unit_of_measurement: kWh
+        device_class: energy
+        state_class: total_increasing
+        availability: >
+          {% set ns = namespace(ok=true) %}
+          {% for s in expand('group.power_plugs') %}
+            {% if not is_number(states('sensor.' ~ s.object_id ~ '_total_consumption')) %}
+              {% set ns.ok = false %}
+            {% endif %}
+          {% endfor %}
+          {{ ns.ok }}
+        state: >
+          {% set ns = namespace(total=0) %}
+          {% for s in expand('group.power_plugs') %}
+            {% set ns.total = ns.total + states('sensor.' ~ s.object_id ~ '_total_consumption') | float(0) %}
+          {% endfor %}
+          {{ ns.total | round(3) }}
+
+      - name: Plugs Cost Daily
+        unique_id: plugs_cost_daily
+        icon: mdi:cash
+        unit_of_measurement: TWD
+        device_class: monetary
+        availability: "{{ is_number(states('sensor.plugs_energy_daily')) }}"
+        state: >
+          {{ (states('sensor.plugs_energy_daily') | float(0)
+              * states('input_number.power_price') | float(0)) | round(1) }}
+
+      - name: Plugs Cost Monthly
+        unique_id: plugs_cost_monthly
+        icon: mdi:cash-multiple
+        unit_of_measurement: TWD
+        device_class: monetary
+        availability: "{{ is_number(states('sensor.plugs_energy_monthly')) }}"
+        state: >
+          {{ (states('sensor.plugs_energy_monthly') | float(0)
+              * states('input_number.power_price') | float(0)) | round(0) }}
+
+utility_meter:
+  plugs_energy_daily:
+    name: Plugs Energy Daily
+    unique_id: plugs_energy_daily
+    source: sensor.plugs_energy_total
+    cycle: daily
+  plugs_energy_monthly:
+    name: Plugs Energy Monthly
+    unique_id: plugs_energy_monthly
+    source: sensor.plugs_energy_total
+    cycle: monthly
+
+script:
+  plugs_all_off:
+    alias: 全部關閉
+    icon: mdi:power-plug-off
+    sequence:
+      - variables:
+          targets: >
+            {% set keep = expand('group.power_plugs_keep_on') | map(attribute='entity_id') | list %}
+            {{ expand('group.power_plugs')
+               | selectattr('state', 'eq', 'on')
+               | map(attribute='entity_id')
+               | reject('in', keep)
+               | list }}
+      - if: "{{ targets | count > 0 }}"
+        then:
+          - action: switch.turn_off
+            target:
+              entity_id: "{{ targets }}"
+
+  # 關掉目前在待機的插座（開著、功率在 0.2 W 和待機門檻之間），常開插座除外
+  plugs_standby_off:
+    alias: 關閉待機中的插座
+    icon: mdi:power-sleep
+    sequence:
+      - variables:
+          targets: >
+            {% set keep = expand('group.power_plugs_keep_on') | map(attribute='entity_id') | list %}
+            {% set limit = states('input_number.standby_threshold') | float(5) %}
+            {% set ns = namespace(ids=[]) %}
+            {% for s in expand('group.power_plugs') if s.state == 'on' and s.entity_id not in keep %}
+              {% set w = states('sensor.' ~ s.object_id ~ '_current_consumption') | float(-1) %}
+              {% if 0.2 < w < limit %}{% set ns.ids = ns.ids + [s.entity_id] %}{% endif %}
+            {% endfor %}
+            {{ ns.ids }}
+      - if: "{{ targets | count > 0 }}"
+        then:
+          - action: switch.turn_off
+            target:
+              entity_id: "{{ targets }}"
+
+  # 所有通知都從這裡送出：把 mobile_app_my_phone 換成你手機的通知名稱
+  # （開發者工具 → 動作，搜尋 mobile_app）
+  power_notify:
+    alias: 用電通知
+    icon: mdi:cellphone-message
+    fields:
+      title:
+        description: 標題
+      message:
+        description: 內容
+      data:
+        description: 通知的附加資料（例如按鈕）
+    sequence:
+      - action: notify.mobile_app_my_phone
+        data:
+          title: "{{ title }}"
+          message: "{{ message }}"
+          data: "{{ data | default({}) }}"

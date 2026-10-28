@@ -1,0 +1,117 @@
+# 手機用電儀表板
+# 用法：設定 → 儀表板 → 新增儀表板 →「從頭開始」→ 打開它 → 右上角 ⋮ → 編輯儀表板
+#      → ⋮ →「原始設定編輯器」→ 把整份貼上、儲存
+# 新增插座時，在「插座」和兩張圖表裡各加一組（照 tv、pc 的樣子）
+
+title: 用電
+views:
+  - title: 用電
+    path: power
+    icon: mdi:flash
+    type: sections
+    max_columns: 2
+    sections:
+      - type: grid
+        cards:
+          - type: heading
+            heading: 總覽
+          - type: tile
+            entity: sensor.plugs_power
+            name: 目前總功率
+          - type: tile
+            entity: sensor.plugs_energy_daily
+            name: 今日用電
+          - type: tile
+            entity: sensor.plugs_cost_daily
+            name: 今日電費
+          - type: tile
+            entity: sensor.plugs_cost_monthly
+            name: 本月電費
+          - type: button
+            name: 全部關閉
+            icon: mdi:power-plug-off
+            show_state: false
+            tap_action:
+              action: perform-action
+              perform_action: script.plugs_all_off
+              confirmation:
+                text: 要關閉所有插座嗎？（常開插座不會關）
+            grid_options:
+              columns: 6
+              rows: 2
+          - type: button
+            name: 關閉待機中的
+            icon: mdi:power-sleep
+            show_state: false
+            tap_action:
+              action: perform-action
+              perform_action: script.plugs_standby_off
+            grid_options:
+              columns: 6
+              rows: 2
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: 插座
+          # 點圖示開關，點其他地方看詳細資料
+          - type: tile
+            entity: switch.tv
+            name: 電視
+            icon_tap_action:
+              action: toggle
+          - type: tile
+            entity: sensor.tv_current_consumption
+            name: 電視 功率
+          - type: tile
+            entity: switch.pc
+            name: 電腦
+            icon_tap_action:
+              action: toggle
+          - type: tile
+            entity: sensor.pc_current_consumption
+            name: 電腦 功率
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: 每日用電（近 14 天）
+          - type: statistics-graph
+            chart_type: bar
+            period: day
+            days_to_show: 14
+            stat_types:
+              - change
+            entities:
+              - entity: sensor.tv_total_consumption
+                name: 電視
+              - entity: sensor.pc_total_consumption
+                name: 電腦
+            grid_options:
+              columns: full
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: 功率（近 24 小時）
+          - type: history-graph
+            hours_to_show: 24
+            entities:
+              - entity: sensor.tv_current_consumption
+                name: 電視
+              - entity: sensor.pc_current_consumption
+                name: 電腦
+            grid_options:
+              columns: full
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: 設定
+          - type: entities
+            entities:
+              - entity: input_number.power_price
+              - entity: input_number.standby_threshold
+              - entity: input_number.overload_threshold
+            grid_options:
+              columns: full
