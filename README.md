@@ -127,7 +127,11 @@ Tapo P110 / Kasa KP115 插座（原本的 Google Home 語音照樣能用）
 
 ## 名稱和這份設定不一樣時
 
-TP-Link 整合建立的感測器名稱若不是 `_current_consumption`、`_total_consumption` 結尾（例如 Home Assistant 介面語言影響了實體 ID），有兩個做法：
+TP-Link 整合的功率和累計用電感測器，英文名稱是「Current consumption」「Total consumption」（繁體中文介面顯示為「目前耗能」「總耗能」）。介面設成繁體中文時，實體 ID 仍然用英文名稱產生，所以字尾一樣是 `_current_consumption`、`_total_consumption`。
+
+最常見的不符是插座名稱用中文：例如裝置叫「電視」，實體 ID 會變成拼音 `sensor.dian_shi_current_consumption`。照第 3 步把裝置改成英文名稱並更新實體 ID 就好。
+
+若還是不符，有兩個做法：
 
 - 在每個感測器的設定裡把實體 ID 改成上面的規則（建議）
 - 或是把 `packages/` 和 `dashboards/` 裡的這兩個字尾全部換成實際的名稱
