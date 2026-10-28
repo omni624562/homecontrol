@@ -1,10 +1,12 @@
-# 插座用電：插座清單、電價與門檻、總功率、今日／本月用電與電費、全部關閉
+# 插座用電：插座清單、電價與門檻、總功率、今日／本月用電與電費、斷線偵測、關閉插座
 #
 # 每個插座在 Home Assistant 裡的名稱用簡短英文（例如 tv、pc），
 # 這樣開關是 switch.tv，功率是 sensor.tv_current_consumption，
 # 累計用電是 sensor.tv_total_consumption。下面的範本都靠這個規則找感測器。
-# 沒有用電計量的插座（HS103、HS105、HS107、KP303）只有開關，
-# 所以只放進 power_plugs，不放進 power_plugs_metered。
+# 沒有用電計量的插座（HS103、HS105、HS107、KP303）只有開關；
+# 想估算它們的用電，照 power_estimated.yaml 加上固定瓦數。
+#
+# 插座清單都在這個檔案的 group: 底下，新增插座時只要改這裡。
 
 homeassistant:
   customize:
@@ -20,9 +22,13 @@ homeassistant:
       friendly_name: 今日電費（估算）
     sensor.plugs_cost_monthly:
       friendly_name: 本月電費（估算）
+    sensor.power_price:
+      friendly_name: 目前電價
+    sensor.plugs_offline:
+      friendly_name: 斷線插座
 
 group:
-  # 所有要管理的插座：「全部關閉」用這份清單
+  # 所有要管理的插座：「全部關閉」和斷線通知用這份清單
   power_plugs:
     name: 電源插座
     entities:
@@ -31,27 +37,50 @@ group:
       - switch.lamp # 範例：HS103（沒有計量）
       # 多孔插座（HS107、KP303）列每一孔，不要列整排的 switch.desk
       - switch.desk_speaker # 範例：KP303 的一孔
-  # 有用電計量的插座（P110、KP115）：總功率、用電、電費、待機和功率過高都只看這份
+  # 有用電計量的插座（P110、KP115）：總功率、用電、電費、待機和功率過高都看這份
   power_plugs_metered:
     name: 計量插座
     entities:
       - switch.tv
       - switch.pc
-  # 不能斷電的插座（冰箱、網路設備…）：「全部關閉」和待機關閉都會跳過
+  # 用固定瓦數估算用電的插座（設定在 power_estimated.yaml）：算進總功率、用電和電費，
+  # 但不做待機和功率過高判斷（估算值沒有意義）
+  power_plugs_estimated:
+    name: 估算插座
+    entities:
+      - switch.lamp
+  # 不能斷電的插座（冰箱、網路設備…）：所有關閉動作都會跳過
   power_plugs_keep_on:
     name: 常開插座
     entities: []
+  # 夜間排程要關掉的插座（設定在 power_schedule.yaml）
+  power_plugs_night:
+    name: 夜間關閉
+    entities:
+      - switch.tv
+      - switch.desk_speaker
+  # 房間：名稱以 room_ 開頭，儀表板每個房間一區，可以一鍵關閉整區
+  room_living:
+    name: 客廳
+    entities:
+      - switch.tv
+      - switch.pc
+  room_bedroom:
+    name: 臥室
+    entities:
+      - switch.lamp
+      - switch.desk_speaker
 
 input_number:
-  # 電費單上的「總金額 ÷ 總度數」
-  power_price:
-    name: 平均電價
-    icon: mdi:cash
+  # 電費單上的度數；兩個月抄表一次的話除以 2
+  household_monthly_kwh:
+    name: 家裡每月用電
+    icon: mdi:home-lightning-bolt
     min: 0
-    max: 20
-    step: 0.01
+    max: 3000
+    step: 1
     mode: box
-    unit_of_measurement: TWD/kWh
+    unit_of_measurement: kWh
   # 插座開著、但功率低於這個值，就當作電器在待機
   standby_threshold:
     name: 待機門檻
@@ -73,6 +102,26 @@ input_number:
 
 template:
   - sensor:
+      # 台電住宅用非時間電價（累進），2025-10-01 起。台電調整電價時改這張表：
+      # 每一級是 [每月度數上限, 夏月（6–9 月）, 非夏月]
+      # 用「你家每月用電落在哪一級」的電價：關掉插座省下來的電，就是從最高那一級扣掉的
+      - name: Power Price
+        unique_id: power_price
+        icon: mdi:cash
+        unit_of_measurement: TWD/kWh
+        state: >
+          {% set tiers = [[120, 1.78, 1.78], [330, 2.55, 2.26], [500, 3.80, 3.13],
+                          [700, 5.14, 4.24], [1000, 6.44, 5.27], [none, 8.86, 7.03]] %}
+          {% set kwh = states('input_number.household_monthly_kwh') | float(0) %}
+          {% set col = 1 if now().month in [6, 7, 8, 9] else 2 %}
+          {% set ns = namespace(price=none) %}
+          {% for t in tiers if ns.price is none and (t[0] is none or kwh <= t[0]) %}
+            {% set ns.price = t[col] %}
+          {% endfor %}
+          {{ ns.price }}
+        attributes:
+          season: "{{ '夏月' if now().month in [6, 7, 8, 9] else '非夏月' }}"
+
       - name: Plugs Power
         unique_id: plugs_power
         icon: mdi:flash
@@ -81,7 +130,7 @@ template:
         state_class: measurement
         state: >
           {% set ns = namespace(total=0) %}
-          {% for s in expand('group.power_plugs_metered') %}
+          {% for s in expand('group.power_plugs_metered', 'group.power_plugs_estimated') %}
             {% set w = states('sensor.' ~ s.object_id ~ '_current_consumption') %}
             {% if is_number(w) %}{% set ns.total = ns.total + w | float %}{% endif %}
           {% endfor %}
@@ -97,7 +146,7 @@ template:
         state_class: total_increasing
         availability: >
           {% set ns = namespace(ok=true) %}
-          {% for s in expand('group.power_plugs_metered') %}
+          {% for s in expand('group.power_plugs_metered', 'group.power_plugs_estimated') %}
             {% if not is_number(states('sensor.' ~ s.object_id ~ '_total_consumption')) %}
               {% set ns.ok = false %}
             {% endif %}
@@ -105,7 +154,7 @@ template:
           {{ ns.ok }}
         state: >
           {% set ns = namespace(total=0) %}
-          {% for s in expand('group.power_plugs_metered') %}
+          {% for s in expand('group.power_plugs_metered', 'group.power_plugs_estimated') %}
             {% set ns.total = ns.total + states('sensor.' ~ s.object_id ~ '_total_consumption') | float(0) %}
           {% endfor %}
           {{ ns.total | round(3) }}
@@ -115,20 +164,36 @@ template:
         icon: mdi:cash
         unit_of_measurement: TWD
         device_class: monetary
-        availability: "{{ is_number(states('sensor.plugs_energy_daily')) }}"
+        availability: "{{ is_number(states('sensor.plugs_energy_daily')) and is_number(states('sensor.power_price')) }}"
         state: >
           {{ (states('sensor.plugs_energy_daily') | float(0)
-              * states('input_number.power_price') | float(0)) | round(1) }}
+              * states('sensor.power_price') | float(0)) | round(1) }}
 
       - name: Plugs Cost Monthly
         unique_id: plugs_cost_monthly
         icon: mdi:cash-multiple
         unit_of_measurement: TWD
         device_class: monetary
-        availability: "{{ is_number(states('sensor.plugs_energy_monthly')) }}"
+        availability: "{{ is_number(states('sensor.plugs_energy_monthly')) and is_number(states('sensor.power_price')) }}"
         state: >
           {{ (states('sensor.plugs_energy_monthly') | float(0)
-              * states('input_number.power_price') | float(0)) | round(0) }}
+              * states('sensor.power_price') | float(0)) | round(0) }}
+
+      # 連不上超過 10 分鐘的插座數量，名稱放在 names
+      - name: Plugs Offline
+        unique_id: plugs_offline
+        icon: mdi:power-plug-off-outline
+        state: >
+          {{ expand('group.power_plugs')
+             | selectattr('state', 'eq', 'unavailable')
+             | selectattr('last_changed', 'lt', now() - timedelta(minutes=10))
+             | list | count }}
+        attributes:
+          names: >
+            {{ expand('group.power_plugs')
+               | selectattr('state', 'eq', 'unavailable')
+               | selectattr('last_changed', 'lt', now() - timedelta(minutes=10))
+               | map(attribute='name') | list }}
 
 utility_meter:
   plugs_energy_daily:
@@ -143,14 +208,19 @@ utility_meter:
     cycle: monthly
 
 script:
-  plugs_all_off:
-    alias: 全部關閉
+  # 關掉一個群組裡開著的插座，常開插座除外。儀表板的「關閉此區」也用這個
+  plugs_off:
+    alias: 關閉插座
     icon: mdi:power-plug-off
+    fields:
+      group:
+        description: 要關閉的群組
+        example: group.room_living
     sequence:
       - variables:
           targets: >
             {% set keep = expand('group.power_plugs_keep_on') | map(attribute='entity_id') | list %}
-            {{ expand('group.power_plugs')
+            {{ expand(group | default('group.power_plugs'))
                | selectattr('state', 'eq', 'on')
                | map(attribute='entity_id')
                | reject('in', keep)
@@ -160,6 +230,14 @@ script:
           - action: switch.turn_off
             target:
               entity_id: "{{ targets }}"
+
+  plugs_all_off:
+    alias: 全部關閉
+    icon: mdi:power-plug-off
+    sequence:
+      - action: script.plugs_off
+        data:
+          group: group.power_plugs
 
   # 關掉目前在待機的插座（開著、功率在 0.2 W 和待機門檻之間），常開插座除外
   plugs_standby_off:
@@ -183,7 +261,8 @@ script:
               entity_id: "{{ targets }}"
 
   # 所有通知都從這裡送出：把 mobile_app_my_phone 換成你手機的通知名稱
-  # （開發者工具 → 動作，搜尋 mobile_app）
+  # （開發者工具 → 動作，搜尋 mobile_app）。兩支手機都要收到的話，把下面的
+  # action 整段複製一份，換成另一支手機的名稱
   power_notify:
     alias: 用電通知
     icon: mdi:cellphone-message

@@ -1,4 +1,4 @@
-# 插座用電的自動化：睡前待機提醒（通知上可一鍵關閉）、功率過高警告
+# 插座用電的自動化：睡前待機提醒（通知上可一鍵關閉）、功率過高警告、插座斷線
 # 插座清單和門檻都在 power.yaml，這裡不用跟著改
 
 automation:
@@ -79,3 +79,37 @@ automation:
             ttl: 0
             push:
               interruption-level: time-sensitive
+
+  - id: power_offline_alert
+    alias: 用電：插座斷線
+    description: 有插座連不上超過 10 分鐘就通知，全部恢復時再通知一次
+    triggers:
+      - trigger: state
+        entity_id: sensor.plugs_offline
+        not_from:
+          - unavailable
+          - unknown
+        not_to:
+          - unavailable
+          - unknown
+    actions:
+      - variables:
+          before: "{{ trigger.from_state.state | int(0) }}"
+          after: "{{ trigger.to_state.state | int(0) }}"
+      - choose:
+          - conditions: "{{ after > before }}"
+            sequence:
+              - action: script.power_notify
+                data:
+                  title: 插座連不上
+                  message: "{{ state_attr('sensor.plugs_offline', 'names') | join('、') }} 已經超過 10 分鐘連不上"
+                  data:
+                    tag: power_offline
+          - conditions: "{{ after == 0 }}"
+            sequence:
+              - action: script.power_notify
+                data:
+                  title: 插座都恢復連線了
+                  message: 所有插座都連得上了
+                  data:
+                    tag: power_offline

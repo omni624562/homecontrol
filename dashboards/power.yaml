@@ -1,8 +1,10 @@
 # 手機用電儀表板
 # 用法：設定 → 儀表板 → 新增儀表板 →「從頭開始」→ 打開它 → 右上角 ⋮ → 編輯儀表板
 #      → ⋮ →「原始設定編輯器」→ 把整份貼上、儲存
-# 新增插座時，在「插座」和兩張圖表裡各加一組（照 tv、pc 的樣子）；
-# 沒有計量的插座只在「插座」加開關（照 lamp 的樣子）
+# 新增插座時：
+#   - 在它的房間加開關（照 tv 的樣子）；有計量或估算的再加功率（照 sensor.tv_current_consumption）
+#   - 有計量或估算的，在兩張圖表裡各加一組
+# 新增房間時：複製一整個房間區塊，把 group.room_living 換成新的房間群組
 
 title: 用電
 views:
@@ -16,6 +18,16 @@ views:
         cards:
           - type: heading
             heading: 總覽
+          # 有插座連不上超過 10 分鐘時才會出現
+          - type: markdown
+            content: >-
+              <ha-alert alert-type="warning">連不上：{{ state_attr('sensor.plugs_offline', 'names') | join('、') }}</ha-alert>
+            visibility:
+              - condition: numeric_state
+                entity: sensor.plugs_offline
+                above: 0
+            grid_options:
+              columns: full
           - type: tile
             entity: sensor.plugs_power
             name: 目前總功率
@@ -51,10 +63,27 @@ views:
               columns: 6
               rows: 2
 
+      # 房間：每個房間一區，「關閉此區」會跳過常開插座
       - type: grid
         cards:
           - type: heading
-            heading: 插座
+            heading: 客廳
+            icon: mdi:sofa
+            badges:
+              - type: entity
+                entity: script.plugs_off
+                show_state: false
+                icon: mdi:power-plug-off
+                color: red
+                name: 關閉此區
+                show_name: true
+                tap_action:
+                  action: perform-action
+                  perform_action: script.plugs_off
+                  data:
+                    group: group.room_living
+                  confirmation:
+                    text: 要關閉客廳的插座嗎？
           # 點圖示開關，點其他地方看詳細資料
           - type: tile
             entity: switch.tv
@@ -72,12 +101,37 @@ views:
           - type: tile
             entity: sensor.pc_current_consumption
             name: 電腦 功率
-          # 沒有計量的插座：只有開關，兩個排一列
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: 臥室
+            icon: mdi:bed
+            badges:
+              - type: entity
+                entity: script.plugs_off
+                show_state: false
+                icon: mdi:power-plug-off
+                color: red
+                name: 關閉此區
+                show_name: true
+                tap_action:
+                  action: perform-action
+                  perform_action: script.plugs_off
+                  data:
+                    group: group.room_bedroom
+                  confirmation:
+                    text: 要關閉臥室的插座嗎？
+          # 估算用電的插座：功率是固定瓦數
           - type: tile
             entity: switch.lamp
             name: 檯燈
             icon_tap_action:
               action: toggle
+          - type: tile
+            entity: sensor.lamp_current_consumption
+            name: 檯燈 功率（估算）
+          # 沒有計量也沒有估算的插座：只有開關
           - type: tile
             entity: switch.desk_speaker
             name: 喇叭
@@ -99,6 +153,8 @@ views:
                 name: 電視
               - entity: sensor.pc_total_consumption
                 name: 電腦
+              - entity: sensor.lamp_total_consumption
+                name: 檯燈（估算）
             grid_options:
               columns: full
 
@@ -113,6 +169,20 @@ views:
                 name: 電視
               - entity: sensor.pc_current_consumption
                 name: 電腦
+              - entity: sensor.lamp_current_consumption
+                name: 檯燈（估算）
+            grid_options:
+              columns: full
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: 夜間排程
+          - type: entities
+            entities:
+              - entity: input_boolean.power_schedule
+              - entity: input_datetime.power_night_off
+              - entity: input_datetime.power_morning_on
             grid_options:
               columns: full
 
@@ -122,7 +192,14 @@ views:
             heading: 設定
           - type: entities
             entities:
-              - entity: input_number.power_price
+              - entity: input_number.household_monthly_kwh
+              - entity: sensor.power_price
+                secondary_info: none
+              - type: attribute
+                entity: sensor.power_price
+                attribute: season
+                name: 目前季節
+                icon: mdi:sun-thermometer
               - entity: input_number.standby_threshold
               - entity: input_number.overload_threshold
             grid_options:

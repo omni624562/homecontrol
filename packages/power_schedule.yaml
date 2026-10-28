@@ -1,0 +1,81 @@
+# 夜間排程：每天晚上關掉 power.yaml 裡 power_plugs_night 的插座，早上再打開
+#
+# 早上只會打開「晚上被排程關掉的」插座：晚上本來就關著的、或半夜被你手動
+# 打開又關掉的，都不會被打開。開關和時間都在儀表板的「夜間排程」設定。
+
+input_boolean:
+  power_schedule:
+    name: 夜間排程
+    icon: mdi:weather-night
+
+input_datetime:
+  power_night_off:
+    name: 晚上關閉
+    icon: mdi:power-plug-off
+    has_date: false
+    has_time: true
+  power_morning_on:
+    name: 早上打開
+    icon: mdi:power-plug
+    has_date: false
+    has_time: true
+
+# 記住晚上關掉了哪些插座（逗號分隔的名稱，例如 tv,desk_speaker）
+input_text:
+  power_night_restore:
+    name: 夜間排程關掉的插座
+    max: 255
+
+automation:
+  - id: power_night_off
+    alias: 用電：夜間關閉
+    triggers:
+      - trigger: time
+        at: input_datetime.power_night_off
+    conditions:
+      - condition: state
+        entity_id: input_boolean.power_schedule
+        state: "on"
+    actions:
+      - variables:
+          targets: >
+            {% set keep = expand('group.power_plugs_keep_on') | map(attribute='entity_id') | list %}
+            {{ expand('group.power_plugs_night')
+               | selectattr('state', 'eq', 'on')
+               | map(attribute='entity_id')
+               | reject('in', keep)
+               | list }}
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.power_night_restore
+        data:
+          value: "{{ targets | map('replace', 'switch.', '') | join(',') }}"
+      - if: "{{ targets | count > 0 }}"
+        then:
+          - action: switch.turn_off
+            target:
+              entity_id: "{{ targets }}"
+
+  - id: power_morning_on
+    alias: 用電：早上打開
+    triggers:
+      - trigger: time
+        at: input_datetime.power_morning_on
+    actions:
+      - variables:
+          targets: >
+            {{ states('input_text.power_night_restore').split(',')
+               | reject('eq', '')
+               | map('regex_replace', '^', 'switch.')
+               | select('is_state', 'off')
+               | list }}
+      - if: "{{ targets | count > 0 }}"
+        then:
+          - action: switch.turn_on
+            target:
+              entity_id: "{{ targets }}"
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.power_night_restore
+        data:
+          value: ""

@@ -1,0 +1,41 @@
+# 沒有計量的插座（HS103、HS105、HS107、KP303）：用固定瓦數估算用電
+#
+# 每個插座一組，照 lamp 的樣子複製：
+#   1. template 感測器：開著就是固定瓦數，名稱「<名稱> current consumption」
+#   2. integration 感測器：把功率累計成 kWh，名稱「<名稱> total consumption」
+# 名稱照這個規則，實體 ID 就會是 sensor.<名稱>_current_consumption／_total_consumption，
+# 跟有計量的插座一樣。最後把開關加進 power.yaml 的 power_plugs_estimated。
+#
+# 瓦數可以看電器背後的標示，或用有計量的插座實際量一次。
+
+homeassistant:
+  customize:
+    sensor.lamp_current_consumption:
+      friendly_name: 檯燈 功率（估算）
+    sensor.lamp_total_consumption:
+      friendly_name: 檯燈 累計用電（估算）
+
+template:
+  - sensor:
+      # 檯燈：開著約 9 W
+      - name: lamp current consumption
+        unique_id: lamp_current_consumption_estimated
+        icon: mdi:flash-outline
+        unit_of_measurement: W
+        device_class: power
+        state_class: measurement
+        availability: "{{ has_value('switch.lamp') }}"
+        state: "{{ 9 if is_state('switch.lamp', 'on') else 0 }}"
+
+sensor:
+  - platform: integration
+    name: lamp total consumption
+    unique_id: lamp_total_consumption_estimated
+    source: sensor.lamp_current_consumption
+    unit_prefix: k
+    unit_time: h
+    method: left
+    round: 3
+    # 電器一直開著、功率沒變的時候，也每 5 分鐘累計一次
+    max_sub_interval:
+      minutes: 5
