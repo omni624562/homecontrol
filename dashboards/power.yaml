@@ -4,7 +4,7 @@
 # 新增插座時：
 #   - 在它的房間加開關（照 tv 的樣子）；有計量或估算的再加功率（照 sensor.tv_current_consumption）
 #   - 有計量或估算的，在兩張圖表裡各加一組
-# 新增房間時：複製一整個房間區塊，把 group.room_living 換成新的房間群組
+# 新增房間時：複製一整個房間區塊，把 group.room_living 和 living_off 換成新的名稱
 
 title: 用電
 views:
@@ -40,50 +40,51 @@ views:
           - type: tile
             entity: sensor.plugs_cost_monthly
             name: 本月電費
-          - type: button
+          - type: tile
+            entity: script.plugs_all_off
             name: 全部關閉
             icon: mdi:power-plug-off
-            show_state: false
-            tap_action:
+            color: red
+            hide_state: true
+            tap_action: &all_off
               action: perform-action
               perform_action: script.plugs_all_off
               confirmation:
                 text: 要關閉所有插座嗎？（常開插座不會關）
-            grid_options:
-              columns: 6
-              rows: 2
-          - type: button
+            icon_tap_action: *all_off
+          - type: tile
+            entity: script.plugs_standby_off
             name: 關閉待機中的
             icon: mdi:power-sleep
-            show_state: false
-            tap_action:
+            color: indigo
+            hide_state: true
+            tap_action: &standby_off
               action: perform-action
               perform_action: script.plugs_standby_off
-            grid_options:
-              columns: 6
-              rows: 2
+            icon_tap_action: *standby_off
 
-      # 房間：每個房間一區，「關閉此區」會跳過常開插座
+      # 房間：每個房間一區，最上面的「關閉○○」會跳過常開插座
       - type: grid
         cards:
           - type: heading
             heading: 客廳
             icon: mdi:sofa
-            badges:
-              - type: entity
-                entity: script.plugs_off
-                show_state: false
-                icon: mdi:power-plug-off
-                color: red
-                name: 關閉此區
-                show_name: true
-                tap_action:
-                  action: perform-action
-                  perform_action: script.plugs_off
-                  data:
-                    group: group.room_living
-                  confirmation:
-                    text: 要關閉客廳的插座嗎？
+          - type: tile
+            entity: script.plugs_off
+            name: 關閉客廳
+            icon: mdi:power-plug-off
+            color: red
+            hide_state: true
+            tap_action: &living_off
+              action: perform-action
+              perform_action: script.plugs_off
+              data:
+                group: group.room_living
+              confirmation:
+                text: 要關閉客廳的插座嗎？（常開插座不會關）
+            icon_tap_action: *living_off
+            grid_options:
+              columns: full
           # 點圖示開關，點其他地方看詳細資料
           - type: tile
             entity: switch.tv
@@ -107,21 +108,22 @@ views:
           - type: heading
             heading: 臥室
             icon: mdi:bed
-            badges:
-              - type: entity
-                entity: script.plugs_off
-                show_state: false
-                icon: mdi:power-plug-off
-                color: red
-                name: 關閉此區
-                show_name: true
-                tap_action:
-                  action: perform-action
-                  perform_action: script.plugs_off
-                  data:
-                    group: group.room_bedroom
-                  confirmation:
-                    text: 要關閉臥室的插座嗎？
+          - type: tile
+            entity: script.plugs_off
+            name: 關閉臥室
+            icon: mdi:power-plug-off
+            color: red
+            hide_state: true
+            tap_action: &bedroom_off
+              action: perform-action
+              perform_action: script.plugs_off
+              data:
+                group: group.room_bedroom
+              confirmation:
+                text: 要關閉臥室的插座嗎？（常開插座不會關）
+            icon_tap_action: *bedroom_off
+            grid_options:
+              columns: full
           # 估算用電的插座：功率是固定瓦數
           - type: tile
             entity: switch.lamp
