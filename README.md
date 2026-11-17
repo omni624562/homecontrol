@@ -50,6 +50,8 @@ Tapo P110 / Kasa KP115（有計量）、Kasa HS103 / HS105 / HS107 / KP303（只
 
 點房間名稱可以改名或刪除房間。
 
+**自訂排序**：把插座拖到另一個插座的左半邊就排在它前面，右半邊就排在它後面（同一個房間裡調順序，或換房間時直接放到想要的位置）。整理模式下，拉房間右上角的把手可以調整房間的先後。順序存在 `power_hub` 裡，手機和電腦看到的一樣；還沒排過的照名稱排在後面。
+
 ## 檔案
 
 | 檔案 | 內容 |
@@ -115,7 +117,7 @@ Tapo P110 / Kasa KP115（有計量）、Kasa HS103 / HS105 / HS107 / KP303（只
 
    frontend:
      extra_module_url:
-       - /local/power-dashboard.js?v=5
+       - /local/power-dashboard.js?v=6
 
    power_hub:
    ```
@@ -130,7 +132,7 @@ Tapo P110 / Kasa KP115（有計量）、Kasa HS103 / HS105 / HS107 / KP303（只
 
 名稱用中文就可以，不需要改成英文。
 
-更新 `www/power-dashboard.js` 之後，把 `configuration.yaml` 裡的 `?v=5` 改成下一個數字（`?v=6`）再重新啟動，手機和瀏覽器才不會繼續用舊的快取。
+更新 `www/power-dashboard.js` 之後，把 `configuration.yaml` 裡的 `?v=6` 改成下一個數字（`?v=7`）再重新啟動，手機和瀏覽器才不會繼續用舊的快取。
 
 ### 5. 設定電價與門檻
 
@@ -227,3 +229,4 @@ Tapo P110 / Kasa KP115（有計量）、Kasa HS103 / HS105 / HS107 / KP303（只
 | `power_hub.turn_off` | 關閉插座，可以指定 `area`、`label`、`standby_only`；`remember` 記住關了哪些 |
 | `power_hub.restore` | 打開 `remember` 記住、而且還關著的插座 |
 | `power_hub.rescan` | 立刻重新偵測（平常裝置、區域、標籤一有變動就會自動重新偵測） |
+| `power_hub.set_order` | 記住插座（`plugs`：實體 ID 清單）和房間（`areas`：區域 ID 清單）的順序，儀表板拖拉排序時會呼叫 |

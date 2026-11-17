@@ -4,19 +4,51 @@
       "name": "Turn off plugs",
       "description": "Turn off managed plugs. Plugs labelled 常開 are always skipped.",
       "fields": {
-        "area": {"name": "Area", "description": "Only plugs in this area (area ID or name)."},
-        "label": {"name": "Label", "description": "Only plugs with this label name."},
-        "standby_only": {"name": "Standby only", "description": "Only plugs that are on but drawing less than the standby threshold."},
-        "remember": {"name": "Remember as", "description": "Remember which plugs were turned off, so restore can turn them back on."}
+        "area": {
+          "name": "Area",
+          "description": "Only plugs in this area (area ID or name)."
+        },
+        "label": {
+          "name": "Label",
+          "description": "Only plugs with this label name."
+        },
+        "standby_only": {
+          "name": "Standby only",
+          "description": "Only plugs that are on but drawing less than the standby threshold."
+        },
+        "remember": {
+          "name": "Remember as",
+          "description": "Remember which plugs were turned off, so restore can turn them back on."
+        }
       }
     },
     "restore": {
       "name": "Restore plugs",
       "description": "Turn back on the plugs remembered by turn_off that are still off.",
       "fields": {
-        "remember": {"name": "Remembered as", "description": "The name used with turn_off."}
+        "remember": {
+          "name": "Remembered as",
+          "description": "The name used with turn_off."
+        }
       }
     },
-    "rescan": {"name": "Rescan", "description": "Look for plugs again."}
+    "rescan": {
+      "name": "Rescan",
+      "description": "Look for plugs again."
+    },
+    "set_order": {
+      "name": "Set order",
+      "description": "Remember the order of plugs and rooms on the dashboard.",
+      "fields": {
+        "plugs": {
+          "name": "Plugs",
+          "description": "Entity IDs of plugs, in order."
+        },
+        "areas": {
+          "name": "Rooms",
+          "description": "Area IDs, in order."
+        }
+      }
+    }
   }
 }

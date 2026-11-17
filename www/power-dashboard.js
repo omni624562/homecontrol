@@ -187,12 +187,23 @@ const STYLE = `
     background: var(--ph-accent); color: #fff; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
   }
   .toolbar.arranging .toolbar-title { color: #fff; font-weight: 500; }
+  .toolbar-sub { font-size: 12px; font-weight: 400; opacity: 0.9; margin-top: 2px; line-height: 1.4; }
+  .toolbar-sub ha-icon { --mdc-icon-size: 14px; vertical-align: -2px; }
   .toolbar.arranging .small-btn { background: #fff; color: var(--ph-accent); }
   .arrange .plug { touch-action: none; cursor: grab; min-height: 72px; }
   .arrange .plug:active { transform: none; }
   .grip { width: 36px; height: 36px; margin: -6px -6px 0 0; display: grid; place-items: center; color: var(--ph-muted); }
   .grip ha-icon { --mdc-icon-size: 20px; }
-  .plug.dragging { opacity: 0.25; }
+  .plug.dragging, .room.dragging { opacity: 0.25; }
+  .room-grip {
+    width: 40px; height: 40px; margin: -4px -6px -4px 0; border-radius: 10px; display: grid; place-items: center;
+    color: var(--ph-muted); cursor: grab; touch-action: none; background: var(--ph-soft);
+  }
+  .room-grip ha-icon { --mdc-icon-size: 22px; }
+  .plug.ins-before { box-shadow: -5px 0 0 -1px var(--ph-accent); }
+  .plug.ins-after { box-shadow: 5px 0 0 -1px var(--ph-accent); }
+  .room.ins-before { box-shadow: 0 -5px 0 -1px var(--ph-accent); }
+  .room.ins-after { box-shadow: 0 5px 0 -1px var(--ph-accent); }
   .ghost {
     position: fixed; z-index: 20; pointer-events: none; margin: 0;
     transform: rotate(2deg) scale(1.05); box-shadow: 0 14px 34px rgba(0, 0, 0, 0.28);
@@ -383,7 +394,10 @@ class PowerHubCard extends HTMLElement {
     for (const p of this._plugs) {
       if (p.entity_id in this._moved && (p.area_id || null) === this._moved[p.entity_id]) delete this._moved[p.entity_id];
     }
-    parts.push([...this._pending].join(","), JSON.stringify(this._moved), this._arrange);
+    const attrs = h.states[MANAGED]?.attributes || {};
+    if (this._order && (attrs.plugs || []).map((p) => p.entity_id).join() === this._order.filter((id) => this._plug(id)).join()) this._order = null;
+    if (this._roomOrder && JSON.stringify(attrs.area_order || []) === JSON.stringify(this._roomOrder)) this._roomOrder = null;
+    parts.push([...this._pending].join(","), JSON.stringify(this._moved), this._arrange, JSON.stringify(this._order), JSON.stringify(this._roomOrder));
     return parts.join("~");
   }
 
@@ -475,23 +489,24 @@ class PowerHubCard extends HTMLElement {
       byArea.set(UNASSIGNED, []);
       for (const a of this._areas) byArea.set(a.area_id, []);
     }
-    for (const p of plugs) {
+    for (const p of this._orderedPlugs()) {
       const area = this._areaOf(p);
       const key = area && areas[area] ? area : UNASSIGNED;
       if (!byArea.has(key)) byArea.set(key, []);
       byArea.get(key).push(p);
     }
     // 還沒分房間的放最前面，最需要處理
-    const order = [...byArea.keys()].filter((id) => id !== UNASSIGNED).sort((a, b) => byName(areas[a], areas[b]));
+    const rank = new Map(this._roomIds().map((id, i) => [id, i]));
+    const order = [...byArea.keys()].filter((id) => id !== UNASSIGNED).sort((a, b) => rank.get(a) - rank.get(b));
     if (byArea.has(UNASSIGNED)) order.unshift(UNASSIGNED);
 
-    const rooms = order.map((id) => this._roomHtml(id, areas[id], byArea.get(id).slice().sort(byName)));
+    const rooms = order.map((id) => this._roomHtml(id, areas[id], byArea.get(id)));
     if (this._arrange) {
       rooms.push(`<section class="block room new-zone" data-drop="${NEW_ROOM}"><ha-icon icon="mdi:plus"></ha-icon>拖到這裡，建立新房間</section>`);
     }
 
     const toolbar = this._arrange
-      ? `<div class="toolbar arranging"><div class="toolbar-title">把插座拖到其他房間</div><button class="small-btn" data-arrange>完成</button></div>`
+      ? `<div class="toolbar arranging"><div class="toolbar-title"><b>整理房間</b><div class="toolbar-sub">拖插座換房間、排順序；拉房間右上角的 <ha-icon icon="mdi:drag-horizontal-variant"></ha-icon> 調整房間順序</div></div><button class="small-btn" data-arrange>完成</button></div>`
       : `<div class="toolbar"><div class="toolbar-title">房間</div><button class="small-btn" data-arrange><ha-icon icon="mdi:drag-variant"></ha-icon>整理房間</button></div>`;
 
     return `
@@ -529,7 +544,7 @@ class PowerHubCard extends HTMLElement {
     }
     const canOff = !arrange && list.some((p) => this._isOn(p) && !p.keep_on);
     return `
-      <section class="block room" data-drop="${esc(id)}">
+      <section class="block room" data-drop="${esc(id)}" data-room-sec="${esc(id)}">
         <div class="room-head">
           <div class="room-icon"><ha-icon icon="${esc(area.icon || "mdi:home-outline")}"></ha-icon></div>
           <button class="room-title" data-room="${esc(id)}" title="改房間名稱">
@@ -537,6 +552,7 @@ class PowerHubCard extends HTMLElement {
             <div class="room-sub">${roomOn ? `${roomOn} 個開著` : "全部關閉"} · 共 ${list.length} 個</div>
           </button>
           ${canOff ? `<button class="small-btn" data-off="area:${esc(id)}"><ha-icon icon="mdi:power"></ha-icon>全關</button>` : ""}
+          ${arrange ? `<span class="room-grip" data-room-grip="${esc(id)}" title="拖拉調整房間順序"><ha-icon icon="mdi:drag-horizontal-variant"></ha-icon></span>` : ""}
         </div>
         ${body}
       </section>`;
@@ -574,7 +590,7 @@ class PowerHubCard extends HTMLElement {
     const h = this._hass;
     const schedOn = h.states["input_boolean.power_schedule"]?.state === "on";
     const time = (id) => (h.states[id]?.state || "").slice(0, 5);
-    const plugs = this._plugs.slice().sort(byName);
+    const plugs = this._orderedPlugs();
     const nightCount = plugs.filter((p) => p.night && !p.keep_on).length;
 
     const nightChips = plugs
@@ -655,6 +671,7 @@ class PowerHubCard extends HTMLElement {
       if (!e.target.closest("[data-edit]")) this._toggle(el.dataset.plug);
     });
     on("[data-plug]", "pointerdown", (el, e) => this._dragDown(el, e));
+    on("[data-room-grip]", "pointerdown", (el, e) => this._dragDown(el, e, "room"));
     on("[data-plug]", "contextmenu", (el, e) => e.preventDefault());
     on("[data-arrange]", "click", () => {
       this._arrange = !this._arrange;
@@ -704,24 +721,27 @@ class PowerHubCard extends HTMLElement {
     });
   }
 
-  // ───────────── 拖拉換房間 ─────────────
+  // ───────────── 拖拉：換房間、自訂排序 ─────────────
   //
+  // 插座：拖到別的房間就換房間；拖到某個插座的前面或後面就排在那裡。
+  // 房間：整理模式下拉房間右上角的把手，調整房間順序。
   // 滑鼠：按下移動一點點就開始拖。
   // 手機：整理模式下直接拖；平常要先按住一下（不然會跟捲動畫面衝突）。
 
-  _dragDown(el, e) {
+  _dragDown(el, e, kind = "plug") {
     if (e.button > 0 || e.target.closest("[data-edit]")) return;
     const touch = e.pointerType !== "mouse";
     const d = {
-      el,
-      entityId: el.dataset.plug,
+      kind,
+      el: kind === "room" ? el.closest("[data-room-sec]") : el,
+      id: kind === "room" ? el.dataset.roomGrip : el.dataset.plug,
       pointerId: e.pointerId,
       x: e.clientX,
       y: e.clientY,
       started: false,
       ready: !touch || this._arrange,
     };
-    this._pre = d;
+    if (kind === "room") e.preventDefault();
     if (!d.ready) {
       d.timer = setTimeout(() => {
         d.ready = true;
@@ -755,7 +775,6 @@ class PowerHubCard extends HTMLElement {
       window.removeEventListener("pointerup", up);
       window.removeEventListener("pointercancel", up);
       window.removeEventListener("touchmove", touchmove);
-      if (this._pre === d) this._pre = null;
     };
     window.addEventListener("pointermove", move, { passive: false });
     window.addEventListener("pointerup", up);
@@ -764,18 +783,19 @@ class PowerHubCard extends HTMLElement {
   }
 
   _dragBegin(d, x, y) {
-    if (d.started || !d.el.isConnected) return;
+    if (d.started || !d.el?.isConnected) return;
     d.started = true;
     const rect = d.el.getBoundingClientRect();
     const ghost = d.el.cloneNode(true);
     ghost.classList.add("ghost");
-    ghost.classList.remove("pending");
-    Object.assign(ghost.style, { width: `${rect.width}px`, height: `${rect.height}px`, left: `${rect.left}px`, top: `${rect.top}px` });
+    ghost.classList.remove("pending", "over");
+    const height = d.kind === "room" ? Math.min(rect.height, 64) : rect.height;
+    Object.assign(ghost.style, { width: `${rect.width}px`, height: `${height}px`, left: `${rect.left}px`, top: `${rect.top}px`, overflow: "hidden" });
     this.shadowRoot.appendChild(ghost);
     d.ghost = ghost;
     d.dx = x - rect.left;
-    d.dy = y - rect.top;
-    d.from = this._areaOf(this._plug(d.entityId)) || UNASSIGNED;
+    d.dy = Math.min(y - rect.top, height - 10);
+    if (d.kind === "plug") d.from = this._areaOf(this._plug(d.id)) || UNASSIGNED;
     this._drag = d;
     // 平常模式下開始拖：暫時切到整理模式，空房間和「新房間」才會出現
     if (!this._arrange) {
@@ -791,7 +811,18 @@ class PowerHubCard extends HTMLElement {
 
   _markDragging() {
     const d = this._drag;
-    this._main.querySelectorAll("[data-plug]").forEach((el) => el.classList.toggle("dragging", !!d && el.dataset.plug === d.entityId));
+    this._main.querySelectorAll("[data-plug]").forEach((el) =>
+      el.classList.toggle("dragging", !!d && d.kind === "plug" && el.dataset.plug === d.id),
+    );
+    this._main.querySelectorAll("[data-room-sec]").forEach((el) =>
+      el.classList.toggle("dragging", !!d && d.kind === "room" && el.dataset.roomSec === d.id),
+    );
+  }
+
+  _clearMarks() {
+    this._main.querySelectorAll(".over, .ins-before, .ins-after").forEach((el) =>
+      el.classList.remove("over", "ins-before", "ins-after"),
+    );
   }
 
   _dragMove(x, y) {
@@ -801,12 +832,34 @@ class PowerHubCard extends HTMLElement {
     d.cy = y;
     d.ghost.style.left = `${x - d.dx}px`;
     d.ghost.style.top = `${y - d.dy}px`;
-    const hit = this.shadowRoot.elementFromPoint(x, y)?.closest("[data-drop]");
-    if (hit !== d.over) {
-      d.over?.classList.remove("over");
-      d.over = hit && hit.dataset.drop !== d.from ? hit : null;
+    const under = this.shadowRoot.elementFromPoint(x, y);
+    this._clearMarks();
+    d.over = d.tile = null;
+
+    if (d.kind === "plug") {
+      const zone = under?.closest("[data-drop]");
+      const tile = under?.closest("[data-plug]");
+      if (tile && tile.dataset.plug !== d.id && zone?.contains(tile)) {
+        // 拖到某個插座上：左半邊放在它前面，右半邊放在它後面
+        const r = tile.getBoundingClientRect();
+        d.tile = tile.dataset.plug;
+        d.before = x < r.left + r.width / 2;
+        tile.classList.add(d.before ? "ins-before" : "ins-after");
+        d.over = zone;
+      } else if (zone && zone.dataset.drop !== d.from) {
+        d.over = zone;
+      }
       d.over?.classList.add("over");
+    } else {
+      const sec = under?.closest("[data-room-sec]");
+      if (sec && sec.dataset.roomSec !== d.id) {
+        const r = sec.getBoundingClientRect();
+        d.over = sec;
+        d.before = y < r.top + r.height / 2;
+        sec.classList.add(d.before ? "ins-before" : "ins-after");
+      }
     }
+
     // 拖到畫面上下邊緣時自動捲動
     const edge = 70;
     d.scroll = y < edge ? -1 : y > window.innerHeight - edge ? 1 : 0;
@@ -831,21 +884,40 @@ class PowerHubCard extends HTMLElement {
     cancelAnimationFrame(d.raf);
     d.ghost.remove();
     this._markDragging();
-    d.over?.classList.remove("over");
+    this._clearMarks();
     if (d.autoArrange) this._arrange = false;
     this._justDragged = true;
     setTimeout(() => (this._justDragged = false), 50);
+    if (!drop || !d.over) return this._refresh();
 
-    const target = drop && d.over ? d.over.dataset.drop : null;
-    const plug = this._plug(d.entityId);
-    if (!target || !plug) return this._refresh();
-    if (target === NEW_ROOM) {
+    if (d.kind === "room") {
+      const ids = this._roomIds().filter((id) => id !== d.id);
+      const at = ids.indexOf(d.over.dataset.roomSec) + (d.before ? 0 : 1);
+      ids.splice(at, 0, d.id);
+      this._roomOrder = ids;
       this._refresh();
-      this._openSheet({ type: "newroom", entityId: d.entityId });
+      this._safe(() => this._hass.callService("power_hub", "set_order", { areas: ids }));
       return;
     }
+
+    const plug = this._plug(d.id);
+    const target = d.over.dataset.drop;
+    if (!plug) return this._refresh();
+    if (target === NEW_ROOM) {
+      this._refresh();
+      this._openSheet({ type: "newroom", entityId: d.id });
+      return;
+    }
+    if (d.tile) {
+      const ids = this._orderedPlugs().map((p) => p.entity_id).filter((id) => id !== d.id);
+      const at = ids.indexOf(d.tile) + (d.before ? 0 : 1);
+      ids.splice(at, 0, d.id);
+      this._order = ids;
+      this._safe(() => this._hass.callService("power_hub", "set_order", { plugs: ids }));
+    }
     const areaId = target === UNASSIGNED ? null : target;
-    this._moveTo(plug, areaId);
+    if (target !== d.from) this._moveTo(plug, areaId);
+    else this._refresh();
   }
 
   async _moveTo(plug, areaId) {
@@ -861,6 +933,24 @@ class PowerHubCard extends HTMLElement {
       this._showToast(`沒有成功：${err?.message || err}`);
       this._refresh();
     }
+  }
+
+  // 插座照自訂順序（剛拖完、Home Assistant 還沒更新的先用本機的順序）
+  _orderedPlugs() {
+    const plugs = this._plugs;
+    if (!this._order) return plugs;
+    const rank = new Map(this._order.map((id, i) => [id, i]));
+    return plugs.slice().sort((a, b) => (rank.get(a.entity_id) ?? 1e9) - (rank.get(b.entity_id) ?? 1e9));
+  }
+
+  // 房間照自訂順序，沒排過的照名稱排在後面
+  _roomIds() {
+    const order = this._roomOrder || this._hass.states[MANAGED]?.attributes.area_order || [];
+    const rank = new Map(order.map((id, i) => [id, i]));
+    return this._areas
+      .slice()
+      .sort((a, b) => (rank.get(a.area_id) ?? 1e9) - (rank.get(b.area_id) ?? 1e9) || byName(a, b))
+      .map((a) => a.area_id);
   }
 
   // Home Assistant 的頁面不一定是整個視窗在捲，找到真正在捲的那一層
@@ -1030,7 +1120,7 @@ class PowerHubCard extends HTMLElement {
 
   _startAssign() {
     const areas = this._hass.areas || {};
-    const queue = this._plugs.filter((p) => !(p.area_id && areas[p.area_id])).sort(byName).map((p) => p.entity_id);
+    const queue = this._orderedPlugs().filter((p) => !(p.area_id && areas[p.area_id])).map((p) => p.entity_id);
     if (queue.length) this._openSheet({ type: "assign", queue, index: 0 });
   }
 

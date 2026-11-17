@@ -26,3 +26,14 @@ restore:
         text:
 
 rescan:
+
+set_order:
+  fields:
+    plugs:
+      example: '["switch.li_deng", "switch.tv"]'
+      selector:
+        object:
+    areas:
+      example: '["ke_ting", "wo_shi"]'
+      selector:
+        object:

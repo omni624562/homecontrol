@@ -35,6 +35,20 @@
     "rescan": {
       "name": "Rescan",
       "description": "Look for plugs again."
+    },
+    "set_order": {
+      "name": "Set order",
+      "description": "Remember the order of plugs and rooms on the dashboard.",
+      "fields": {
+        "plugs": {
+          "name": "Plugs",
+          "description": "Entity IDs of plugs, in order."
+        },
+        "areas": {
+          "name": "Rooms",
+          "description": "Area IDs, in order."
+        }
+      }
     }
   }
 }

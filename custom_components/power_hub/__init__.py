@@ -109,6 +109,12 @@ TURN_OFF_SCHEMA = vol.Schema(
     }
 )
 RESTORE_SCHEMA = vol.Schema({vol.Required("remember"): cv.string})
+SET_ORDER_SCHEMA = vol.Schema(
+    {
+        vol.Optional("plugs"): vol.All(cv.ensure_list, [cv.string]),
+        vol.Optional("areas"): vol.All(cv.ensure_list, [cv.string]),
+    }
+)
 
 
 @dataclass
@@ -174,6 +180,9 @@ class PowerHub:
         self._estimate_last: dict[str, tuple[datetime, bool]] = {}
         self._known: set[str] | None = None
         self._remembered: dict[str, list[str]] = {}
+        # 儀表板上自訂的順序：插座（實體 ID）和房間（區域 ID）
+        self.plug_order: list[str] = []
+        self.area_order: list[str] = []
         self._unsub_state: CALLBACK_TYPE | None = None
         self._rescan_debouncer = Debouncer(
             hass, _LOGGER, cooldown=2, immediate=False, function=self._async_rescan
@@ -188,6 +197,8 @@ class PowerHub:
         known = data.get("known")
         self._known = set(known) if known is not None else None
         self._remembered = data.get("remembered", {})
+        self.plug_order = list(data.get("plug_order", []))
+        self.area_order = list(data.get("area_order", []))
 
     def _data_to_save(self) -> dict[str, Any]:
         return {
@@ -195,6 +206,8 @@ class PowerHub:
             "energy_last": self._energy_last,
             "known": sorted(self._known or []),
             "remembered": self._remembered,
+            "plug_order": self.plug_order,
+            "area_order": self.area_order,
         }
 
     @callback
@@ -562,7 +575,13 @@ class PowerHub:
     def plug_info(self) -> list[dict[str, Any]]:
         area_reg = ar.async_get(self.hass)
         result = []
-        for plug in sorted(self.plugs.values(), key=lambda p: p.name):
+        # 先照儀表板上自訂的順序，沒排過的照名稱排在後面
+        rank = {entity_id: i for i, entity_id in enumerate(self.plug_order)}
+        ordered = sorted(
+            self.plugs.values(),
+            key=lambda p: (rank.get(p.entity_id, len(rank)), p.name),
+        )
+        for plug in ordered:
             area = area_reg.async_get_area(plug.area_id) if plug.area_id else None
             result.append(
                 {
@@ -613,6 +632,17 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         hub.rescan()
 
     hass.services.async_register(DOMAIN, "rescan", _rescan)
+
+    async def _set_order(call: ServiceCall) -> None:
+        """儀表板拖拉排序後呼叫：記住插座和房間的順序。"""
+        if "plugs" in call.data:
+            hub.plug_order = list(dict.fromkeys(call.data["plugs"]))
+        if "areas" in call.data:
+            hub.area_order = list(dict.fromkeys(call.data["areas"]))
+        await hub.async_save()
+        hub.update()
+
+    hass.services.async_register(DOMAIN, "set_order", _set_order, schema=SET_ORDER_SCHEMA)
 
     hass.async_create_task(async_load_platform(hass, Platform.SENSOR, DOMAIN, {}, config))
     return True

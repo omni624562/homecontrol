@@ -149,7 +149,7 @@ class PlugsSensor(HubSensor):
     key = "managed"
     _attr_name = "偵測到的插座"
     _attr_icon = "mdi:power-socket"
-    _unrecorded_attributes = frozenset({"plugs"})
+    _unrecorded_attributes = frozenset({"plugs", "area_order"})
 
     @property
     def native_value(self) -> int:
@@ -157,4 +157,4 @@ class PlugsSensor(HubSensor):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        return {"plugs": self.hub.plug_info()}
+        return {"plugs": self.hub.plug_info(), "area_order": self.hub.area_order}
