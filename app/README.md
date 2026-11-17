@@ -38,6 +38,30 @@ docker compose up -d --build
 - 打不開：手機和樹莓派不在同一個網段（訪客 Wi-Fi、另一台路由器），或 Wi-Fi 開了「AP 隔離」。把手機換到主要的 Wi-Fi，或在路由器關掉隔離
 - 在外面也想用：樹莓派和手機都裝 [Tailscale](https://tailscale.com)（免費），手機用 `http://樹莓派的Tailscale位址:8100` 開
 
+## Google Home（Matter，不經過雲端）
+
+樹莓派會同時跑一個 [Matterbridge](https://github.com/Luligu/matterbridge)，把每個插座變成 Matter 插座。Google Home 在家裡直接控制，不經過 TP-Link 雲端，斷網時語音和 Google Home App 也能用。Apple Home 和 Alexa 也可以用同樣的方式加入。
+
+需要一台 Google 中樞裝置：Nest Mini、Nest Audio、Nest Hub、Google TV Streamer 或 Chromecast with Google TV。
+
+配對（只要做一次）：
+
+1. 電腦或平板打開 `http://樹莓派的IP:8283`，畫面上會有配對 QR code
+2. 手機或平板打開 **Google Home** App →「＋」→「裝置」→「新裝置」→ 選家庭 →「Matter 裝置」
+3. 掃 QR code（或輸入畫面上的 11 位數配對碼）。出現「未經認證的裝置」時選「仍要繼續」
+4. 所有插座會一次加進來，在 Google Home 裡把它們分到房間
+
+之後：
+
+- 說「Hey Google，關掉立燈」，或在 Google Home 的「自動化」裡設定
+- 插座 App 和 Google Home 的開關狀態會互相同步；新找到的插座也會自動出現在 Google Home
+- Google Home 裡的名稱和房間是另外存的，配對後在插座 App 改名不會影響 Google Home。Matter 的名稱最多 32 bytes，超過的中文名稱會被截短，到 Google Home 裡改回來就好
+- 確定 Matter 能用之後，可以在 Google Home 移除原本的「TP-Link Kasa」連結，以免每個插座出現兩次
+
+注意：配對時手機要能連到樹莓派（同一個 Wi-Fi、沒有 AP 隔離）。如果手機連不上插座 App，就改用連得上的平板配對。
+
+要重新配對：停掉容器（`docker compose stop matterbridge`）後刪除 `app/data/matterbridge/`。
+
 ## 檔案
 
 | 檔案 | 內容 |
@@ -48,6 +72,7 @@ docker compose up -d --build
 | `plughub/tariff.py` | 台電累進電價表 |
 | `plughub/notify.py` | ntfy 通知 |
 | `plughub/static/` | 手機網頁 App（`app.js`）、圖示、加入主畫面用的設定 |
+| `matter/matterbridge-plughub/` | Google Home 串接：Matterbridge 外掛，把插座 App 的插座變成 Matter 插座 |
 
 ## API
 

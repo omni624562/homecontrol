@@ -12,3 +12,23 @@ services:
     volumes:
       - ./data:/data
     restart: unless-stopped
+
+  # Google Home 串接（Matter）：把插座變成 Matter 插座，Google Home 在家裡直接控制
+  # 設定頁 http://樹莓派的IP:8283 會顯示配對 QR code
+  matterbridge:
+    image: luligu/matterbridge:latest
+    container_name: matterbridge
+    # Matter 要用 mDNS 和 IPv6，一定要主機網路
+    network_mode: host
+    environment:
+      - TZ=Asia/Taipei
+      - MDNS_INTERFACE=eth0  # 樹莓派連家裡網路的網路卡（用 Wi-Fi 就改成 wlan0）
+    volumes:
+      - ./matter/matterbridge-plughub:/root/Matterbridge/matterbridge-plughub
+      - ./data/matterbridge/storage:/root/.matterbridge
+      - ./data/matterbridge/cert:/root/.mattercert
+    command: ["sh", "/root/Matterbridge/matterbridge-plughub/start.sh"]
+    stop_grace_period: 60s
+    restart: unless-stopped
+    depends_on:
+      - plughub
