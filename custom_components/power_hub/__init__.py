@@ -229,7 +229,13 @@ class PowerHub:
 
         def device_domains(device: dr.DeviceEntry) -> set[str]:
             domains = set()
-            for entry_id in device.config_entries:
+            # HA 2026.11 起一個裝置只屬於一個整合（config_entry_id），
+            # config_entries 已棄用；舊版沒有 config_entry_id 才用 config_entries
+            if hasattr(device, "config_entry_id"):
+                entry_ids = {device.config_entry_id}
+            else:
+                entry_ids = device.config_entries
+            for entry_id in entry_ids:
                 if entry := self.hass.config_entries.async_get_entry(entry_id):
                     domains.add(entry.domain)
             return domains
@@ -313,8 +319,12 @@ class PowerHub:
         device: dr.DeviceEntry,
     ) -> tuple[str | None, str | None]:
         """找裝置（和它底下的子裝置）的功率與終身累計用電感測器。"""
+        # HA 2026.11 起直接迭代 devices 會得到裝置本身；舊版得到的是裝置 ID
+        all_devices = [
+            dev_reg.async_get(d) if isinstance(d, str) else d for d in dev_reg.devices
+        ]
         device_ids = [device.id] + [
-            d.id for d in dev_reg.devices.values() if d.via_device_id == device.id
+            d.id for d in all_devices if d is not None and d.via_device_id == device.id
         ]
         power: list[er.RegistryEntry] = []
         energy: list[er.RegistryEntry] = []
