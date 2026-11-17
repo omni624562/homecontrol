@@ -23,6 +23,9 @@ const LABEL_NIGHT = "夜間關閉";
 const WATTS_LABEL = /^\s*(\d+(?:\.\d+)?)\s*[wW]\s*$/;
 const UNDO_KEY = "dashboard_undo";
 const TOAST_MS = 6000;
+const HOLD_MS = 350; // 手機上按住多久開始拖拉
+const DRAG_PX = 6; // 滑鼠移動多少開始拖拉
+const NEW_ROOM = "__new_room__";
 
 const esc = (s) =>
   String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -174,6 +177,37 @@ const STYLE = `
 
   .empty { padding: 20px; color: var(--ph-muted); font-size: 14px; text-align: center; }
 
+  /* 拖拉 */
+  .plug { -webkit-touch-callout: none; }
+  .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 4px 0; }
+  .toolbar-title { font-size: 15px; font-weight: 600; color: var(--ph-muted); }
+  .toolbar.arranging {
+    position: sticky; top: calc(var(--header-height, 56px) + 8px); z-index: 3;
+    padding: 10px 10px 10px 16px; border-radius: 14px;
+    background: var(--ph-accent); color: #fff; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  }
+  .toolbar.arranging .toolbar-title { color: #fff; font-weight: 500; }
+  .toolbar.arranging .small-btn { background: #fff; color: var(--ph-accent); }
+  .arrange .plug { touch-action: none; cursor: grab; min-height: 72px; }
+  .arrange .plug:active { transform: none; }
+  .grip { width: 36px; height: 36px; margin: -6px -6px 0 0; display: grid; place-items: center; color: var(--ph-muted); }
+  .grip ha-icon { --mdc-icon-size: 20px; }
+  .plug.dragging { opacity: 0.25; }
+  .ghost {
+    position: fixed; z-index: 20; pointer-events: none; margin: 0;
+    transform: rotate(2deg) scale(1.05); box-shadow: 0 14px 34px rgba(0, 0, 0, 0.28);
+    background: var(--ph-card) !important; opacity: 0.96;
+  }
+  .ghost.on { background: color-mix(in srgb, var(--ph-on) 22%, var(--ph-card)) !important; }
+  [data-drop] { transition: background 0.15s, box-shadow 0.15s; }
+  [data-drop].over { box-shadow: 0 0 0 2px var(--ph-accent); background: color-mix(in srgb, var(--ph-accent) 7%, var(--ph-card)); }
+  .drop-empty {
+    border: 2px dashed var(--ph-line); border-radius: 14px; padding: 18px; text-align: center;
+    font-size: 13px; color: var(--ph-muted);
+  }
+  .new-zone { padding: 22px 14px; text-align: center; border-style: dashed; color: var(--ph-muted); font-size: 14px; }
+  .new-zone ha-icon { --mdc-icon-size: 22px; display: block; margin: 0 auto 6px; }
+
   /* 設定 */
   .panel { padding: 16px; }
   .panel-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
@@ -284,6 +318,9 @@ class PowerHubCard extends HTMLElement {
     this._toastHost = this.shadowRoot.querySelector(".toast-host");
     this._pending = new Set(); // 剛按下、還沒收到新狀態的插座
     this._sheet = null; // 開著的底部面板
+    this._arrange = false; // 整理房間模式
+    this._moved = {}; // 剛拖到別的房間、Home Assistant 還沒更新的插座
+    this._drag = null; // 正在拖拉的插座
   }
 
   setConfig(config) {
@@ -300,6 +337,8 @@ class PowerHubCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+    // 拖拉中不重畫，放開後再畫
+    if (this._drag) return;
     // 正在輸入時不重畫，免得打到一半被清掉；離開輸入框後會再畫
     const active = this.shadowRoot.activeElement;
     if (active && active.tagName === "INPUT" && this._main.contains(active)) return;
@@ -340,7 +379,11 @@ class PowerHubCard extends HTMLElement {
       parts.push(h.states[p.entity_id]?.state, p.power_entity && h.states[p.power_entity]?.state);
     }
     parts.push(this._areas.map((a) => `${a.area_id}:${a.name}:${a.icon}`).join(","));
-    parts.push([...this._pending].join(","));
+    // Home Assistant 已經更新的，就不用再記著
+    for (const p of this._plugs) {
+      if (p.entity_id in this._moved && (p.area_id || null) === this._moved[p.entity_id]) delete this._moved[p.entity_id];
+    }
+    parts.push([...this._pending].join(","), JSON.stringify(this._moved), this._arrange);
     return parts.join("~");
   }
 
@@ -427,8 +470,14 @@ class PowerHubCard extends HTMLElement {
 
     const areas = h.areas || {};
     const byArea = new Map();
+    // 整理模式：所有房間都列出來（空房間也可以拖進去）
+    if (this._arrange) {
+      byArea.set(UNASSIGNED, []);
+      for (const a of this._areas) byArea.set(a.area_id, []);
+    }
     for (const p of plugs) {
-      const key = p.area_id && areas[p.area_id] ? p.area_id : UNASSIGNED;
+      const area = this._areaOf(p);
+      const key = area && areas[area] ? area : UNASSIGNED;
       if (!byArea.has(key)) byArea.set(key, []);
       byArea.get(key).push(p);
     }
@@ -437,34 +486,50 @@ class PowerHubCard extends HTMLElement {
     if (byArea.has(UNASSIGNED)) order.unshift(UNASSIGNED);
 
     const rooms = order.map((id) => this._roomHtml(id, areas[id], byArea.get(id).slice().sort(byName)));
+    if (this._arrange) {
+      rooms.push(`<section class="block room new-zone" data-drop="${NEW_ROOM}"><ha-icon icon="mdi:plus"></ha-icon>拖到這裡，建立新房間</section>`);
+    }
+
+    const toolbar = this._arrange
+      ? `<div class="toolbar arranging"><div class="toolbar-title">把插座拖到其他房間</div><button class="small-btn" data-arrange>完成</button></div>`
+      : `<div class="toolbar"><div class="toolbar-title">房間</div><button class="small-btn" data-arrange><ha-icon icon="mdi:drag-variant"></ha-icon>整理房間</button></div>`;
 
     return `
-      <div class="wrap">
+      <div class="wrap ${this._arrange ? "arrange" : ""}">
         <section class="block hero">${hero}${alerts.join("")}${actions}</section>
-        ${plugs.length ? `<div class="cols">${rooms.join("")}</div>` : `<div class="block empty">還沒有插座。到「設定 → 裝置與服務」加入插座後會自動出現在這裡。</div>`}
+        ${plugs.length ? `${toolbar}<div class="cols">${rooms.join("")}</div>` : `<div class="block empty">還沒有插座。到「設定 → 裝置與服務」加入插座後會自動出現在這裡。</div>`}
       </div>`;
+  }
+
+  // 剛拖過去、Home Assistant 還沒更新的，先顯示在新房間
+  _areaOf(p) {
+    return p.entity_id in this._moved ? this._moved[p.entity_id] : p.area_id;
   }
 
   _roomHtml(id, area, list) {
     const roomOn = list.filter((p) => this._isOn(p)).length;
+    const arrange = this._arrange;
+    const body = list.length
+      ? `<div class="plugs">${list.map((p) => this._plugHtml(p)).join("")}</div>`
+      : `<div class="drop-empty">把插座拖到這裡</div>`;
     if (id === UNASSIGNED) {
       return `
-        <section class="block room unassigned">
+        <section class="block room unassigned" data-drop="${UNASSIGNED}">
           <div class="room-head">
             <div class="room-icon"><ha-icon icon="mdi:help-circle-outline"></ha-icon></div>
             <div class="room-title">
               <div class="room-name">還沒分房間</div>
               <div class="room-sub">${list.length} 個插座</div>
             </div>
-            <button class="small-btn primary" data-assign><ha-icon icon="mdi:home-plus-outline"></ha-icon>分配房間</button>
+            ${arrange || !list.length ? "" : `<button class="small-btn primary" data-assign><ha-icon icon="mdi:home-plus-outline"></ha-icon>分配房間</button>`}
           </div>
-          <div class="hint">按「分配房間」，一個一個點選就好；分好之後可以一鍵關閉整個房間。</div>
-          <div class="plugs">${list.map((p) => this._plugHtml(p)).join("")}</div>
+          ${arrange || !list.length ? "" : `<div class="hint">把插座拖到下面的房間，或按「分配房間」一個一個點選。手機上按住插座一下再拖。</div>`}
+          ${body}
         </section>`;
     }
-    const canOff = list.some((p) => this._isOn(p) && !p.keep_on);
+    const canOff = !arrange && list.some((p) => this._isOn(p) && !p.keep_on);
     return `
-      <section class="block room">
+      <section class="block room" data-drop="${esc(id)}">
         <div class="room-head">
           <div class="room-icon"><ha-icon icon="${esc(area.icon || "mdi:home-outline")}"></ha-icon></div>
           <button class="room-title" data-room="${esc(id)}" title="改房間名稱">
@@ -473,7 +538,7 @@ class PowerHubCard extends HTMLElement {
           </button>
           ${canOff ? `<button class="small-btn" data-off="area:${esc(id)}"><ha-icon icon="mdi:power"></ha-icon>全關</button>` : ""}
         </div>
-        <div class="plugs">${list.map((p) => this._plugHtml(p)).join("")}</div>
+        ${body}
       </section>`;
   }
 
@@ -492,7 +557,9 @@ class PowerHubCard extends HTMLElement {
       <div class="${cls}" role="switch" tabindex="0" aria-checked="${on}" data-plug="${esc(p.entity_id)}">
         <div class="plug-top">
           <div class="knob"><ha-icon icon="${icon}"></ha-icon></div>
-          <button class="edit" data-edit="${esc(p.entity_id)}" aria-label="設定 ${esc(p.name)}"><ha-icon icon="mdi:dots-horizontal"></ha-icon></button>
+          ${this._arrange
+            ? `<span class="grip" aria-hidden="true"><ha-icon icon="mdi:drag"></ha-icon></span>`
+            : `<button class="edit" data-edit="${esc(p.entity_id)}" aria-label="設定 ${esc(p.name)}"><ha-icon icon="mdi:dots-horizontal"></ha-icon></button>`}
         </div>
         <div>
           <div class="plug-name">${esc(p.name)}</div>
@@ -583,9 +650,18 @@ class PowerHubCard extends HTMLElement {
     const on = (sel, ev, fn) => root.querySelectorAll(sel).forEach((el) => el.addEventListener(ev, (e) => fn(el, e)));
 
     on("[data-plug]", "click", (el, e) => {
+      // 剛拖完放開也會觸發 click，不要當成開關
+      if (this._justDragged || this._arrange) return;
       if (!e.target.closest("[data-edit]")) this._toggle(el.dataset.plug);
     });
+    on("[data-plug]", "pointerdown", (el, e) => this._dragDown(el, e));
+    on("[data-plug]", "contextmenu", (el, e) => e.preventDefault());
+    on("[data-arrange]", "click", () => {
+      this._arrange = !this._arrange;
+      this._refresh();
+    });
     on("[data-plug]", "keydown", (el, e) => {
+      if (this._arrange) return;
       if ((e.key === "Enter" || e.key === " ") && e.target === el) {
         e.preventDefault();
         this._toggle(el.dataset.plug);
@@ -626,6 +702,179 @@ class PowerHubCard extends HTMLElement {
       el.disabled = true;
       this._safe(() => this._setLabel(p, LABEL_NIGHT, !p.night));
     });
+  }
+
+  // ───────────── 拖拉換房間 ─────────────
+  //
+  // 滑鼠：按下移動一點點就開始拖。
+  // 手機：整理模式下直接拖；平常要先按住一下（不然會跟捲動畫面衝突）。
+
+  _dragDown(el, e) {
+    if (e.button > 0 || e.target.closest("[data-edit]")) return;
+    const touch = e.pointerType !== "mouse";
+    const d = {
+      el,
+      entityId: el.dataset.plug,
+      pointerId: e.pointerId,
+      x: e.clientX,
+      y: e.clientY,
+      started: false,
+      ready: !touch || this._arrange,
+    };
+    this._pre = d;
+    if (!d.ready) {
+      d.timer = setTimeout(() => {
+        d.ready = true;
+        navigator.vibrate?.(15);
+        this._dragBegin(d, d.x, d.y);
+      }, HOLD_MS);
+    }
+    const move = (ev) => {
+      if (ev.pointerId !== d.pointerId) return;
+      if (!d.started) {
+        const far = Math.hypot(ev.clientX - d.x, ev.clientY - d.y) > DRAG_PX;
+        if (!far) return;
+        // 還沒按夠久就移動 = 想捲動畫面，不拖
+        if (!d.ready) return cleanup();
+        this._dragBegin(d, ev.clientX, ev.clientY);
+      }
+      ev.preventDefault();
+      this._dragMove(ev.clientX, ev.clientY);
+    };
+    // 拖拉中擋掉手機的捲動
+    const touchmove = (ev) => d.started && ev.cancelable && ev.preventDefault();
+    const up = (ev) => {
+      if (ev.pointerId !== d.pointerId) return;
+      const dropped = d.started;
+      cleanup();
+      if (dropped) this._dragEnd(ev.type === "pointerup");
+    };
+    const cleanup = () => {
+      clearTimeout(d.timer);
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+      window.removeEventListener("touchmove", touchmove);
+      if (this._pre === d) this._pre = null;
+    };
+    window.addEventListener("pointermove", move, { passive: false });
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+    window.addEventListener("touchmove", touchmove, { passive: false });
+  }
+
+  _dragBegin(d, x, y) {
+    if (d.started || !d.el.isConnected) return;
+    d.started = true;
+    const rect = d.el.getBoundingClientRect();
+    const ghost = d.el.cloneNode(true);
+    ghost.classList.add("ghost");
+    ghost.classList.remove("pending");
+    Object.assign(ghost.style, { width: `${rect.width}px`, height: `${rect.height}px`, left: `${rect.left}px`, top: `${rect.top}px` });
+    this.shadowRoot.appendChild(ghost);
+    d.ghost = ghost;
+    d.dx = x - rect.left;
+    d.dy = y - rect.top;
+    d.from = this._areaOf(this._plug(d.entityId)) || UNASSIGNED;
+    this._drag = d;
+    // 平常模式下開始拖：暫時切到整理模式，空房間和「新房間」才會出現
+    if (!this._arrange) {
+      this._arrange = true;
+      d.autoArrange = true;
+      this._sig = this._signature();
+      this._render();
+    }
+    this._markDragging();
+    this._scroller = this._findScroller();
+    this._dragMove(x, y);
+  }
+
+  _markDragging() {
+    const d = this._drag;
+    this._main.querySelectorAll("[data-plug]").forEach((el) => el.classList.toggle("dragging", !!d && el.dataset.plug === d.entityId));
+  }
+
+  _dragMove(x, y) {
+    const d = this._drag;
+    if (!d) return;
+    d.cx = x;
+    d.cy = y;
+    d.ghost.style.left = `${x - d.dx}px`;
+    d.ghost.style.top = `${y - d.dy}px`;
+    const hit = this.shadowRoot.elementFromPoint(x, y)?.closest("[data-drop]");
+    if (hit !== d.over) {
+      d.over?.classList.remove("over");
+      d.over = hit && hit.dataset.drop !== d.from ? hit : null;
+      d.over?.classList.add("over");
+    }
+    // 拖到畫面上下邊緣時自動捲動
+    const edge = 70;
+    d.scroll = y < edge ? -1 : y > window.innerHeight - edge ? 1 : 0;
+    if (d.scroll && !d.raf) {
+      const step = () => {
+        if (!this._drag || !d.scroll) {
+          d.raf = null;
+          return;
+        }
+        this._scroller.scrollBy(0, d.scroll * 12);
+        this._dragMove(d.cx, d.cy);
+        d.raf = requestAnimationFrame(step);
+      };
+      d.raf = requestAnimationFrame(step);
+    }
+  }
+
+  _dragEnd(drop) {
+    const d = this._drag;
+    if (!d) return;
+    this._drag = null;
+    cancelAnimationFrame(d.raf);
+    d.ghost.remove();
+    this._markDragging();
+    d.over?.classList.remove("over");
+    if (d.autoArrange) this._arrange = false;
+    this._justDragged = true;
+    setTimeout(() => (this._justDragged = false), 50);
+
+    const target = drop && d.over ? d.over.dataset.drop : null;
+    const plug = this._plug(d.entityId);
+    if (!target || !plug) return this._refresh();
+    if (target === NEW_ROOM) {
+      this._refresh();
+      this._openSheet({ type: "newroom", entityId: d.entityId });
+      return;
+    }
+    const areaId = target === UNASSIGNED ? null : target;
+    this._moveTo(plug, areaId);
+  }
+
+  async _moveTo(plug, areaId) {
+    const before = plug.area_id || null;
+    this._moved[plug.entity_id] = areaId;
+    this._refresh();
+    const name = areaId ? this._hass.areas?.[areaId]?.name : "還沒分房間";
+    try {
+      await this._setRoom(plug, areaId);
+      this._showToast(`${plug.name} → ${name}`);
+    } catch (err) {
+      this._moved[plug.entity_id] = before;
+      this._showToast(`沒有成功：${err?.message || err}`);
+      this._refresh();
+    }
+  }
+
+  // Home Assistant 的頁面不一定是整個視窗在捲，找到真正在捲的那一層
+  _findScroller() {
+    let node = this;
+    while (node) {
+      node = node.parentNode || node.host;
+      if (!node || node === document) break;
+      if (node instanceof Element) {
+        const style = getComputedStyle(node);
+        if (/(auto|scroll)/.test(style.overflowY) && node.scrollHeight > node.clientHeight) return node;
+      }
+    }
+    return window;
   }
 
   _setNumber(entityId, value) {
@@ -771,6 +1020,7 @@ class PowerHubCard extends HTMLElement {
     this._labelCache = null;
     this._sheet = sheet;
     this._renderSheet();
+    if (sheet.type === "newroom") this._sheetHost.querySelector("[data-new-room-name]")?.focus();
   }
 
   _closeSheet() {
@@ -810,6 +1060,7 @@ class PowerHubCard extends HTMLElement {
     if (s.type === "plug") body = this._plugSheet(s);
     else if (s.type === "assign") body = this._assignSheet(s);
     else if (s.type === "room") body = this._roomSheet(s);
+    else if (s.type === "newroom") body = this._newRoomSheet(s);
     if (body === null) return this._closeSheet();
     s.rendered = true;
 
@@ -889,6 +1140,21 @@ class PowerHubCard extends HTMLElement {
       </div>`;
   }
 
+  _newRoomSheet(s) {
+    const p = this._plug(s.entityId);
+    if (!p) return null;
+    return `
+      ${this._sheetHead("新房間")}
+      <div class="field">
+        <div class="field-label">房間名稱</div>
+        <input class="text" data-new-room-name placeholder="例如：書房" maxlength="30" enterkeyhint="done">
+      </div>
+      <div class="desc" style="margin-bottom:16px">建立之後，「${esc(p.name)}」會放進這個房間。</div>
+      <div class="sheet-actions">
+        <button class="btn primary" data-new-room-ok>建立</button>
+      </div>`;
+  }
+
   _roomSheet(s) {
     const area = this._hass.areas?.[s.areaId];
     if (!area) return null;
@@ -963,6 +1229,10 @@ class PowerHubCard extends HTMLElement {
         s.newRoom = false;
         if (s.type === "assign") {
           await this._pickRoom(areaId);
+        } else if (s.type === "newroom") {
+          const p = this._plug(s.entityId);
+          this._closeSheet();
+          if (p) await this._moveTo(p, areaId);
         } else {
           s.area = areaId;
           this._renderSheet();
