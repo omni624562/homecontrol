@@ -278,7 +278,7 @@ class PowerHub:
                 labels = label_names(entry.labels) | device_labels
                 if LABEL_IGNORE in labels:
                     continue
-                name = self._plug_name(entry, device)
+                name = self._plug_name(entry, device, multi=len(switches) > 1)
                 plug = Plug(
                     entity_id=entry.entity_id,
                     device_id=device_id,
@@ -303,10 +303,18 @@ class PowerHub:
         self.update()
 
     @staticmethod
-    def _plug_name(entry: er.RegistryEntry, device: dr.DeviceEntry) -> str:
-        """跟 Home Assistant 顯示的名稱一樣：自訂名稱優先，否則「裝置名稱 實體名稱」。"""
+    def _plug_name(
+        entry: er.RegistryEntry, device: dr.DeviceEntry, multi: bool = False
+    ) -> str:
+        """跟 Home Assistant 顯示的名稱一樣：自訂名稱優先，否則「裝置名稱 實體名稱」。
+
+        多孔排插的每一孔，如果整台排插沒改過名稱（還是 TP-LINK_Smart Plug_C599 這種
+        出廠名稱），就只用孔的名稱，例如「餐桌燈」。
+        """
         if entry.name:
             return entry.name
+        if multi and not device.name_by_user and entry.original_name:
+            return entry.original_name
         device_name = device.name_by_user or device.name or ""
         if entry.has_entity_name and entry.original_name:
             return f"{device_name} {entry.original_name}".strip()
