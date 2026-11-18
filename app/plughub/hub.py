@@ -1474,7 +1474,7 @@ class Hub:
         prev = sum(d["kwh"] for d in days[-15:-8])
         price = rep["price"]
         lines = [f"用電約 {this:.1f} 度（{this * price:.0f} 元）" + (f"，比上週{'多' if this > prev else '少'} {abs(this - prev) / prev * 100:.0f}%" if prev > 0 else "")]
-        top = sorted(((sum(p["days"][-8:-1]) / 60, p["name"]) for p in rep["plugs"]), reverse=True)[:3]
+        top = sorted(((sum((p.get("days") or [])[-8:-1]) / 60, p["name"]) for p in rep["plugs"]), reverse=True)[:3]
         if top and top[0][0] > 0:
             lines.append("開最久：" + "、".join(f"{n} {h:.0f} 小時" for h, n in top if h > 0))
         week_ago = time.time() - 7 * 86400
