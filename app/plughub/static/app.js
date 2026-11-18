@@ -808,7 +808,7 @@ const STYLE = `
   .wseg { position: relative; display: flex; align-items: center; }
   .wcol {
     position: relative; height: 100%; width: 68px; overflow-y: scroll; scroll-snap-type: y mandatory; overscroll-behavior: contain;
-    padding: calc((var(--rows) - 1) / 2 * var(--row)) 0; scrollbar-width: none; outline: none; cursor: ns-resize;
+    padding: calc((var(--rows) - 1) / 2 * var(--row)) 0; scrollbar-width: none; outline: none; cursor: grab;
     -webkit-mask-image: linear-gradient(to bottom, transparent 0, rgba(0,0,0,.35) 18%, #000 40%, #000 60%, rgba(0,0,0,.35) 82%, transparent 100%);
     mask-image: linear-gradient(to bottom, transparent 0, rgba(0,0,0,.35) 18%, #000 40%, #000 60%, rgba(0,0,0,.35) 82%, transparent 100%);
   }
@@ -965,6 +965,9 @@ class PlugApp extends HTMLElement {
       viz.querySelectorAll(".hot").forEach((x) => x.classList.remove("hot"));
     });
     root.addEventListener("pointerdown", (e) => {
+      // 滑鼠按住滾輪上下拖，跟手機用手指滑一樣
+      const wc = e.target.closest?.(".wcol");
+      if (wc && e.pointerType === "mouse" && e.button === 0) return this._wheelDrag(e, wc);
       const md = e.target.closest?.("[data-mdrag]");
       if (md && this._mapEdit) return this._mapDragStart(e, md);
       const grip = e.target.closest?.("[data-drag]");
@@ -2815,6 +2818,7 @@ class PlugApp extends HTMLElement {
   // ───────────── 事件（全部用事件委派，畫面重畫也不用重新綁） ─────────────
 
   _onClick(e) {
+    if (this._noClick) return; // 剛拖完滾輪，不算點擊
     const t = e.target.closest("[data-a]");
     if (!t || t.disabled) return;
     const fn = this._actions[t.dataset.a];
@@ -3605,7 +3609,47 @@ class PlugApp extends HTMLElement {
     }
   }
 
+  _wheelDrag(e, col) {
+    e.preventDefault();
+    const y0 = e.clientY;
+    const top0 = col.scrollTop;
+    let moved = false;
+    col._drag = true;
+    const move = (ev) => {
+      const dy = ev.clientY - y0;
+      if (!moved && Math.abs(dy) < 4) return;
+      if (!moved) {
+        moved = true;
+        col.style.scrollSnapType = "none";
+        col.style.cursor = "grabbing";
+      }
+      col.scrollTop = top0 - dy;
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+      col._drag = false;
+      col.style.cursor = "";
+      if (!moved) return; // 沒拖：當作點擊（點上下的數字會跳過去）
+      this._noClick = true;
+      setTimeout(() => (this._noClick = false), 0);
+      const i = Math.max(0, Math.min(col.children.length - 1, Math.round(col.scrollTop / WHEEL_ROW)));
+      col.style.scrollSnapType = "";
+      col.scrollTo({ top: i * WHEEL_ROW, behavior: "smooth" });
+      this._wheelScroll(col);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+  }
+
   _wheelScroll(col) {
+    if (col._drag) {
+      col._busy = true; // 拖的時候不要讀值、也不要被重畫拉回去
+      clearTimeout(col._t);
+      return;
+    }
     if (col._sync) {
       col._sync = false; // 程式自己捲的，不算
       return;
