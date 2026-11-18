@@ -127,6 +127,27 @@ const hms = (v) => {
 };
 // 時間／長度選擇器：滾輪（像手機鬧鐘）。手指上下滑、滑鼠滾輪、點數字、鍵盤 ↑ ↓ 都可以
 const pad2 = (n) => String(n).padStart(2, "0");
+
+// 天氣代碼（WMO）→ 文字、圖示（白天／晚上）
+function wx(code, day = 1) {
+  const c = +code;
+  const t =
+    c === 0 ? ["晴", day ? "mdi:weather-sunny" : "mdi:weather-night"]
+    : c <= 2 ? [c === 1 ? "大致晴朗" : "晴時多雲", day ? "mdi:weather-partly-cloudy" : "mdi:weather-night-partly-cloudy"]
+    : c === 3 ? ["陰天", "mdi:weather-cloudy"]
+    : c <= 48 ? ["有霧", "mdi:weather-fog"]
+    : c <= 55 ? ["毛毛雨", "mdi:weather-partly-rainy"]
+    : c <= 57 || c === 66 || c === 67 ? ["凍雨", "mdi:weather-rainy"]
+    : c <= 61 || c === 80 ? ["小雨", "mdi:weather-rainy"]
+    : c <= 63 || c === 81 ? ["下雨", "mdi:weather-rainy"]
+    : c <= 65 || c === 82 ? ["大雨", "mdi:weather-pouring"]
+    : c <= 77 || c === 85 || c === 86 ? ["下雪", "mdi:weather-snowy"]
+    : c >= 95 ? ["雷雨", "mdi:weather-lightning-rainy"]
+    : ["—", "mdi:weather-cloudy"];
+  return { text: t[0], icon: t[1] };
+}
+// PM2.5（µg/m³）→ 環境部的等級
+const pmLevel = (v) => (v == null ? null : v <= 15.4 ? ["良好", "ok"] : v <= 35.4 ? ["普通", ""] : v <= 54.4 ? ["對敏感族群不健康", "warn"] : ["不健康", "bad"]);
 // 路由器上的裝置：從名字、廠商猜種類
 const KIND = {
   phone: { icon: "mdi:cellphone", label: "手機" },
@@ -699,6 +720,40 @@ const STYLE = `
   .bstat { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
   .bstat .i { width: 16px; height: 16px; }
   .bstat.ok { color: var(--ok); } .bstat.bad { color: var(--warn); }
+  button.spill { cursor: pointer; font: inherit; font-size: 13px; }
+  button.spill:hover { background: var(--hover); }
+  .wchip { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border-radius: 999px; background: var(--card); border: 1px solid var(--line); color: var(--text); font: inherit; font-size: 14px; cursor: pointer; white-space: nowrap; }
+  .wchip:hover { background: var(--hover); }
+  .wchip .i { width: 20px; height: 20px; color: var(--accent); }
+  .wchip small { color: var(--muted); font-size: 12px; }
+  .wnow { display: flex; align-items: center; gap: 16px; padding: 4px 2px 14px; }
+  .wnow > .i { width: 56px; height: 56px; color: var(--accent); flex: none; }
+  .wnow .tp { font-size: 44px; font-weight: 600; line-height: 1; letter-spacing: -1px; font-variant-numeric: tabular-nums; }
+  .wnow .tx { color: var(--text2); font-size: 14px; margin-top: 4px; }
+  .wfacts { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; margin-bottom: 14px; }
+  .wfacts > div { background: var(--soft); border-radius: var(--r-sm); padding: 9px 11px; }
+  .wfacts .l { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 4px; }
+  .wfacts .l .i { width: 14px; height: 14px; }
+  .wfacts .v { font-size: 16px; font-weight: 600; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .wfacts .v.ok { color: var(--ok); } .wfacts .v.warn, .wfacts .v.bad { color: var(--warn); }
+  .whours { display: flex; gap: 4px; overflow-x: auto; padding: 2px 0 10px; scrollbar-width: thin; }
+  .whours > div { flex: none; width: 52px; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 0; border-radius: var(--r-sm); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .whours > div.now { background: var(--accent-soft); color: var(--accent-text); }
+  .whours .i { width: 22px; height: 22px; color: var(--text2); }
+  .whours b { font-size: 14px; color: var(--text); font-weight: 600; }
+  .whours .pop { color: var(--accent-text); min-height: 15px; }
+  .wdays { display: flex; flex-direction: column; }
+  .wday { display: grid; grid-template-columns: 52px 26px minmax(0, 1fr) 46px 38px minmax(60px, 120px) 38px; align-items: center; gap: 8px; padding: 9px 0; border-top: 1px solid var(--line); font-size: 14px; font-variant-numeric: tabular-nums; }
+  .wday:first-child { border-top: 0; }
+  .wday .i { width: 22px; height: 22px; color: var(--text2); }
+  .wday .d { font-weight: 600; } .wday .tx { color: var(--text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wday .pop { color: var(--accent-text); font-size: 13px; display: inline-flex; align-items: center; justify-content: flex-end; gap: 2px; }
+  .wday .pop .i { width: 14px; height: 14px; color: var(--accent-text); }
+  .wbody { padding: 0 16px 12px; }
+  .wday .lo { color: var(--muted); text-align: right; } .wday .hi { font-weight: 600; }
+  .wbar { position: relative; height: 5px; border-radius: 3px; background: var(--soft2); }
+  .wbar i { position: absolute; top: 0; bottom: 0; border-radius: 3px; background: linear-gradient(90deg, #60a5fa, #f59e0b); }
+  @media (max-width: 520px) { .wday { grid-template-columns: 44px 24px minmax(0, 1fr) 40px 32px 34px; } .wday .wbar { display: none; } }
   .sched .tag .i:last-child:not(:first-child) { margin-left: 1px; }
   .sched .tag.warn { background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--warn); margin-left: 4px; }
   .sched.off .tag { opacity: .8; }
@@ -1520,7 +1575,7 @@ class PlugApp extends HTMLElement {
     const head = `
       <div class="ph">
         <div><h1>我的家</h1><div class="sub">${onCount ? `<b>${onCount} 個開著</b>・` : ""}共 ${plugs.length} 個裝置</div></div>
-        <div class="right"><button class="link" data-a="edit">編輯</button></div>
+        <div class="right">${this._weatherChip()}<button class="link" data-a="edit">編輯</button></div>
       </div>`;
     if (!plugs.length) {
       return `${head}<div class="card"><div class="empty">還沒找到插座。<br>確認插座已經接上家裡的 Wi-Fi。<br><br><button class="btn primary" data-a="discover">${ic("mdi:magnify")}現在找</button></div></div>`;
@@ -1545,6 +1600,15 @@ class PlugApp extends HTMLElement {
     return "";
   }
 
+  // 首頁的天氣小按鈕：點開看預報
+  _weatherChip(cls = "wchip") {
+    const w = this._s.calendar?.weather;
+    if (!w || w.temp == null) return "";
+    const x = wx(w.code, w.day);
+    const today = (w.daily || [])[0];
+    return `<button class="${cls}" data-a="weather" aria-label="天氣：${x.text} ${fmt(w.temp)} 度">${ic(x.icon)}${fmt(w.temp)}°<small>${x.text}${today?.pop >= 30 ? `・降雨 ${today.pop}%` : ""}</small></button>`;
+  }
+
   _statusPills() {
     const s = this._s;
     const people = s.people || [];
@@ -1552,6 +1616,7 @@ class PlugApp extends HTMLElement {
     const on = this._plugs.filter((p) => p.online && this._isOn(p)).length;
     const r = s.router || {};
     return [
+      this._weatherChip("spill"),
       people.length ? `<span class="spill ${home ? "ok" : ""}">${ic("mdi:home-outline")}${home ? `${home} 人在家` : "都出門了"}</span>` : "",
       s.summary.power != null ? `<span class="spill">${ic("mdi:flash")}${fmt(s.summary.power)} W</span>` : "",
       `<span class="spill">${ic("mdi:power")}${on} 個開著</span>`,
@@ -1600,7 +1665,7 @@ class PlugApp extends HTMLElement {
         </div>`;
     };
     return `
-      <div class="ph"><div><h1>我的家</h1></div><div class="right"><button class="link" data-a="edit">編輯</button></div></div>
+      <div class="ph"><div><h1>我的家</h1></div><div class="right">${this._weatherChip()}<button class="link" data-a="edit">編輯</button></div></div>
       <div class="bscenes">${scenes}</div>
       <div class="brooms">${groups
         .map((g) => `<section class="broom"><h2>${esc(g.name)}<small>${g.plugs.filter((p) => p.online && this._isOn(p)).length} 個開著</small><span class="end">${this._roomBtn(g)}</span></h2><div class="tiles">${g.plugs.map(tile).join("")}</div></section>`)
@@ -2504,6 +2569,57 @@ class PlugApp extends HTMLElement {
   }
 
   // Wi-Fi 感測（實驗）：每台插座 × 最近 60 分鐘的擾動熱力圖
+  // 天氣：現在、接下來 24 小時、4 天
+  _weatherSheet() {
+    const c = this._s.calendar || {};
+    const w = c.weather;
+    const on = this._s.settings.weather !== false;
+    const head = this._sheetHead("mdi:weather-partly-cloudy", "天氣", "家裡附近（大約 10 公里內）");
+    const toggle = `<div class="group" style="margin-top:12px"><div class="gi"><div class="gt"><div class="gl">首頁顯示天氣</div><div class="gs">每 30 分鐘向 Open-Meteo 查一次，只送出大約的位置（經緯度到小數一位），不送其他資料</div></div>
+      <button class="sw ${on ? "on" : ""}" data-a="weather-toggle" role="switch" aria-checked="${on}" aria-label="首頁顯示天氣"></button></div></div>`;
+    if (!w) return `${head}<div class="empty">${on ? (c.weather_error ? `查不到天氣：${esc(c.weather_error)}` : "查詢中，等幾秒…") : "首頁天氣已關閉"}</div>${toggle}`;
+    const x = wx(w.code, w.day);
+    const pm = pmLevel(w.pm25);
+    const today = (w.daily || [])[0] || {};
+    const facts = [
+      ["mdi:thermometer", "體感", `${fmt(w.feels)}°`],
+      ["mdi:water-percent", "濕度", `${fmt(w.humidity)}%`],
+      ["mdi:umbrella-outline", "今天降雨", today.pop != null ? `${today.pop}%` : "—"],
+      ["mdi:weather-windy", "風速", `${fmt(w.wind)} km/h`],
+      ["mdi:white-balance-sunny", "紫外線", today.uv != null ? `${fmt(today.uv)}${today.uv >= 8 ? " 過量" : today.uv >= 6 ? " 高" : ""}` : "—"],
+      pm ? ["mdi:weather-fog", "PM2.5", `${fmt(w.pm25)}・${pm[0]}`, pm[1]] : null,
+    ].filter(Boolean);
+    const hours = (w.hourly || [])
+      .map((h, i) => {
+        const hx = wx(h.code, h.day);
+        return `<div class="${i === 0 ? "now" : ""}" title="${esc(hx.text)}"><span>${i === 0 ? "現在" : h.t.slice(0, 2) + " 時"}</span>${ic(hx.icon)}<b>${fmt(h.temp)}°</b><span class="pop">${h.pop >= 20 ? `${h.pop}%` : ""}</span></div>`;
+      })
+      .join("");
+    const days = w.daily || [];
+    const lo = Math.min(...days.map((d) => d.min)), hi = Math.max(...days.map((d) => d.max));
+    const span = Math.max(1, hi - lo);
+    const dayName = (iso, i) => (i === 0 ? "今天" : i === 1 ? "明天" : `週${"日一二三四五六"[new Date(iso + "T12:00").getDay()]}`);
+    const rows = days
+      .map((d, i) => {
+        const dx = wx(d.code);
+        return `<div class="wday"><span class="d">${dayName(d.date, i)}</span>${ic(dx.icon)}<span class="tx">${dx.text}${d.rain >= 1 ? `・${fmt(d.rain, d.rain < 10 ? 1 : 0)} mm` : ""}</span>
+          <span class="pop">${d.pop != null && d.pop >= 10 ? `${ic("mdi:water")}${d.pop}%` : ""}</span><span class="lo">${fmt(d.min)}°</span>
+          <span class="wbar"><i style="left:${(((d.min - lo) / span) * 100).toFixed(0)}%;right:${(((hi - d.max) / span) * 100).toFixed(0)}%"></i></span><span class="hi">${fmt(d.max)}°</span></div>`;
+      })
+      .join("");
+    const rainSched = (this._s.schedules || []).some((s) => s.skip_rain && s.enabled);
+    const t = c.weather_at ? new Date(c.weather_at * 1000) : null;
+    return `
+      ${head}
+      <div class="wnow">${ic(x.icon)}<div><div class="tp">${fmt(w.temp)}°</div><div class="tx">${x.text}・最高 ${fmt(today.max)}° 最低 ${fmt(today.min)}°</div></div></div>
+      <div class="wfacts">${facts.map(([icn, l, v, cls]) => `<div><div class="l">${ic(icn)}${l}</div><div class="v ${cls || ""}">${v}</div></div>`).join("")}</div>
+      <div class="card flat"><div class="ch"><div class="n">接下來 24 小時</div></div><div class="wbody"><div class="whours">${hours}</div></div></div>
+      <div class="card flat" style="margin-top:12px"><div class="ch"><div class="n">這幾天</div></div><div class="wbody"><div class="wdays">${rows}</div></div></div>
+      ${rainSched ? `<div style="margin-top:12px;display:grid;gap:4px">${this._rainLine()}</div>` : ""}
+      <p class="desc" style="margin-top:10px">${t ? `${pad2(t.getHours())}:${pad2(t.getMinutes())} 更新・` : ""}資料來源：Open-Meteo（PM2.5 是模型估計，不是測站實測）</p>
+      ${toggle}`;
+  }
+
   _senseSheet(s) {
     const d = s.data;
     const head = this._sheetHead("mdi:wifi", "Wi-Fi 感測", "實驗：用插座的訊號擾動，猜哪裡有人在走動");
@@ -3852,6 +3968,11 @@ class PlugApp extends HTMLElement {
         this._safe(async () => {
           await api("PUT", "/api/settings", { presence: { home_dark_only: !this._s.settings.presence?.home_dark_only } });
         }),
+      weather: () => this._openSheet({ type: "weather", wide: true, live: true }),
+      "weather-toggle": () =>
+        this._safe(async () => {
+          await api("PUT", "/api/settings", { weather: this._s.settings.weather === false });
+        }),
       "weekly-toggle": () =>
         this._safe(async () => {
           await api("PUT", "/api/settings", { weekly: this._s.settings.weekly === false });
@@ -4664,7 +4785,7 @@ class PlugApp extends HTMLElement {
   _renderSheet() {
     const s = this._sheet;
     if (!s) return;
-    const builders = { sense: this._senseSheet, edev: this._edevSheet, kasa: this._kasaSheet, confirm: this._confirmSheet, away: this._awaySheet, cloud: this._cloudSheet, ask: this._askSheet, netdev: this._netdevSheet, person: this._personSheet, device: this._deviceSheet, timer: this._deviceSheet, plug: this._deviceSheet, room: this._roomSheet, scene: this._sceneSheet, sched: this._schedSheet, watts: this._wattsSheet };
+    const builders = { weather: this._weatherSheet, sense: this._senseSheet, edev: this._edevSheet, kasa: this._kasaSheet, confirm: this._confirmSheet, away: this._awaySheet, cloud: this._cloudSheet, ask: this._askSheet, netdev: this._netdevSheet, person: this._personSheet, device: this._deviceSheet, timer: this._deviceSheet, plug: this._deviceSheet, room: this._roomSheet, scene: this._sceneSheet, sched: this._schedSheet, watts: this._wattsSheet };
     const html = builders[s.type]?.call(this, s);
     if (html === null || html === undefined) return this._closeSheet();
     const key = `${s.type}|${s.id}|${s.wide ? 1 : 0}`;

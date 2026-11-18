@@ -282,6 +282,14 @@ class Assistant:
             return f"等使用者確認：會關掉 {'、'.join(on)}"
 
         @beta_async_tool
+        async def get_weather() -> str:
+            """家裡附近的天氣：現在的溫度、體感、濕度、天氣代碼（WMO）、PM2.5，接下來 24 小時（溫度、降雨機率），今天起 4 天（高低溫、雨量、降雨機率、紫外線），和「下雨不執行」今天會不會跳過。"""
+            c = hub.snapshot()["calendar"]
+            if not c.get("weather"):
+                return "沒有天氣資料（設定裡關掉了，或還沒查到）"
+            return json.dumps({"weather": c["weather"], "rain_skip_today": c.get("rain"), "rain_mm": c.get("rain_mm")}, ensure_ascii=False)
+
+        @beta_async_tool
         async def get_energy() -> str:
             """用電和電費（估算）：今天、本月、預估月底、比上月同期、各裝置本月排行、最近 14 天每天的度數。"""
             r = hub.energy_report()
@@ -461,5 +469,5 @@ class Assistant:
                 "notes": "rssi：-55 以上很好、-70 以下容易斷線；動靜是 Wi-Fi 感測（實驗），每格 30 分鐘，擾動 > 1 算有明顯動靜",
             }, ensure_ascii=False)
 
-        return [get_home, set_power, set_timer, run_scene, turn_off_all, get_energy, get_history,
+        return [get_home, set_power, set_timer, run_scene, turn_off_all, get_weather, get_energy, get_history,
                 get_schedules, propose_schedule, propose_scene, get_signal_map]

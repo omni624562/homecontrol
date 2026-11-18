@@ -690,6 +690,11 @@ async def set_settings(body: dict = Body(...)) -> dict[str, Any]:
             pres["left_on"] = body["presence"]["left_on"]
         if "home_dark_only" in body["presence"]:  # 回家的情境只在天黑後執行
             pres["home_dark_only"] = bool(body["presence"]["home_dark_only"])
+    if "weather" in body:  # 首頁顯示天氣（每 30 分鐘向 Open-Meteo 查一次）
+        settings["weather"] = bool(body["weather"])
+        if settings["weather"]:
+            hub.recheck_calendar()
+            hub.daysoff.weather_at = 0.0
     if "weekly" in body:  # 每週日晚上的摘要推播
         settings["weekly"] = bool(body["weekly"])
     if "matter_scenes" in body:  # 情境也放到 Google Home（打開 = 執行）

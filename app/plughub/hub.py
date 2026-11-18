@@ -1485,8 +1485,12 @@ class Hub:
             return
         self._calendar_at = time.time()
         need_weather = any(x.get("skip_rain") and x.get("enabled") for x in self.store.schedules)
-        if await self.daysoff.refresh(self.location(), need_weather):
+        show = self.store.data["settings"].get("weather", True)
+        before = self.daysoff.weather_at
+        if await self.daysoff.refresh(self.location(), need_weather, show):
             self.mark_native()
+            await self.changed()
+        elif self.daysoff.weather_at != before:  # 只有天氣更新：畫面更新就好
             await self.changed()
         self._check_weekly()
 
@@ -1664,6 +1668,7 @@ class Hub:
                 "holidays_ready": date.today().year in self.daysoff.years,
                 "weather_at": self.daysoff.weather_at or None,
                 "weather_error": self.daysoff.weather_error,
+                "weather": self.daysoff.weather if self.store.data["settings"].get("weather", True) else None,
                 "rain_mm": {k: self.daysoff.rain.get((date.today() + timedelta(days=d)).isoformat())
                             for k, d in (("yesterday", -1), ("today", 0), ("tomorrow", 1))},
             },
