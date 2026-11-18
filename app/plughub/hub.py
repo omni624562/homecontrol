@@ -1437,7 +1437,7 @@ class Hub:
                 "rssi": plug.rssi,
                 "cloud": plug.cloud,
                 "native": self.native.get(plug.id),
-                "net": {k: v for k, v in self.dev_info.get(plug.device_key, {}).items() if k != "fw_checked"},
+                "net": self._plug_net(plug.device_key),
             })
         return {
             "version": self.version,
@@ -1468,6 +1468,14 @@ class Hub:
                        "ssids": sorted({i["ssid"] for i in self.router.ifaces.values() if i.get("ssid")})},
             "people": self.people_report(),
         }
+
+    def _plug_net(self, key: str) -> dict[str, Any]:
+        """插座的 Wi-Fi 資訊；路由器看得到它的話，Wi-Fi 名稱用路由器即時的（插座自己的每 30 分鐘才讀一次）。"""
+        net = {k: v for k, v in self.dev_info.get(key, {}).items() if k != "fw_checked"}
+        c = self.router.clients.get(key)
+        if c and self.router.online(key) and c.get("ssid") and not c.get("wired"):
+            net["ssid"] = c["ssid"]
+        return net
 
     def matter_status(self) -> dict[str, Any] | None:
         """Google Home 串接的狀態；外掛每 30 秒回報一次，超過 90 秒沒回報就當作沒在執行。"""
