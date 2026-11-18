@@ -78,8 +78,8 @@ def _seconds(hms: str) -> int:
     return h * 3600 + m * 60 + s
 
 
-def schedule_rules(store: Any, plug_id: str) -> list[tuple[int, int, tuple[int, ...]]]:
-    """這個插座應該有的排程規則：(動作 1 開 / 0 關, 第幾分鐘, 星期)。"""
+def schedule_rules(store: Any, plug_id: str, only: list | None = None) -> list[tuple[int, int, tuple[int, ...]]]:
+    """這個插座應該有的排程規則：(動作 1 開 / 0 關, 第幾分鐘, 星期)。only：只算這幾個排程。"""
     meta = store.meta(plug_id)
     rules: list[tuple[int, int, tuple[int, ...]]] = []
     if meta.protect == "lock":  # 鎖定的插座不寫排程（插座自己執行時不會檢查鎖定）
@@ -91,8 +91,8 @@ def schedule_rules(store: Any, plug_id: str) -> list[tuple[int, int, tuple[int, 
         if rule not in rules:
             rules.append(rule)
 
-    for sched in store.schedules:
-        if not sched.get("enabled") or not sched.get("days"):
+    for sched in (only if only is not None else store.schedules):
+        if not sched.get("enabled") or not sched.get("days") or sched.get("backup") is False:
             continue
         if sched["action"] == "scene":
             scene = store.scene(sched.get("scene") or "")
@@ -114,6 +114,19 @@ def schedule_rules(store: Any, plug_id: str) -> list[tuple[int, int, tuple[int, 
             if limits:  # 離線時也要關
                 add(0, total + int(min(limits)), sched["days"])
     return rules
+
+
+def schedule_plugs(store: Any, sched: dict[str, Any]) -> list[str]:
+    """這個排程會動到哪些插座（情境要展開）。"""
+    if sched["action"] != "scene":
+        return list(sched.get("plugs", []))
+    scene = store.scene(sched.get("scene") or "")
+    if not scene:
+        return []
+    out = [pid for pid, act in scene["actions"].items() if act != "keep"]
+    if scene.get("others", "keep") != "keep":
+        out += [pid for pid in store.plugs if pid not in scene["actions"]]
+    return out
 
 
 def away_rule(store: Any, plug_id: str) -> tuple[int, int] | None:

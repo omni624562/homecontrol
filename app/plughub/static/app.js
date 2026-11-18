@@ -439,6 +439,10 @@ const STYLE = `
   .sched .tag { display: inline-flex; align-items: center; gap: 3px; margin-top: 4px; font-size: 11.5px; font-weight: 500; color: var(--muted); background: var(--soft); border-radius: 6px; padding: 2px 7px 2px 5px; }
   .sched .tag .i { width: 13px; height: 13px; }
   .sched .tag.home { background: var(--accent-soft); color: var(--accent-text); }
+  .bstat { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+  .bstat .i { width: 16px; height: 16px; }
+  .bstat.ok { color: var(--ok); } .bstat.bad { color: var(--warn); }
+  .sched .tag .i:last-child:not(:first-child) { margin-left: 1px; }
   .sched .tag.warn { background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--warn); margin-left: 4px; }
   .sched.off .tag { opacity: .8; }
   .sched .d .x { font-size: 14.5px; font-weight: 600; }
@@ -1196,6 +1200,17 @@ class PlugApp extends HTMLElement {
       </div>`;
   }
 
+  // 家庭中控排程的標籤：順便顯示有沒有寫進插座當備援
+  _backupTag(x) {
+    const home = (text) => `<div class="tag home">${ic("mdi:home-automation")}家庭中控${text ? `・${text}` : ""}</div>`;
+    const b = x.backup_status || { total: 0, ok: 0, issues: [] };
+    if (!x.enabled || !b.total) return home(x.backup === false ? "不寫進插座" : "");
+    if (x.backup === false) return home("不寫進插座");
+    if (b.ok === b.total) return home(`插座備援 ${ic("mdi:check")}`);
+    if (b.issues.every((i) => i.pending)) return home("備援同步中…");
+    return `${home("")}<div class="tag warn">${ic("mdi:alert-circle-outline")}插座備援 ${b.ok}／${b.total}</div>`;
+  }
+
   // 插座裡（Kasa App 設的）排程：和家庭中控的排程同樣呈現，可以直接開關、修改
   _kasaKey(p, r) {
     return [p.id, r.sact, r.smin, r.wday.join("")].join("|");
@@ -1286,7 +1301,7 @@ class PlugApp extends HTMLElement {
       <div class="sched ${x.enabled ? "" : "off"}" data-a="sched-edit" data-v="${esc(x.id)}" role="button" tabindex="0">
         <div class="t">${hh}:${mm}<small>${ss === "00" ? "" : `:${ss}`}</small></div>
         <div class="d"><div class="x">${daysText(x.days)}${x.enabled ? "" : "・已暫停"}</div><div class="y">${this._schedDesc(x)}${extra}</div>
-          <div class="tag home">${ic("mdi:home-automation")}家庭中控</div></div>
+          ${this._backupTag(x)}</div>
         <button class="sw ${x.enabled ? "on" : ""}" data-a="sched-toggle" data-v="${esc(x.id)}" role="switch" aria-checked="${x.enabled}" aria-label="啟用排程"></button>
       </div>`;
   }
@@ -1748,6 +1763,7 @@ class PlugApp extends HTMLElement {
         })(),
       "sched-scene": (v) => redraw((d) => (d.scene = v))(),
       "sched-restore": () => redraw((d) => (d.restore_at = d.restore_at ? null : "07:00:00"))(),
+      "sched-backup": () => redraw((d) => (d.backup = !d.backup))(),
       "sched-duration": () => redraw((d) => (d.duration_s = d.duration_s ? null : 60))(),
       "sched-save": () => this._saveSched(),
       "sched-delete": (v, t) =>
@@ -2342,7 +2358,7 @@ class PlugApp extends HTMLElement {
     if (x) {
       draft = { ...x, days: [...x.days], plugs: [...x.plugs] };
     } else {
-      draft = { enabled: true, time: "23:00:00", days: [0, 1, 2, 3, 4, 5, 6], action: "off", scene: null, plugs: [], restore_at: null, duration_s: null };
+      draft = { enabled: true, time: "23:00:00", days: [0, 1, 2, 3, 4, 5, 6], action: "off", scene: null, plugs: [], restore_at: null, duration_s: null, backup: true };
       const plugs = this._plugs;
       if (template === "night") {
         draft.plugs = plugs.filter((p) => deviceIcon(p.name) === "mdi:lightbulb" && !p.keep_on).map((p) => p.id);
@@ -2416,10 +2432,31 @@ class PlugApp extends HTMLElement {
       ${restore}
       <div class="q">${d.action === "scene" ? "哪個情境" : d.action === "on" ? "打開哪些插座" : "關閉哪些插座"}</div>
       ${what}
+      ${this._backupHtml(s)}
       <div class="err"></div>
       <div class="actions">
         ${s.id ? `<button class="btn danger" data-a="sched-delete">刪除排程</button>` : `<button class="btn" data-a="close">取消</button>`}
         <button class="btn primary" data-a="sched-save">儲存</button>
+      </div>`;
+  }
+
+  _backupHtml(s) {
+    const d = s.draft;
+    const saved = s.id ? (this._s.schedules || []).find((x) => x.id === s.id) : null;
+    const b = saved?.backup_status;
+    const status =
+      d.backup && saved && saved.backup !== false && b && b.total
+        ? b.ok === b.total
+          ? `<div class="bstat ok">${ic("mdi:check-circle")}${b.total} 個插座都寫好了</div>`
+          : b.issues.map((i) => `<div class="bstat ${i.pending ? "" : "bad"}">${ic(i.pending ? "mdi:clock-outline" : "mdi:alert-circle-outline")}${esc(i.plug)}：${esc(i.reason)}</div>`).join("")
+        : "";
+    return `
+      <div class="q">備援</div>
+      <div class="group">
+        <div class="gi"><div class="gt"><div class="gl">樹莓派離線時由插座接手</div>
+          <div class="gs">寫一份到插座裡；平常由樹莓派執行，樹莓派離線時插座照樣會做（只到分鐘${d.action === "off" && d.restore_at ? "；「之後再打開」不會寫進插座" : ""}）</div></div>
+          <button class="sw ${d.backup ? "on" : ""}" data-a="sched-backup" role="switch" aria-checked="${!!d.backup}" aria-label="樹莓派離線時由插座接手"></button></div>
+        ${status ? `<div class="gi col">${status}</div>` : ""}
       </div>`;
   }
 
@@ -2438,6 +2475,7 @@ class PlugApp extends HTMLElement {
       plugs: d.plugs,
       restore_at: d.action === "off" ? d.restore_at : null,
       duration_s: d.action === "on" ? d.duration_s || null : null,
+      backup: d.backup !== false,
     };
     this._safe(async () => {
       if (id) await api("PUT", `/api/schedules/${id}`, body);

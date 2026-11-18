@@ -572,6 +572,35 @@ class Hub:
         self._dirty = False
         await self.changed()
 
+    def _backup_status(self, sched: dict[str, Any]) -> dict[str, Any]:
+        """這個排程寫進插座（備援）的狀況：幾個插座寫好了，沒寫的原因。"""
+        if sched.get("backup") is False or not sched.get("enabled"):
+            return {"total": 0, "ok": 0, "issues": []}
+        total = ok = 0
+        issues: list[dict[str, str]] = []
+        for pid in native.schedule_plugs(self.store, sched):
+            plug = self.plugs.get(pid)
+            want = native.schedule_rules(self.store, pid, [sched])
+            if plug is None or not want:
+                if plug is not None and self.store.meta(pid).protect == "lock":
+                    total += 1
+                    issues.append({"plug": self.name(plug), "reason": "裝置已鎖定，不寫進插座"})
+                continue
+            total += 1
+            info = self.native.get(pid)
+            written = {(r["sact"], r["smin"], tuple(r["wday"])) for r in self._native_rules.get(pid, [])}
+            if all(rule in written for rule in want):
+                ok += 1
+            elif not plug.online:
+                issues.append({"plug": self.name(plug), "reason": "插座離線"})
+            elif info and not info.get("ok"):
+                issues.append({"plug": self.name(plug), "reason": info.get("msg") or "寫入失敗"})
+            elif self._native_dirty or info is None:
+                issues.append({"plug": self.name(plug), "reason": "同步中", "pending": "1"})
+            else:
+                issues.append({"plug": self.name(plug), "reason": "插座的規則滿了"})
+        return {"total": total, "ok": ok, "issues": issues}
+
     def _target(self, plug_id: str) -> tuple[Any, dict[str, Any]]:
         plug = self.plugs[plug_id]
         dev = self.devices[plug.device_key].device
@@ -900,7 +929,7 @@ class Hub:
             },
             "now": time.time(),
             "scenes": self.store.scenes,
-            "schedules": self.store.schedules,
+            "schedules": [{**x, "backup_status": self._backup_status(x)} for x in self.store.schedules],
             "settings": settings,
             "can_restore": bool(self.store.data["remembered"].get("undo")),
             "matter": self.matter_status(),
