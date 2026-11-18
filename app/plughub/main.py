@@ -19,6 +19,7 @@ GET  /api/energy             用電（插座自己記錄的開機時間 × 瓦�
 GET  /api/plugs/{id}/usage  插座自己記錄的使用時間；POST /api/plugs/{id}/reboot 重新啟動
 PUT/DELETE /api/kasa-rules  直接修改／刪除插座裡 Kasa App 設的排程
 POST /api/kasa-rules/adopt  Kasa App 設的排程改由家庭中控管理
+PUT/DELETE /api/kasa-away   Kasa App 設的離家模式：啟用／停用、刪除
 POST /api/cloud/unbind      斷開所有插座的 TP-Link 雲端（要帶 {"confirm": "斷開"}）
 POST /api/discover          立刻重新找插座
 PUT  /api/matter            Google Home 串接外掛回報配對狀態（只接受樹莓派本機）
@@ -465,6 +466,36 @@ async def adopt_kasa_rule(body: dict = Body(...)) -> dict[str, Any]:
         raise HTTPException(400, str(err)) from err
     except Exception as err:  # noqa: BLE001
         raise HTTPException(502, f"插座沒有回應：{err}") from err
+
+
+def _away_match(body: dict) -> tuple[str, int, int, list[int]]:
+    pid = _kasa_plug(body)
+    m = body.get("match") or {}
+    try:
+        return pid, int(m["smin"]), int(m["emin"]), [1 if int(x) else 0 for x in m["wday"]]
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(400, "缺少要改哪一條") from None
+
+
+@app.put("/api/kasa-away")
+async def edit_kasa_away(body: dict = Body(...)) -> dict[str, Any]:
+    """啟用／停用 Kasa App 設的離家模式：{"plug", "match": {smin, emin, wday}, "enable"}"""
+    pid, smin, emin, wday = _away_match(body)
+    try:
+        await hub.set_kasa_away(pid, smin, emin, wday, bool(body.get("enable")))
+    except Exception as err:  # noqa: BLE001
+        raise HTTPException(502, f"沒有成功：{err}") from err
+    return {"ok": True}
+
+
+@app.delete("/api/kasa-away")
+async def delete_kasa_away(body: dict = Body(...)) -> dict[str, Any]:
+    pid, smin, emin, wday = _away_match(body)
+    try:
+        await hub.set_kasa_away(pid, smin, emin, wday, None)
+    except Exception as err:  # noqa: BLE001
+        raise HTTPException(502, f"沒有成功：{err}") from err
+    return {"ok": True}
 
 
 @app.post("/api/cloud/unbind")

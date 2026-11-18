@@ -252,7 +252,11 @@ async def sync_rules(device: Any, ctx: dict[str, Any], schedule: list, away: tup
     # 使用者自己在 Kasa App 設的排程（插座會自己執行，顯示在畫面上讓使用者知道）
     foreign = [{**rule_dict(r), "repeat": r.get("repeat", 1), "date": f"{r.get('year', 0):04d}-{r.get('month', 0):02d}-{r.get('day', 0):02d}" if not r.get("repeat", 1) else None}
                for r in others]
-    return {"schedule": len(written), "away": 1 if away else 0, "rules": rules, "known": new_known, "kasa": foreign}
+    # 使用者在 Kasa App 設的離家模式
+    foreign_away = [{"smin": r.get("smin"), "emin": r.get("emin"), "wday": list(r.get("wday", [])), "enable": r.get("enable", 1),
+                     "frequency": r.get("frequency")} for r in cur_a if r not in mine_a]
+    return {"schedule": len(written), "away": 1 if away else 0, "rules": rules, "known": new_known, "kasa": foreign,
+            "kasa_away": foreign_away}
 
 
 # ---------- 租約：樹莓派在線時，插座的「打開」規則在執行前後暫時停用 ----------
@@ -357,6 +361,42 @@ async def usage_history(device: Any, ctx: dict[str, Any]) -> dict[str, dict[str,
             if 0 <= minutes <= calendar.monthrange(mm["year"], mm["month"])[1] * 1440:
                 months[f"{mm['year']:04d}-{mm['month']:02d}"] = minutes
     return {"days": days, "months": months}
+
+
+# ---------- 網路、韌體 ----------
+
+async def network(device: Any) -> dict[str, Any]:
+    """插座連的 Wi-Fi 名稱和加密方式（key_type：0 無、1 WEP、2 WPA、3 WPA2）。"""
+    info = await query(device, {}, "netif", "get_stainfo")
+    return {"ssid": info.get("ssid"), "key_type": info.get("key_type")}
+
+
+async def firmware_updates(device: Any) -> list[dict[str, Any]]:
+    """向 TP-Link 雲端查有沒有新韌體（插座要連著雲端才查得到）。"""
+    body = await query(device, {}, "cnCloud", "get_intl_fw_list")
+    return [{"version": f.get("fwVer"), "notes": f.get("fwReleaseLog") or ""} for f in body.get("fw_list", [])]
+
+
+async def _find_away(device: Any, ctx: dict[str, Any], smin: int, emin: int, wday: list[int]) -> dict[str, Any]:
+    cur = (await query(device, ctx, "anti_theft", "get_rules")).get("rule_list", [])
+    for r in cur:
+        if [r.get("smin"), r.get("emin"), list(r.get("wday", []))] == [smin, emin, list(wday)] and not str(r.get("name", "")).startswith(TAG):
+            return r
+    raise RuntimeError("插座上找不到這條離家模式，可能已經被改過")
+
+
+async def set_foreign_away(device: Any, ctx: dict[str, Any], smin: int, emin: int, wday: list[int], enable: bool) -> None:
+    """啟用／停用 Kasa App 設的離家模式。"""
+    target = await _find_away(device, ctx, smin, emin, wday)
+    body = {**_AWAY_RULE, **{k: v for k, v in target.items() if k != "id"}, "enable": 1 if enable else 0}
+    await query(device, ctx, "anti_theft", "edit_rule", {**body, "id": target["id"]})
+    if enable:
+        await query(device, ctx, "anti_theft", "set_overall_enable", {"enable": 1})
+
+
+async def delete_foreign_away(device: Any, ctx: dict[str, Any], smin: int, emin: int, wday: list[int]) -> None:
+    target = await _find_away(device, ctx, smin, emin, wday)
+    await query(device, ctx, "anti_theft", "delete_rule", {"id": target["id"]})
 
 
 # ---------- 雲端 ----------

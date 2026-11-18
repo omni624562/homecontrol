@@ -105,6 +105,8 @@ class Hub:
         # 插座自己記錄的使用時間（每天、每月的分鐘數），每 30 分鐘讀一次
         self._usage: dict[str, dict[str, dict[str, int]]] = {}
         self._usage_at = 0.0
+        # 每台插座的 Wi-Fi、韌體（裝置 MAC → {...}）
+        self.dev_info: dict[str, dict[str, Any]] = {}
         self._lease_busy = False
         self._timer_failed: set[str] = set()  # 定時關閉失敗、已經通知過的插座
         self._offline_notified: set[str] = set()
@@ -636,6 +638,7 @@ class Hub:
                 self._native_dirty = True
                 continue
             clock_ok = skew <= native.CLOCK_TOLERANCE
+            await self._device_info(key, dev)
             for pid in pids:
                 plug = self.plugs[pid]
                 ctx = native.context(dev, plug.child_index)
@@ -690,6 +693,42 @@ class Hub:
             else:
                 issues.append({"plug": self.name(plug), "reason": "插座的規則滿了"})
         return {"total": total, "ok": ok, "issues": issues, "rules": rules}
+
+    async def _device_info(self, key: str, dev: Any) -> None:
+        """Wi-Fi 名稱、加密、韌體版本；新韌體每 12 小時查一次（要連著 TP-Link 雲端）。"""
+        info = self.dev_info.setdefault(key, {})
+        si = getattr(dev, "sys_info", {}) or {}
+        info.update(fw=si.get("sw_ver", "").split(" ")[0], hw=si.get("hw_ver"), model=si.get("model", "").split("(")[0])
+        try:
+            info.update(await native.network(dev))
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("讀 Wi-Fi 資訊失敗：%s", err)
+        if time.time() - info.get("fw_checked", 0) >= 12 * 3600:
+            try:
+                info["fw_updates"] = await native.firmware_updates(dev)
+                info["fw_check"] = "ok"
+            except Exception:  # noqa: BLE001
+                info["fw_updates"] = []
+                info["fw_check"] = "unavailable"  # 斷開雲端後就查不到
+            info["fw_checked"] = time.time()
+
+    async def set_kasa_away(self, plug_id: str, smin: int, emin: int, wday: list[int], enable: bool | None) -> None:
+        """Kasa App 設的離家模式：enable=None 表示刪除。"""
+        dev, ctx = self._target(plug_id)
+        if enable is None:
+            await native.delete_foreign_away(dev, ctx, smin, emin, wday)
+        else:
+            await native.set_foreign_away(dev, ctx, smin, emin, wday, enable)
+        info = self.native.get(plug_id) or {}
+        rules = info.get("kasa_away", [])
+        for r in list(rules):
+            if [r["smin"], r["emin"], r["wday"]] == [smin, emin, list(wday)]:
+                if enable is None:
+                    rules.remove(r)
+                else:
+                    r["enable"] = 1 if enable else 0
+        self.mark_native()
+        await self.changed()
 
     def _target(self, plug_id: str) -> tuple[Any, dict[str, Any]]:
         plug = self.plugs[plug_id]
@@ -1036,6 +1075,7 @@ class Hub:
                 "rssi": plug.rssi,
                 "cloud": plug.cloud,
                 "native": self.native.get(plug.id),
+                "net": {k: v for k, v in self.dev_info.get(plug.device_key, {}).items() if k != "fw_checked"},
             })
         return {
             "version": self.version,

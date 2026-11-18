@@ -157,6 +157,9 @@ function signal(rssi) {
   const level = rssi >= -55 ? 4 : rssi >= -67 ? 3 : rssi >= -75 ? 2 : 1;
   return { level, text: ["", "差", "普通", "良好", "很好"][level] };
 }
+// Wi-Fi 加密方式（插座回報的 key_type）
+const KEY_TYPES = ["沒有加密", "WEP", "WPA", "WPA2"];
+const keyName = (k) => KEY_TYPES[k] ?? (k > 3 ? "WPA2 以上" : "—");
 const bars = (level) => `<span class="bars l${level}" aria-hidden="true"><i></i><i></i><i></i><i></i></span>`;
 const PROTECT = [
   ["", "不需要", "一般的燈、風扇"],
@@ -547,6 +550,12 @@ const STYLE = `
     .xwide .group-title { margin: 10px 2px 6px; }
     .xwide .q { margin-top: 16px; }
     .xwide .mini { height: 30px; }
+    /* 裝置詳細：內容自動分到兩欄，兩邊差不多高 */
+    .cols.flow { display: block; column-count: 2; column-gap: 32px; }
+    .cols.flow > .col { display: contents; }
+    .cols.flow .group, .cols.flow .protect, .cols.flow .opts, .cols.flow .field, .cols.flow .wheel, .cols.flow .note, .cols.flow .chips, .cols.flow .callout { break-inside: avoid; }
+    .cols.flow .q { break-after: avoid; }
+    .cols.flow > .col:first-child > :first-child { margin-top: 8px; }
     .xwide .gi { min-height: 46px; padding-top: 8px; padding-bottom: 8px; }
     .xwide .meta { margin-top: 10px; }
   }
@@ -624,6 +633,10 @@ const STYLE = `
   .pr.sel b { color: var(--accent-text); }
   .gv { font-size: 14px; color: var(--text2); display: inline-flex; align-items: center; gap: 6px; flex: none; font-variant-numeric: tabular-nums; }
   .gv.muted { color: var(--faint); }
+  .gl small.warn, .gv.warn { color: var(--warn); }
+  .netwarn { display: flex; gap: 6px; align-items: flex-start; margin-top: 6px; font-size: 13px; color: var(--warn); line-height: 1.45; }
+  .netwarn .i { width: 16px; height: 16px; margin-top: 1px; flex: none; }
+  .netwarn b { font-weight: 600; }
   .gv.kasa { text-align: right; line-height: 1.5; display: block; }
   .gv.ok { color: var(--ok); } .gv.warn { color: var(--warn); }
   .bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 14px; }
@@ -1327,6 +1340,43 @@ class PlugApp extends HTMLElement {
       <div class="actions"><button class="btn danger" data-a="kasa-delete" data-confirm="確定刪除？再按一次">刪除</button><button class="btn primary" data-a="kasa-save">儲存</button></div>`;
   }
 
+  // 每台插座（不是每個孔）的網路、韌體狀況，以及和大多數不一樣的地方
+  _netReport() {
+    const devices = new Map();
+    for (const p of this._plugs) {
+      if (!p.net || !p.online) continue;
+      if (!devices.has(p.device)) devices.set(p.device, { net: p.net, plugs: [] });
+      devices.get(p.device).plugs.push(p);
+    }
+    const count = {};
+    for (const d of devices.values()) if (d.net.ssid) count[d.net.ssid] = (count[d.net.ssid] || 0) + 1;
+    const main = Object.entries(count).sort((a, b) => b[1] - a[1])[0]?.[0];
+    const issues = [];
+    for (const d of devices.values()) {
+      const names = d.plugs.map((p) => p.name).join("、");
+      const label = d.plugs.length > 1 ? `${d.net.model || "排插"}（${names}）` : names;
+      if (main && d.net.ssid && d.net.ssid !== main) issues.push({ label, text: `連到另一個 Wi-Fi「${d.net.ssid}」，其他裝置都在「${main}」` });
+      if (d.net.key_type != null && d.net.key_type < 3) issues.push({ label, text: `Wi-Fi 加密是 ${keyName(d.net.key_type)}，比較容易被破解，建議改用 WPA2 以上` });
+      if ((d.net.fw_updates || []).length) issues.push({ label, text: `有新韌體 ${d.net.fw_updates[0].version || ""}` });
+    }
+    const fwUnknown = [...devices.values()].some((d) => d.net.fw_check === "unavailable");
+    return { main, devices: devices.size, issues, fwUnknown };
+  }
+
+  _netCheckHtml() {
+    const r = this._netReport();
+    if (!r.devices) return "";
+    const ok = !r.issues.length;
+    return `
+      <div class="set">
+        <div class="tx"><div class="l">網路與韌體檢查</div>
+          <div class="s">${ok ? `${r.devices} 台插座都連在「${esc(r.main || "")}」，加密 WPA2，韌體${r.fwUnknown ? "無法檢查（已斷開 TP-Link 雲端）" : "都是最新"}` : `${r.issues.length} 個地方要注意`}</div>
+          ${r.issues.map((i) => `<div class="netwarn">${ic("mdi:alert-circle-outline")}<span><b>${esc(i.label)}</b>：${esc(i.text)}</span></div>`).join("")}
+        </div>
+        ${ok ? `<span class="gv ok">${ic("mdi:check-circle")}</span>` : ""}
+      </div>`;
+  }
+
   _awayCard() {
     const a = this._s.settings.away || {};
     const n = (a.plugs || []).filter((id) => this._plug(id)).length;
@@ -1337,7 +1387,30 @@ class PlugApp extends HTMLElement {
           <div class="tx"><div class="l">${a.enabled ? `每天 ${esc(a.start)}–${esc(a.end)}，${n} 個插座隨機開關` : "不在家時讓燈隨機開關"}</div><div class="s">看起來像有人在家；由插座自己執行，樹莓派離線也照跑</div></div>
           ${ic("mdi:chevron-right")}
         </button>
+        ${this._kasaAwayHtml()}
       </section>`;
+  }
+
+  // 用 Kasa App 設、存在插座裡的離家模式
+  _kasaAwayHtml() {
+    const rows = [];
+    for (const p of this._plugs)
+      for (const r of p.native?.kasa_away || []) {
+        const key = esc([p.id, r.smin, r.emin, r.wday.join("")].join("|"));
+        rows.push(`
+          <div class="set">
+            <div class="tx"><div class="l">${esc(p.name)}・${hhmm(r.smin)}–${hhmm(r.emin)}</div>
+              <div class="s">${daysText(kasaDays(r.wday))}・插座內建・Kasa App 設的${r.enable ? "" : "・已停用"}</div></div>
+            <button class="btn sm danger" data-a="kasa-away-delete" data-v="${key}" data-confirm="再按一次刪除">刪除</button>
+            <button class="sw ${r.enable ? "on" : ""}" data-a="kasa-away-toggle" data-v="${key}" role="switch" aria-checked="${!!r.enable}" aria-label="啟用"></button>
+          </div>`);
+      }
+    return rows.join("");
+  }
+
+  _kasaAwayReq(v) {
+    const [plug, smin, emin, wday] = v.split("|");
+    return { plug, match: { smin: Number(smin), emin: Number(emin), wday: [...wday].map(Number) } };
   }
 
   _schedDesc(x) {
@@ -1512,6 +1585,7 @@ class PlugApp extends HTMLElement {
         ${this._googleHtml()}
         <section class="card">
           <div class="ch"><div class="ri">${ic("mdi:magnify")}</div><div class="n">裝置</div></div>
+          ${this._netCheckHtml()}
           <button class="set tapset" data-a="cloud-open">
             <div class="tx"><div class="l">TP-Link 雲端</div><div class="s">${this._plugs.filter((p) => p.cloud).length} 個插座連著雲端・家庭中控和 Google Home 都不需要它</div></div>
             ${ic("mdi:chevron-right")}
@@ -1719,6 +1793,11 @@ class PlugApp extends HTMLElement {
           this._showToast("插座重新啟動中，大約 30 秒後恢復");
         }),
       "away-open": () => this._openAway(),
+      "kasa-away-toggle": (v, t) => {
+        const req = this._kasaAwayReq(v);
+        this._safe(() => api("PUT", "/api/kasa-away", { ...req, enable: !t.classList.contains("on") }));
+      },
+      "kasa-away-delete": (v, t) => sure(t) && this._safe(() => api("DELETE", "/api/kasa-away", this._kasaAwayReq(v))),
       "kasa-adopt": (v, t) => {
         if (!sure(t)) return;
         const k = this._kasaRule(v);
@@ -2216,7 +2295,7 @@ class PlugApp extends HTMLElement {
     if (html === null || html === undefined) return this._closeSheet();
     const key = `${s.type}|${s.id}|${s.wide ? 1 : 0}`;
     const sheet = this._sheetHost.querySelector(".sheet");
-    const cls = `sheet ${html.includes('class="cols"') ? "wide xwide" : s.wide ? "wide" : ""}`;
+    const cls = `sheet ${/class="cols[ "]/.test(html) ? "wide xwide" : s.wide ? "wide" : ""}`;
     if (sheet && this._sheetKey === key) {
       // 同一個面板：只更新有變的地方
       if (sheet.className !== cls) sheet.className = cls;
@@ -2271,7 +2350,7 @@ class PlugApp extends HTMLElement {
             : `<div class="group power"><div class="gi"><div class="gt"><div class="gl">電源</div></div><button class="sw ${on ? "on" : ""}" data-a="dev-power" role="switch" aria-checked="${on}" aria-label="電源"></button></div></div>`
       }
       ${callouts}
-      <div class="cols"><div class="col">
+      <div class="cols flow"><div class="col">
       ${timer}
       <div class="q">名稱</div>
       <div class="field"><input class="text" data-plug-name data-enter="plug-save" value="${esc(p.name)}" maxlength="30" aria-label="名稱"><button class="btn" data-a="plug-save">改名</button></div>
@@ -2306,6 +2385,23 @@ class PlugApp extends HTMLElement {
       <p class="meta">${esc(p.model)}・${esc(p.host)}</p>`;
   }
 
+  _netRowsHtml(p) {
+    const n = p.net;
+    if (!n) return "";
+    const r = this._netReport();
+    const other = r.main && n.ssid && n.ssid !== r.main;
+    const weak = n.key_type != null && n.key_type < 3;
+    const ups = n.fw_updates || [];
+    const fw = n.fw_check === "unavailable" ? "無法檢查（已斷開雲端）" : ups.length ? `有新版 ${esc(ups[0].version || "")}` : n.fw_check === "ok" ? "已是最新" : "檢查中…";
+    return `
+      <div class="gi"><span class="gl">Wi-Fi 網路${other ? `<small class="warn">和其他裝置不同（大多數在「${esc(r.main)}」）</small>` : ""}</span>
+        <span class="gv ${other ? "warn" : ""}">${esc(n.ssid || "—")}</span></div>
+      <div class="gi"><span class="gl">加密方式${weak ? `<small class="warn">比較容易被破解，建議改用 WPA2 以上</small>` : ""}</span>
+        <span class="gv ${weak ? "warn" : ""}">${keyName(n.key_type)}</span></div>
+      <div class="gi"><span class="gl">韌體<small>${esc(n.model || "")} 硬體 ${esc(n.hw || "")}</small></span>
+        <span class="gv ${ups.length ? "warn" : ""}">${esc(n.fw || "")}・${fw}</span></div>`;
+  }
+
   // 插座本身：指示燈、訊號、使用時間、內建排程、雲端、重新啟動
   _hardwareHtml(s, p) {
     if (!p.online) return "";
@@ -2327,6 +2423,7 @@ class PlugApp extends HTMLElement {
       <div class="group">
         <div class="gi"><div class="gt"><div class="gl">指示燈</div>${shared ? `<div class="gs">整條排插共用一個燈</div>` : ""}</div>
           <button class="sw ${p.led ? "on" : ""}" data-a="led-toggle" role="switch" aria-checked="${!!p.led}" aria-label="指示燈"></button></div>
+        ${this._netRowsHtml(p)}
         <div class="gi"><span class="gl">Wi-Fi 訊號</span>${sig ? `<span class="gv">${bars(sig.level)}${sig.text}・${p.rssi} dBm</span>` : `<span class="gv muted">—</span>`}</div>
         <div class="gi"><span class="gl">使用時間<small>插座自己記錄的</small></span>${usage}</div>
         ${chart}
