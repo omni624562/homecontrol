@@ -541,6 +541,15 @@ const STYLE = `
   .heat > i { height: 18px; border-radius: 3px; background: var(--soft); }
   .heat > i.on { background: color-mix(in srgb, var(--accent) calc(var(--a) * 100%), var(--soft)); }
   .heat > i.hot { outline: 2px solid var(--text); outline-offset: 0; }
+  .heat.sense { gap: 1px; }
+  .heat.sense > i { height: 16px; border-radius: 2px; }
+  .heat.sense > i.none { background: transparent; }
+  .heat.sense > i:not(.on):not(.none) { background: var(--soft); }
+  .heat.sense > i.on { background: color-mix(in srgb, var(--warn) calc(var(--a) * 100%), var(--soft)); }
+  .legend.warm i { background: color-mix(in srgb, var(--warn) calc(var(--a) * 100%), var(--soft)); }
+  .heat.sense { padding-right: 12px; }
+  .heat .snow { font-size: 11.5px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; padding-left: 4px; }
+  .heat .snow.hot { color: var(--warn); font-weight: 600; }
   .legend { display: inline-flex; align-items: center; gap: 3px; font-size: 11.5px; color: var(--muted); }
   .legend i { width: 14px; height: 10px; border-radius: 2px; background: color-mix(in srgb, var(--accent) calc(var(--a) * 100%), var(--soft)); }
   .dl { font-size: 12px; font-weight: 600; margin-left: 6px; color: var(--muted); }
@@ -1825,6 +1834,54 @@ class PlugApp extends HTMLElement {
       <button class="link sm" data-a="dev" data-v="${esc(p.id)}">裝置設定 ›</button>`;
   }
 
+  // Wi-Fi 感測（實驗）：每台插座 × 最近 60 分鐘的擾動熱力圖
+  _senseSheet(s) {
+    const d = s.data;
+    const head = this._sheetHead("mdi:wifi", "Wi-Fi 感測", "實驗：用插座的訊號擾動，猜哪裡有人在走動");
+    if (!d) return `${head}<div class="empty">讀取中…</div>`;
+    const CAP = 3; // 擾動 3 dB 以上算最深
+    const cols = d.minutes;
+    const t0 = d.start;
+    const hhmmAt = (i) => {
+      const t = new Date((t0 + i * 60) * 1000);
+      return `${pad2(t.getHours())}:${pad2(t.getMinutes())}`;
+    };
+    const header = Array.from({ length: cols }, (_, i) => `<span>${i % 10 === 0 && i < cols - 5 ? hhmmAt(i) : ""}</span>`).join("");
+    const rows = d.devices
+      .map((dev) => {
+        const cells = dev.cols
+          .map((c, i) => {
+            const m = c.motion;
+            const cls = m == null ? "none" : m > 0.15 ? "on" : "";
+            const a = m == null ? 0 : Math.max(0.12, Math.min(1, m / CAP));
+            const tip = m == null ? `${dev.name}・${hhmmAt(i)}：沒有資料` : `${dev.name}・${hhmmAt(i)}：擾動 ${fmt(m, 1)}・訊號 ${fmt(c.rssi, 0)} dBm`;
+            return `<i class="${cls}" style="--a:${a.toFixed(2)}" data-tip="${esc(tip)}"></i>`;
+          })
+          .join("");
+        const now = dev.now == null ? "—" : fmt(dev.now, 1);
+        return `<div class="hname" title="${esc(dev.name)}">${esc(dev.name)}</div>${cells}<div class="snow ${dev.now >= 1 ? "hot" : ""}">${now}</div>`;
+      })
+      .join("");
+    const status = !d.enabled
+      ? `<div class="callout">${ic("mdi:pause")}<div><b>記錄已暫停</b><span>打開下面的開關開始記錄</span></div></div>`
+      : d.active.length
+        ? `<div class="callout timer">${ic("mdi:wifi")}<div><b>最近 30 秒有動靜</b><span>${esc(d.active.join("、"))} 附近</span></div></div>`
+        : `<div class="callout">${ic("mdi:wifi")}<div><b>目前沒有偵測到動靜</b><span>${d.samples ? `已記錄 ${fmt(d.samples)} 筆` : "剛開始記錄，等幾分鐘"}</span></div></div>`;
+    const dflt = "每一格是一分鐘，顏色越深擾動越大・滑過看數字";
+    return `
+      ${head}
+      ${status}
+      <div class="card viz flat">
+        <div class="ch"><div class="n">最近 ${cols} 分鐘</div><div class="end"><span class="legend warm">安靜<i style="--a:.15"></i><i style="--a:.4"></i><i style="--a:.7"></i><i style="--a:1"></i>擾動大</span></div></div>
+        <div class="readout-line" data-default="${dflt}">${dflt}</div>
+        <div class="heat sense" style="grid-template-columns:minmax(72px,140px) repeat(${cols},1fr) 40px"><div class="hname"></div>${header}<span>現在</span>${rows}</div>
+      </div>
+      <div class="group" style="margin-top:12px"><div class="gi"><div class="gt"><div class="gl">記錄訊號</div><div class="gs">每 2 秒讀一次每台插座的訊號強度，只保留最近 1 小時；只讀取，不控制任何東西</div></div>
+        <button class="sw ${d.enabled ? "on" : ""}" data-a="sense-toggle" role="switch" aria-checked="${d.enabled}" aria-label="記錄訊號"></button></div></div>
+      <p class="note"><b>怎麼測試：</b>在某台插座附近走動 1～2 分鐘，再看那一列有沒有變深。<br>
+        <b>限制：</b>插座只回報訊號強度（一個數字），只能偵測走動，偵測不到靜止的人；路由器、其他 Wi-Fi、微波爐也會造成擾動。要可靠地偵測有沒有人，建議用毫米波雷達感測器。</p>`;
+  }
+
   _numberRow(key, label, desc, unit, step) {
     const v = this._s.settings[key];
     return `
@@ -1865,6 +1922,10 @@ class PlugApp extends HTMLElement {
         <section class="card">
           <div class="ch"><div class="ri">${ic("mdi:magnify")}</div><div class="n">裝置</div></div>
           ${this._netCheckHtml()}
+          <button class="set tapset" data-a="sense-open">
+            <div class="tx"><div class="l">Wi-Fi 感測 <span class="badge wait">實驗</span></div><div class="s">用插座的訊號擾動，猜哪裡有人在走動</div></div>
+            ${ic("mdi:chevron-right")}
+          </button>
           <button class="set tapset" data-a="cloud-open">
             <div class="tx"><div class="l">TP-Link 雲端</div><div class="s">${this._plugs.filter((p) => p.cloud).length} 個插座連著雲端・家庭中控和 Google Home 都不需要它</div></div>
             ${ic("mdi:chevron-right")}
@@ -2088,6 +2149,27 @@ class PlugApp extends HTMLElement {
           this._showToast("插座重新啟動中，大約 30 秒後恢復");
         }),
       "away-open": () => this._openAway(),
+      "sense-open": () => {
+        this._openSheet({ type: "sense", wide: true });
+        const load = () =>
+          api("GET", "/api/sensing")
+            .then((d) => {
+              if (this._sheet?.type !== "sense") return;
+              this._sheet.data = d;
+              this._renderSheet();
+            })
+            .catch(() => {});
+        load();
+        clearInterval(this._senseTimer);
+        this._senseTimer = setInterval(load, 10000);
+      },
+      "sense-toggle": () =>
+        this._safe(async () => {
+          const on = !this._sheet.data?.enabled;
+          await api("PUT", "/api/sensing", { enabled: on });
+          if (this._sheet.data) this._sheet.data.enabled = on;
+          this._renderSheet();
+        }),
       "kasa-away-toggle": (v, t) => {
         const req = this._kasaAwayReq(v);
         this._safe(() => api("PUT", "/api/kasa-away", { ...req, enable: !t.classList.contains("on") }));
@@ -2607,6 +2689,7 @@ class PlugApp extends HTMLElement {
   }
 
   _closeSheet() {
+    clearInterval(this._senseTimer);
     this._sheet = null;
     this._sheetKey = null;
     this._sheetHost.innerHTML = "";
@@ -2621,7 +2704,7 @@ class PlugApp extends HTMLElement {
   _renderSheet() {
     const s = this._sheet;
     if (!s) return;
-    const builders = { edev: this._edevSheet, kasa: this._kasaSheet, confirm: this._confirmSheet, away: this._awaySheet, cloud: this._cloudSheet, device: this._deviceSheet, timer: this._deviceSheet, plug: this._deviceSheet, room: this._roomSheet, scene: this._sceneSheet, sched: this._schedSheet, watts: this._wattsSheet };
+    const builders = { sense: this._senseSheet, edev: this._edevSheet, kasa: this._kasaSheet, confirm: this._confirmSheet, away: this._awaySheet, cloud: this._cloudSheet, device: this._deviceSheet, timer: this._deviceSheet, plug: this._deviceSheet, room: this._roomSheet, scene: this._sceneSheet, sched: this._schedSheet, watts: this._wattsSheet };
     const html = builders[s.type]?.call(this, s);
     if (html === null || html === undefined) return this._closeSheet();
     const key = `${s.type}|${s.id}|${s.wide ? 1 : 0}`;

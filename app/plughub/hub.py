@@ -19,6 +19,7 @@ from typing import Any, Callable
 from kasa import Device, Discover, Module
 
 from . import native, sun, tariff
+from .sensing import INTERVAL as SENSE_INTERVAL, Sensing
 from .notify import Notifier
 from .store import Store
 
@@ -106,6 +107,7 @@ class Hub:
         # 插座自己記錄的使用時間（每天、每月的分鐘數），每 30 分鐘讀一次
         self._usage: dict[str, dict[str, dict[str, int]]] = {}
         self._usage_at = 0.0
+        self.sensing = Sensing()
         # 每台插座的 Wi-Fi、韌體（裝置 MAC → {...}）
         self.dev_info: dict[str, dict[str, Any]] = {}
         self._lease_busy = False
@@ -126,6 +128,7 @@ class Hub:
             asyncio.create_task(self._loop(self.poll, POLL_SECONDS)),
             asyncio.create_task(self._schedule_loop()),
             asyncio.create_task(self._loop(self._native_tick, 5)),
+            asyncio.create_task(self._loop(self._sense_tick, SENSE_INTERVAL)),
         ]
 
     async def stop(self) -> None:
@@ -784,6 +787,21 @@ class Hub:
                     r["enable"] = 1 if enable else 0
         self.mark_native()
         await self.changed()
+
+    # ---- Wi-Fi 感測（實驗）----
+
+    async def _sense_tick(self) -> None:
+        if not self.store.data["settings"].get("sensing", True):
+            return
+        devs = {k: e.device for k, e in self.devices.items() if native.supported(e.device) and any(self.plugs[p].online for p in e.plugs)}
+        await self.sensing.sample(devs)
+
+    def sensing_report(self, minutes: int = 60) -> dict[str, Any]:
+        """每台插座（排插算一台）一列：用它的孔的名稱表示。"""
+        names = {k: "、".join(self.name(self.plugs[p]) for p in e.plugs) for k, e in self.devices.items()}
+        rep = self.sensing.report(names, minutes)
+        rep["enabled"] = bool(self.store.data["settings"].get("sensing", True))
+        return rep
 
     def _target(self, plug_id: str) -> tuple[Any, dict[str, Any]]:
         plug = self.plugs[plug_id]

@@ -15,6 +15,7 @@ POST /api/scenes/{id}/run   執行情境（可以 /api/restore 復原）
 POST /api/schedules         新增排程；PUT/DELETE /api/schedules/{id}
 PUT  /api/settings
 PUT  /api/away              離家模式 {"enabled", "start", "end", "plugs"}
+GET/PUT /api/sensing        Wi-Fi 感測（實驗）：訊號擾動；{"enabled": false} 停止記錄
 GET  /api/energy             用電（插座自己記錄的開機時間 × 瓦數）
 GET  /api/plugs/{id}/usage  插座自己記錄的使用時間；POST /api/plugs/{id}/reboot 重新啟動
 PUT/DELETE /api/kasa-rules  直接修改／刪除插座裡 Kasa App 設的排程
@@ -359,6 +360,19 @@ async def delete_schedule(sched_id: str) -> dict[str, Any]:
 
 
 # ---- 插座本身的功能 ----
+
+
+@app.get("/api/sensing")
+async def sensing(minutes: int = 60) -> dict[str, Any]:
+    """Wi-Fi 感測（實驗）：每台插座每分鐘的訊號強度和擾動。"""
+    return hub.sensing_report(max(5, min(60, minutes)))
+
+
+@app.put("/api/sensing")
+async def set_sensing(body: dict = Body(...)) -> dict[str, Any]:
+    store.data["settings"]["sensing"] = bool(body.get("enabled"))
+    store.save()
+    return await _done()
 
 
 @app.get("/api/energy")
