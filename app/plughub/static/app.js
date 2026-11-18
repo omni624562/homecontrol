@@ -8,7 +8,9 @@
 
 import { ICONS } from "./icons.js";
 
-const TOAST_MS = 6000;
+// 提示條只用在「畫面上看不到結果」或「需要注意」的時候；直接看得到的操作不跳提示
+const TOAST_MS = 2500;
+const TOAST_UNDO_MS = 4000;
 const DAYS = ["一", "二", "三", "四", "五", "六", "日"]; // 0 = 星期一（跟伺服器一樣）
 const TIMER_OPTIONS = [300, 600, 1800, 3600, 7200]; // 秒
 const SHORT_OPTIONS = [30, 60, 120, 180, 300, 600, 900, 1800, 3600]; // 有最長時間（澆水）用的
@@ -1050,7 +1052,6 @@ class PlugApp extends HTMLElement {
         if (roomChanged) await api("PATCH", `/api/plugs/${d.id}`, { room: room || null });
         if (changed) await api("POST", "/api/order", { plugs: order });
       });
-      if (roomChanged) this._showToast(`已把「${plug.name}」移到${this._room(room)?.name || "還沒分房間"}`);
     }
     this._render();
   }
@@ -1345,8 +1346,7 @@ class PlugApp extends HTMLElement {
       "room-on": async (v) => {
         try {
           const res = await api("POST", "/api/on", { room: v });
-          const where = this._room(v)?.name || "";
-          this._showToast(res.count ? `已打開${where} ${res.count} 個插座` : "沒有關著的插座", res.count > 0);
+          if (!res.count) this._showToast("沒有可以打開的插座");
         } catch (err) {
           this._showToast(`沒有成功：${err.message}`);
         }
@@ -1376,13 +1376,11 @@ class PlugApp extends HTMLElement {
         t.classList.toggle("on", !x.enabled);
         this._safe(async () => {
           await api("PUT", `/api/schedules/${v}`, { enabled: !x.enabled });
-          this._showToast(x.enabled ? "排程已暫停" : "排程已啟用");
         });
       },
       "timer-cancel": (v) =>
         this._safe(async () => {
           await api("DELETE", `/api/plugs/${v}/timer`);
-          this._showToast("已取消定時，插座保持開著");
         }),
       step: (v, t) => this._setSetting(v, +this._s.settings[v] + Number(t.dataset.d)),
       discover: (v, t) => {
@@ -1433,7 +1431,6 @@ class PlugApp extends HTMLElement {
         this._safe(async () => {
           await api("DELETE", `/api/plugs/${this._sheet.id}/timer`);
           this._closeSheet();
-          this._showToast("已取消定時，插座保持開著");
         }),
       "keep-on": (v, t) => {
         const next = !t.classList.contains("on");
@@ -1447,7 +1444,6 @@ class PlugApp extends HTMLElement {
         this._safe(async () => {
           await api("PATCH", `/api/plugs/${this._sheet.id}`, { watts: n });
           this._closeSheet();
-          this._showToast("已儲存瓦數");
         });
       },
       "room-save": () => this._saveRoom(),
@@ -1468,7 +1464,6 @@ class PlugApp extends HTMLElement {
         this._safe(async () => {
           await api("DELETE", `/api/scenes/${this._sheet.id}`);
           this._closeSheet();
-          this._showToast("已刪除情境");
         }),
       "sched-day": (v) =>
         redraw((d) => {
@@ -1493,7 +1488,6 @@ class PlugApp extends HTMLElement {
         this._safe(async () => {
           await api("DELETE", `/api/schedules/${this._sheet.id}`);
           this._closeSheet();
-          this._showToast("已刪除排程");
         }),
     };
   }
@@ -1544,8 +1538,9 @@ class PlugApp extends HTMLElement {
   async _turnOff(body) {
     try {
       const res = await api("POST", "/api/off", body);
-      const where = body.room ? this._room(body.room)?.name || "" : "";
-      this._showToast(res.count ? `已關閉${where} ${res.count} 個插座` : "沒有開著的插座", res.count > 0);
+      // 整間關閉：結果就在眼前，不提示；全部關閉會動到畫面外的插座，提示並可以復原
+      if (!res.count) this._showToast("沒有開著的插座");
+      else if (!body.room) this._showToast(`已關閉 ${res.count} 個插座`, true);
     } catch (err) {
       this._showToast(`沒有成功：${err.message}`);
     }
@@ -1614,7 +1609,6 @@ class PlugApp extends HTMLElement {
   async _setMaxOn(seconds) {
     try {
       await api("PATCH", `/api/plugs/${this._sheet.id}`, { max_on_s: seconds });
-      this._showToast(seconds ? `已設定最長開 ${fmtSec(seconds)}` : "已取消最長開啟時間");
     } catch (err) {
       this._sheetError(`沒有成功：${err.message}`);
     }
@@ -1625,7 +1619,6 @@ class PlugApp extends HTMLElement {
     try {
       await api("POST", `/api/plugs/${id}/timer`, { seconds });
       this._closeSheet();
-      this._showToast(`${p?.name} 會在 ${fmtSec(Math.min(seconds, p?.max_on_s || seconds))}後自動關閉`);
     } catch (err) {
       this._sheetError(`沒有成功：${err.message}`);
     }
@@ -1676,12 +1669,13 @@ class PlugApp extends HTMLElement {
     this._toastHost.querySelector("[data-undo]")?.addEventListener("click", async () => {
       try {
         const res = await api("POST", "/api/restore");
-        this._showToast(res.count ? `已復原 ${res.count} 個插座` : "已經是原本的樣子了");
+        this._toastHost.innerHTML = "";
+        if (!res.count) this._showToast("已經是原本的樣子了");
       } catch (err) {
         this._showToast(`沒有成功：${err.message}`);
       }
     });
-    this._toastTimer = setTimeout(() => (this._toastHost.innerHTML = ""), TOAST_MS);
+    this._toastTimer = setTimeout(() => (this._toastHost.innerHTML = ""), undo ? TOAST_UNDO_MS : TOAST_MS);
   }
 
   async _safe(fn) {
@@ -1818,7 +1812,6 @@ class PlugApp extends HTMLElement {
     this._safe(async () => {
       await api("PATCH", `/api/plugs/${this._sheet.id}`, { name: input.value });
       this._closeSheet();
-      this._showToast("已改名");
     });
   }
 
@@ -1858,7 +1851,7 @@ class PlugApp extends HTMLElement {
       if (id) await api("PATCH", `/api/rooms/${id}`, { name });
       else await api("POST", "/api/rooms", { name });
       this._closeSheet();
-      this._showToast(id ? "已改名" : `已建立「${name}」，用插座旁的選單把插座換進來`);
+      if (!id) this._showToast(`已建立「${name}」，按住插座右邊的 ⠿ 拖進來`);
     });
   }
 
@@ -1930,7 +1923,6 @@ class PlugApp extends HTMLElement {
       if (id) await api("PUT", `/api/scenes/${id}`, body);
       else await api("POST", "/api/scenes", body);
       this._closeSheet();
-      this._showToast(id ? "已儲存情境" : `已新增「${name}」，在插座頁最上面`);
     });
   }
 
@@ -2043,7 +2035,6 @@ class PlugApp extends HTMLElement {
       if (id) await api("PUT", `/api/schedules/${id}`, body);
       else await api("POST", "/api/schedules", body);
       this._closeSheet();
-      this._showToast(id ? "已儲存排程" : `已新增排程：${daysText(d.days)} ${showT(d.time)}`);
     });
   }
 }
