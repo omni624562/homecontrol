@@ -16,6 +16,7 @@ POST /api/schedules         新增排程；PUT/DELETE /api/schedules/{id}
 PUT  /api/settings
 PUT  /api/away              離家模式 {"enabled", "start", "end", "plugs"}
 GET  /api/plugs/{id}/usage  插座自己記錄的使用時間；POST /api/plugs/{id}/reboot 重新啟動
+POST /api/kasa-rules/adopt  Kasa App 設的排程改由家庭中控管理
 POST /api/cloud/unbind      斷開所有插座的 TP-Link 雲端（要帶 {"confirm": "斷開"}）
 POST /api/discover          立刻重新找插座
 PUT  /api/matter            Google Home 串接外掛回報配對狀態（只接受樹莓派本機）
@@ -397,6 +398,20 @@ async def set_away(body: dict = Body(...)) -> dict[str, Any]:
     store.save()
     hub.mark_native()
     return await _done()
+
+
+@app.post("/api/kasa-rules/adopt")
+async def adopt_kasa_rule(body: dict = Body(...)) -> dict[str, Any]:
+    """Kasa App 設的排程改由家庭中控管理：{"plug", "sact", "smin", "wday"}"""
+    pid = str(body.get("plug", ""))
+    _plug(pid)
+    try:
+        return await hub.adopt_kasa_rule(pid, int(body["sact"]), int(body["smin"]), [int(x) for x in body["wday"]],
+                                         bool(body.get("enabled", True)))
+    except (KeyError, ValueError, TypeError) as err:
+        raise HTTPException(400, str(err)) from err
+    except Exception as err:  # noqa: BLE001
+        raise HTTPException(502, f"插座沒有回應：{err}") from err
 
 
 @app.post("/api/cloud/unbind")

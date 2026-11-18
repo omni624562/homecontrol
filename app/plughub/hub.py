@@ -593,6 +593,26 @@ class Hub:
         dev, ctx = self._target(plug_id)
         return await native.usage(dev, ctx)
 
+    async def adopt_kasa_rule(self, plug_id: str, sact: int, smin: int, wday: list[int], enabled: bool = True) -> dict[str, Any]:
+        """把 Kasa App 設的一條排程轉成家庭中控的排程，再從插座刪掉原本那條。"""
+        dev, ctx = self._target(plug_id)
+        days = sorted((i - 1) % 7 for i, v in enumerate(wday) if v)  # 插座從星期日開始；我們 0 = 星期一
+        if not days:
+            raise ValueError("這條是單次排程，請在家庭中控重新建立")
+        await native.delete_foreign(dev, ctx, sact, smin, wday)
+        sched = self.store.save_schedule(None, {
+            "time": f"{smin // 60:02d}:{smin % 60:02d}:00", "days": days,
+            "action": "on" if sact == 1 else "off", "plugs": [plug_id],
+        })
+        if not enabled:  # 原本停用的，接管後也先停用
+            sched = self.store.save_schedule(sched["id"], {"enabled": False})
+        info = self.native.get(plug_id)
+        if info and info.get("kasa"):
+            info["kasa"] = [r for r in info["kasa"] if not (r["sact"] == sact and r["smin"] == smin and r["wday"] == list(wday))]
+        self.mark_native()
+        await self.changed()
+        return sched
+
     async def cloud_unbind_all(self) -> dict[str, int]:
         ok = failed = 0
         for entry in self.devices.values():

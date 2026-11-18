@@ -429,6 +429,9 @@ const STYLE = `
   .sched .t { font-size: 28px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -.5px; min-width: 110px; flex: none; line-height: 1.1; }
   .sched .t small { font-size: 15px; font-weight: 500; color: var(--muted); letter-spacing: 0; }
   .sched .d { flex: 1; min-width: 0; }
+  .sched.kasa { cursor: default; }
+  .sched.kasa .t { font-size: 24px; min-width: 84px; color: var(--text2); }
+  .sched.kasa:hover { background: none; }
   .sched .d .x { font-size: 14.5px; font-weight: 600; }
   .sched .d .y { font-size: 13px; color: var(--muted); margin-top: 2px; line-height: 1.45; }
   .sched.off .t, .sched.off .d { opacity: .45; }
@@ -1169,6 +1172,7 @@ class PlugApp extends HTMLElement {
           ${rows || empty}
           ${rows ? `<p class="desc foot">${ic("mdi:shield-check-outline")}排程也會寫進插座本身，樹莓派離線時照樣執行（插座只到分鐘，秒數往後取整；「之後再打開」不會寫進插座）。</p>` : ""}
         </section>
+        ${this._kasaCard()}
         ${this._awayCard()}
         ${
           timers.length
@@ -1179,6 +1183,32 @@ class PlugApp extends HTMLElement {
             : ""
         }
       </div>`;
+  }
+
+  // 使用者在 Kasa App 設、存在插座裡的排程：插座自己會執行，要讓人看得到
+  _kasaCard() {
+    const items = [];
+    for (const p of this._plugs) for (const r of p.native?.kasa || []) items.push({ p, r });
+    if (!items.length) return "";
+    items.sort((a, b) => a.r.smin - b.r.smin);
+    const rows = items
+      .map(({ p, r }) => {
+        const days = r.repeat ? daysText(r.wday.map((v, i) => (v ? (i + 6) % 7 : -1)).filter((d) => d >= 0)) : `只有 ${r.date}`;
+        const key = [p.id, r.sact, r.smin, r.wday.join(""), r.enable ? 1 : 0].join("|");
+        return `
+        <div class="sched kasa ${r.enable ? "" : "off"}">
+          <div class="t">${pad2(Math.floor(r.smin / 60))}:${pad2(r.smin % 60)}</div>
+          <div class="d"><div class="x">${days}${r.enable ? "" : "・已停用"}</div><div class="y">${r.sact ? "打開" : "關閉"} ${esc(p.name)}</div></div>
+          ${r.repeat ? `<button class="btn sm" data-a="kasa-adopt" data-v="${esc(key)}" data-confirm="再按一次接管">接管</button>` : ""}
+        </div>`;
+      })
+      .join("");
+    return `
+      <section class="card">
+        <div class="ch"><div class="ri" style="background:var(--soft);color:var(--muted)">${ic("mdi:clock-outline")}</div><div class="n">插座裡的其他排程</div><div class="end"><span class="badge">Kasa App</span></div></div>
+        <p class="desc">這些是用 Kasa App 設在插座裡的，插座會自己照時間開關。按「接管」轉成家庭中控的排程，就能在這裡修改，也會套用防呆和最長開啟時間。</p>
+        ${rows}
+      </section>`;
   }
 
   _awayCard() {
@@ -1427,7 +1457,7 @@ class PlugApp extends HTMLElement {
       // 刪除要按兩次
       if (t.dataset.sure) return true;
       t.dataset.sure = "1";
-      t.textContent = "確定要刪除？再按一次";
+      t.textContent = t.dataset.confirm || "確定要刪除？再按一次";
       return false;
     };
     const redraw = (fn) => () => {
@@ -1528,6 +1558,14 @@ class PlugApp extends HTMLElement {
           this._showToast("插座重新啟動中，大約 30 秒後恢復");
         }),
       "away-open": () => this._openAway(),
+      "kasa-adopt": (v, t) => {
+        if (!sure(t)) return;
+        const [plug, sact, smin, wday, enabled] = v.split("|");
+        this._safe(async () => {
+          await api("POST", "/api/kasa-rules/adopt", { plug, sact: Number(sact), smin: Number(smin), wday: [...wday].map(Number), enabled: enabled === "1" });
+          this._showToast("已轉成家庭中控的排程");
+        });
+      },
       "away-toggle": () => {
         this._sheet.draft.enabled = !this._sheet.draft.enabled;
         this._renderSheet();
@@ -1752,7 +1790,7 @@ class PlugApp extends HTMLElement {
         <li>家庭中控、Google Home、排程、插座內建的排程都不受影響</li>
         <li>想恢復的話，要用 Kasa App 重新設定插座</li>
       </ul>
-      <div class="actions"><button class="btn" data-a="close">先不要</button><button class="btn danger solid" data-a="cloud-unbind">斷開所有插座</button></div>`;
+      <div class="actions"><button class="btn" data-a="close">先不要</button><button class="btn danger solid" data-a="cloud-unbind" data-confirm="確定斷開？再按一次">斷開所有插座</button></div>`;
   }
 
   _toggle(id) {
@@ -2079,7 +2117,7 @@ class PlugApp extends HTMLElement {
         <div class="gi"><span class="gl">內建排程<small>${esc(nativeText)}</small></span>${n && !n.ok ? `<span class="gv warn">${ic("mdi:alert-circle-outline")}</span>` : n ? `<span class="gv ok">${ic("mdi:check-circle")}</span>` : ""}</div>
         ${(n?.kasa || []).length ? `<div class="gi"><span class="gl">Kasa App 設的排程<small>插座自己會執行，家庭中控不會動它；要改請用 Kasa App</small></span><span class="gv kasa">${n.kasa.map((r) => `${r.sact ? "開" : "關"} ${pad2(Math.floor(r.smin / 60))}:${pad2(r.smin % 60)}${r.wday.every(Boolean) ? "" : ` ${r.wday.map((v, i) => (v ? "日一二三四五六"[i] : "")).join("")}`}${r.enable ? "" : "（停用）"}`).join("<br>")}</span></div>` : ""}
         <div class="gi"><span class="gl">TP-Link 雲端</span><span class="gv">${p.cloud ? "連線中" : p.cloud === false ? "未連線" : "—"}</span></div>
-        <div class="gi"><span class="gl">重新啟動插座<small>插座卡住時用；${shared ? "整條排插都會重開，" : ""}可能短暫斷電</small></span><button class="btn sm" data-a="reboot">重新啟動</button></div>
+        <div class="gi"><span class="gl">重新啟動插座<small>插座卡住時用；${shared ? "整條排插都會重開，" : ""}可能短暫斷電</small></span><button class="btn sm" data-a="reboot" data-confirm="再按一次重新啟動">重新啟動</button></div>
       </div>`;
   }
 

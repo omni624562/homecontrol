@@ -193,7 +193,9 @@ async def sync_rules(device: Any, ctx: dict[str, Any], schedule: list, away: tup
     new_known["away"] = want_away
     rules = [{"sact": r.get("sact"), "smin": r.get("smin"), "wday": list(r.get("wday", [])), "enable": r.get("enable", 1)} for r in mine]
     # 使用者自己在 Kasa App 設的排程（插座會自己執行，顯示在畫面上讓使用者知道）
-    foreign = [{"sact": r.get("sact"), "smin": r.get("smin"), "wday": list(r.get("wday", [])), "enable": r.get("enable", 1)} for r in others]
+    foreign = [{"sact": r.get("sact"), "smin": r.get("smin"), "wday": list(r.get("wday", [])), "enable": r.get("enable", 1),
+                "repeat": r.get("repeat", 1), "date": f"{r.get('year', 0):04d}-{r.get('month', 0):02d}-{r.get('day', 0):02d}" if not r.get("repeat", 1) else None}
+               for r in others]
     return {"schedule": len(written), "away": 1 if away else 0, "rules": rules, "known": new_known, "kasa": foreign}
 
 
@@ -222,6 +224,15 @@ async def set_rule_enabled(device: Any, ctx: dict[str, Any], rule: dict[str, Any
     await query(device, ctx, "schedule", "edit_rule", {**_SCHED_RULE, "name": TAG, "id": target["id"], "sact": rule["sact"],
                                                          "smin": rule["smin"], "wday": rule["wday"], "enable": 1 if enable else 0})
     rule["enable"] = 1 if enable else 0
+
+
+async def delete_foreign(device: Any, ctx: dict[str, Any], sact: int, smin: int, wday: list[int]) -> None:
+    """刪除使用者在 Kasa App 設的一條排程（改由家庭中控管理時）。用內容找，找不到就報錯。"""
+    cur = (await query(device, ctx, "schedule", "get_rules")).get("rule_list", [])
+    target = next((r for r in cur if sched_fp(r) == [sact, smin, list(wday)] and not str(r.get("name", "")).startswith(TAG)), None)
+    if target is None:
+        raise RuntimeError("插座上找不到這條排程，可能已經被改過")
+    await query(device, ctx, "schedule", "delete_rule", {"id": target["id"]})
 
 
 # ---------- 使用時間（插座自己記錄的每天開了幾分鐘）----------

@@ -1,5 +1,5 @@
 // 讓網頁可以「加入主畫面」；畫面框架先用網路、連不上才用上次存的。API 一律不快取。
-const CACHE = "plughub-v16";
+const CACHE = "plughub-v18";
 const SHELL = ["/", "/static/app.js", "/static/icons.js", "/static/manifest.webmanifest", "/static/icon-192.png"];
 
 self.addEventListener("install", (e) => {
