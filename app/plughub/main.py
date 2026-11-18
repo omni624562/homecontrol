@@ -16,6 +16,7 @@ POST /api/schedules         新增排程；PUT/DELETE /api/schedules/{id}
 PUT  /api/settings
 PUT  /api/away              離家模式 {"enabled", "start", "end", "plugs"}
 GET  /api/plugs/{id}/usage  插座自己記錄的使用時間；POST /api/plugs/{id}/reboot 重新啟動
+PUT/DELETE /api/kasa-rules  直接修改／刪除插座裡 Kasa App 設的排程
 POST /api/kasa-rules/adopt  Kasa App 設的排程改由家庭中控管理
 POST /api/cloud/unbind      斷開所有插座的 TP-Link 雲端（要帶 {"confirm": "斷開"}）
 POST /api/discover          立刻重新找插座
@@ -398,6 +399,53 @@ async def set_away(body: dict = Body(...)) -> dict[str, Any]:
     store.save()
     hub.mark_native()
     return await _done()
+
+
+def _kasa_match(body: dict) -> tuple[str, list]:
+    pid = str(body.get("plug", ""))
+    _plug(pid)
+    m = body.get("match") or {}
+    try:
+        return pid, [int(m["sact"]), int(m["smin"]), [int(x) for x in m["wday"]]]
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(400, "缺少要改哪一條") from None
+
+
+@app.put("/api/kasa-rules")
+async def edit_kasa_rule(body: dict = Body(...)) -> dict[str, Any]:
+    """直接修改插座裡 Kasa App 設的排程：{"plug", "match": {sact, smin, wday}, "set": {enable, sact, smin, wday}}"""
+    pid, match = _kasa_match(body)
+    new = body.get("set") or {}
+    changes: dict[str, Any] = {}
+    if "enable" in new:
+        changes["enable"] = 1 if new["enable"] else 0
+    if "sact" in new:
+        changes["sact"] = 1 if int(new["sact"]) else 0
+    if "smin" in new:
+        smin = int(new["smin"])
+        if not 0 <= smin < 1440:
+            raise HTTPException(400, "時間不對")
+        changes["smin"] = smin
+    if "wday" in new:
+        wday = [1 if int(x) else 0 for x in new["wday"]][:7]
+        if len(wday) != 7 or not any(wday):
+            raise HTTPException(400, "請至少選一天")
+        changes["wday"] = wday
+    try:
+        await hub.edit_kasa_rule(pid, match, changes)
+    except Exception as err:  # noqa: BLE001
+        raise HTTPException(502, f"沒有成功：{err}") from err
+    return {"ok": True}
+
+
+@app.delete("/api/kasa-rules")
+async def delete_kasa_rule(body: dict = Body(...)) -> dict[str, Any]:
+    pid, match = _kasa_match(body)
+    try:
+        await hub.delete_kasa_rule(pid, match)
+    except Exception as err:  # noqa: BLE001
+        raise HTTPException(502, f"沒有成功：{err}") from err
+    return {"ok": True}
 
 
 @app.post("/api/kasa-rules/adopt")

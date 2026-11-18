@@ -135,7 +135,14 @@ function durPicker(key, sec, rows = 3) {
   const v = splitSec(sec || 0);
   return `<div class="wheel dur r${rows}">${wheelCol(key, "h", 24, v.h, "小時", "時")}${wheelCol(key, "m", 60, v.m, "分鐘", "分")}${wheelCol(key, "s", 60, v.s, "秒", "秒")}</div>`;
 }
-// 只有時、分（離家模式）
+const hmsSec = (t) => {
+  const [h, m, x] = hms(t).split(":").map(Number);
+  return h * 3600 + m * 60 + x;
+};
+// 插座的 wday（星期日開始）↔ 我們的星期（0 = 星期一）
+const kasaDays = (wday) => wday.map((v, i) => (v ? (i + 6) % 7 : -1)).filter((d) => d >= 0).sort();
+const toKasaWday = (days) => [0, 1, 2, 3, 4, 5, 6].map((i) => (days.includes((i + 6) % 7) ? 1 : 0));
+// 只有時、分（離家模式、插座內建排程）
 function hmPicker(key, t) {
   const [h, m] = String(t || "00:00").split(":").map(Number);
   return `<div class="wheel r3">${wheelCol(key, "h", 24, h, "時")}<span class="wsep">:</span>${wheelCol(key, "m", 60, m, "分")}</div>`;
@@ -429,9 +436,8 @@ const STYLE = `
   .sched .t { font-size: 28px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -.5px; min-width: 110px; flex: none; line-height: 1.1; }
   .sched .t small { font-size: 15px; font-weight: 500; color: var(--muted); letter-spacing: 0; }
   .sched .d { flex: 1; min-width: 0; }
-  .sched.kasa { cursor: default; }
-  .sched.kasa .t { font-size: 24px; min-width: 84px; color: var(--text2); }
-  .sched.kasa:hover { background: none; }
+  .sched .tag { display: inline-flex; align-items: center; gap: 3px; margin-top: 4px; font-size: 11.5px; font-weight: 500; color: var(--muted); background: var(--soft); border-radius: 6px; padding: 2px 7px 2px 5px; }
+  .sched .tag .i { width: 13px; height: 13px; }
   .sched .d .x { font-size: 14.5px; font-weight: 600; }
   .sched .d .y { font-size: 13px; color: var(--muted); margin-top: 2px; line-height: 1.45; }
   .sched.off .t, .sched.off .d { opacity: .45; }
@@ -1140,7 +1146,10 @@ class PlugApp extends HTMLElement {
 
   _schedulePage() {
     const scheds = this._s.schedules || [];
-    const rows = scheds.map((x) => this._schedRow(x)).join("");
+    // 家庭中控的排程和插座裡（Kasa App 設的）排程放在同一個清單，依時間排
+    const items = scheds.map((x) => ({ sec: hmsSec(x.time), html: this._schedRow(x) }));
+    for (const p of this._plugs) for (const r of p.native?.kasa || []) if (r.repeat) items.push({ sec: r.smin * 60 + 0.5, html: this._kasaRow(p, r) });
+    const rows = items.sort((a, b) => a.sec - b.sec).map((x) => x.html).join("");
     const timers = this._plugs.filter((p) => p.timer && p.online && this._isOn(p));
     const now = this._now();
     const timerRows = timers
@@ -1170,9 +1179,8 @@ class PlugApp extends HTMLElement {
         <section class="card">
           <div class="ch"><div class="ri">${ic("mdi:calendar-clock")}</div><div class="n">排程</div></div>
           ${rows || empty}
-          ${rows ? `<p class="desc foot">${ic("mdi:shield-check-outline")}排程也會寫進插座本身，樹莓派離線時照樣執行（插座只到分鐘，秒數往後取整；「之後再打開」不會寫進插座）。</p>` : ""}
+          ${rows ? `<p class="desc foot">${ic("mdi:shield-check-outline")}家庭中控的排程也會寫進插座，樹莓派離線時照樣執行。標「插座內建」的是用 Kasa App 設的，存在插座裡，在這裡一樣可以開關、修改、刪除。</p>` : ""}
         </section>
-        ${this._kasaCard()}
         ${this._awayCard()}
         ${
           timers.length
@@ -1185,30 +1193,51 @@ class PlugApp extends HTMLElement {
       </div>`;
   }
 
-  // 使用者在 Kasa App 設、存在插座裡的排程：插座自己會執行，要讓人看得到
-  _kasaCard() {
-    const items = [];
-    for (const p of this._plugs) for (const r of p.native?.kasa || []) items.push({ p, r });
-    if (!items.length) return "";
-    items.sort((a, b) => a.r.smin - b.r.smin);
-    const rows = items
-      .map(({ p, r }) => {
-        const days = r.repeat ? daysText(r.wday.map((v, i) => (v ? (i + 6) % 7 : -1)).filter((d) => d >= 0)) : `只有 ${r.date}`;
-        const key = [p.id, r.sact, r.smin, r.wday.join(""), r.enable ? 1 : 0].join("|");
-        return `
-        <div class="sched kasa ${r.enable ? "" : "off"}">
-          <div class="t">${pad2(Math.floor(r.smin / 60))}:${pad2(r.smin % 60)}</div>
-          <div class="d"><div class="x">${days}${r.enable ? "" : "・已停用"}</div><div class="y">${r.sact ? "打開" : "關閉"} ${esc(p.name)}</div></div>
-          ${r.repeat ? `<button class="btn sm" data-a="kasa-adopt" data-v="${esc(key)}" data-confirm="再按一次接管">接管</button>` : ""}
-        </div>`;
-      })
-      .join("");
+  // 插座裡（Kasa App 設的）排程：和家庭中控的排程同樣呈現，可以直接開關、修改
+  _kasaKey(p, r) {
+    return [p.id, r.sact, r.smin, r.wday.join("")].join("|");
+  }
+
+  _kasaRule(key) {
+    const [pid, sact, smin, wday] = key.split("|");
+    const p = this._plug(pid);
+    const r = (p?.native?.kasa || []).find((x) => x.sact === Number(sact) && x.smin === Number(smin) && x.wday.join("") === wday);
+    return p && r ? { p, r } : null;
+  }
+
+  _kasaRow(p, r) {
+    const key = esc(this._kasaKey(p, r));
+    const days = daysText(kasaDays(r.wday));
     return `
-      <section class="card">
-        <div class="ch"><div class="ri" style="background:var(--soft);color:var(--muted)">${ic("mdi:clock-outline")}</div><div class="n">插座裡的其他排程</div><div class="end"><span class="badge">Kasa App</span></div></div>
-        <p class="desc">這些是用 Kasa App 設在插座裡的，插座會自己照時間開關。按「接管」轉成家庭中控的排程，就能在這裡修改，也會套用防呆和最長開啟時間。</p>
-        ${rows}
-      </section>`;
+      <div class="sched ${r.enable ? "" : "off"}" data-a="kasa-edit" data-v="${key}" role="button" tabindex="0">
+        <div class="t">${pad2(Math.floor(r.smin / 60))}:${pad2(r.smin % 60)}</div>
+        <div class="d"><div class="x">${days}${r.enable ? "" : "・已暫停"}</div><div class="y">${r.sact ? "打開" : "關閉"} ${esc(p.name)}</div>
+          <div class="tag">${ic("mdi:power-plug-outline")}插座內建・Kasa App</div></div>
+        <button class="sw ${r.enable ? "on" : ""}" data-a="kasa-toggle" data-v="${key}" role="switch" aria-checked="${!!r.enable}" aria-label="啟用排程"></button>
+      </div>`;
+  }
+
+  _kasaSheet(s) {
+    const d = s.draft;
+    const p = this._plug(d.pid);
+    if (!p) return null;
+    const days = DAYS.map((label, i) => `<button class="chip day ${d.days.includes(i) ? "sel" : ""}" data-a="kasa-day" data-v="${i}" aria-pressed="${d.days.includes(i)}">${label}</button>`).join("");
+    const act = [[1, "打開"], [0, "關閉"]].map(([k, label]) => `<button class="${d.sact === k ? "sel" : ""}" data-a="kasa-act" data-v="${k}">${label}</button>`).join("");
+    return `
+      ${this._sheetHead(deviceIcon(p.name), "插座內建排程", `${p.name}・用 Kasa App 設的，存在插座裡`)}
+      <div class="group power"><div class="gi"><div class="gt"><div class="gl">啟用</div></div>
+        <button class="sw ${d.enable ? "on" : ""}" data-a="kasa-enable" role="switch" aria-checked="${d.enable}" aria-label="啟用"></button></div></div>
+      <div class="q">幾點 <small>插座的排程只到分鐘</small></div>
+      ${hmPicker("kasa_time", d.time)}
+      <div class="q">哪幾天 <small>${daysText(d.days)}</small></div>
+      <div class="chips">${days}</div>
+      <div class="q">要做什麼</div>
+      <div class="seg full">${act}</div>
+      <p class="note">改的是插座裡的設定，Kasa App 也會看到一樣的內容。插座自己執行，不需要樹莓派。</p>
+      <div class="group" style="margin-top:14px"><div class="gi"><div class="gt"><div class="gl">改由家庭中控管理</div><div class="gs">轉成家庭中控的排程：可以設到秒、套用防呆和最長開啟時間，樹莓派離線時一樣由插座接手</div></div>
+        <button class="btn sm" data-a="kasa-adopt" data-v="${esc(s.key)}" data-confirm="再按一次轉換">轉換</button></div></div>
+      <div class="err"></div>
+      <div class="actions"><button class="btn danger" data-a="kasa-delete" data-confirm="確定刪除？再按一次">刪除</button><button class="btn primary" data-a="kasa-save">儲存</button></div>`;
   }
 
   _awayCard() {
@@ -1560,10 +1589,44 @@ class PlugApp extends HTMLElement {
       "away-open": () => this._openAway(),
       "kasa-adopt": (v, t) => {
         if (!sure(t)) return;
-        const [plug, sact, smin, wday, enabled] = v.split("|");
+        const k = this._kasaRule(v);
+        if (!k) return;
         this._safe(async () => {
-          await api("POST", "/api/kasa-rules/adopt", { plug, sact: Number(sact), smin: Number(smin), wday: [...wday].map(Number), enabled: enabled === "1" });
+          await api("POST", "/api/kasa-rules/adopt", { plug: k.p.id, sact: k.r.sact, smin: k.r.smin, wday: k.r.wday, enabled: !!k.r.enable });
+          if (this._sheet?.type === "kasa") this._closeSheet();
           this._showToast("已轉成家庭中控的排程");
+        });
+      },
+      "kasa-toggle": (v) => {
+        const k = this._kasaRule(v);
+        if (!k) return;
+        this._safe(() => api("PUT", "/api/kasa-rules", { plug: k.p.id, match: { sact: k.r.sact, smin: k.r.smin, wday: k.r.wday }, set: { enable: !k.r.enable } }));
+      },
+      "kasa-edit": (v) => {
+        const k = this._kasaRule(v);
+        if (!k) return;
+        const { p, r } = k;
+        this._openSheet({ type: "kasa", key: v, wide: true,
+          draft: { pid: p.id, sact: r.sact, time: `${pad2(Math.floor(r.smin / 60))}:${pad2(r.smin % 60)}`, days: kasaDays(r.wday), enable: !!r.enable, match: { sact: r.sact, smin: r.smin, wday: r.wday } } });
+      },
+      "kasa-enable": () => redraw((d) => (d.enable = !d.enable))(),
+      "kasa-act": (v) => redraw((d) => (d.sact = Number(v)))(),
+      "kasa-day": (v) => redraw((d) => (d.days = d.days.includes(Number(v)) ? d.days.filter((x) => x !== Number(v)) : [...d.days, Number(v)].sort()))(),
+      "kasa-save": () => {
+        const d = this._sheet.draft;
+        if (!d.days.length) return this._sheetError("請至少選一天");
+        const [h, m] = d.time.split(":").map(Number);
+        this._safe(async () => {
+          await api("PUT", "/api/kasa-rules", { plug: d.pid, match: d.match, set: { enable: d.enable, sact: d.sact, smin: h * 60 + m, wday: toKasaWday(d.days) } });
+          this._closeSheet();
+        });
+      },
+      "kasa-delete": (v, t) => {
+        if (!sure(t)) return;
+        const d = this._sheet.draft;
+        this._safe(async () => {
+          await api("DELETE", "/api/kasa-rules", { plug: d.pid, match: d.match });
+          this._closeSheet();
         });
       },
       "away-toggle": () => {
@@ -1873,6 +1936,12 @@ class PlugApp extends HTMLElement {
   // 時間選擇器改值：幾點（"HH:MM:SS"）或多久（秒）
   _tpSet(key, unit, n) {
     const s = this._sheet;
+    if (key === "kasa_time") {
+      const parts = (s.draft.time || "00:00").split(":");
+      parts[unit === "h" ? 0 : 1] = pad2(n);
+      s.draft.time = parts.join(":");
+      return;
+    }
     if (key === "away_start" || key === "away_end") {
       const k = key === "away_start" ? "start" : "end";
       const parts = (s.draft[k] || "00:00").split(":");
@@ -2000,7 +2069,7 @@ class PlugApp extends HTMLElement {
   _renderSheet() {
     const s = this._sheet;
     if (!s) return;
-    const builders = { confirm: this._confirmSheet, away: this._awaySheet, cloud: this._cloudSheet, device: this._deviceSheet, timer: this._deviceSheet, plug: this._deviceSheet, room: this._roomSheet, scene: this._sceneSheet, sched: this._schedSheet, watts: this._wattsSheet };
+    const builders = { kasa: this._kasaSheet, confirm: this._confirmSheet, away: this._awaySheet, cloud: this._cloudSheet, device: this._deviceSheet, timer: this._deviceSheet, plug: this._deviceSheet, room: this._roomSheet, scene: this._sceneSheet, sched: this._schedSheet, watts: this._wattsSheet };
     const html = builders[s.type]?.call(this, s);
     if (html === null || html === undefined) return this._closeSheet();
     const key = `${s.type}|${s.id}|${s.wide ? 1 : 0}`;

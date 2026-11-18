@@ -235,6 +235,19 @@ async def delete_foreign(device: Any, ctx: dict[str, Any], sact: int, smin: int,
     await query(device, ctx, "schedule", "delete_rule", {"id": target["id"]})
 
 
+async def edit_foreign(device: Any, ctx: dict[str, Any], match: list, changes: dict[str, Any]) -> dict[str, Any]:
+    """直接修改插座裡一條 Kasa App 設的排程（啟用／停用、時間、星期、動作），保留其他欄位。"""
+    cur = (await query(device, ctx, "schedule", "get_rules")).get("rule_list", [])
+    target = next((r for r in cur if sched_fp(r) == match and not str(r.get("name", "")).startswith(TAG)), None)
+    if target is None:
+        raise RuntimeError("插座上找不到這條排程，可能已經被改過")
+    rule = {**_SCHED_RULE, **{k: v for k, v in target.items() if k != "id"}, **changes}
+    await query(device, ctx, "schedule", "edit_rule", {**rule, "id": target["id"]})
+    if rule.get("enable"):
+        await query(device, ctx, "schedule", "set_overall_enable", {"enable": 1})
+    return rule
+
+
 # ---------- 使用時間（插座自己記錄的每天開了幾分鐘）----------
 
 async def usage(device: Any, ctx: dict[str, Any], days: int = 14) -> dict[str, Any]:

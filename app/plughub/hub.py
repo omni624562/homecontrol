@@ -613,6 +613,29 @@ class Hub:
         await self.changed()
         return sched
 
+    def _foreign_fp(self, r: dict[str, Any]) -> list:
+        return [r.get("sact"), r.get("smin"), list(r.get("wday", []))]
+
+    async def edit_kasa_rule(self, plug_id: str, match: list, changes: dict[str, Any]) -> None:
+        dev, ctx = self._target(plug_id)
+        rule = await native.edit_foreign(dev, ctx, match, changes)
+        info = self.native.get(plug_id) or {}
+        for r in info.get("kasa", []):  # 畫面馬上更新，不等下一次同步
+            if self._foreign_fp(r) == match:
+                r.update({k: rule.get(k) for k in ("sact", "smin", "wday", "enable")})
+                r["wday"] = list(r["wday"])
+                break
+        self.mark_native()
+        await self.changed()
+
+    async def delete_kasa_rule(self, plug_id: str, match: list) -> None:
+        dev, ctx = self._target(plug_id)
+        await native.delete_foreign(dev, ctx, *match)
+        info = self.native.get(plug_id) or {}
+        info["kasa"] = [r for r in info.get("kasa", []) if self._foreign_fp(r) != match]
+        self.mark_native()
+        await self.changed()
+
     async def cloud_unbind_all(self) -> dict[str, int]:
         ok = failed = 0
         for entry in self.devices.values():
