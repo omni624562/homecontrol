@@ -23,7 +23,7 @@ const WATT_PRESETS = [
 ];
 const SCENE_ICONS = ["mdi:logout", "mdi:home", "mdi:weather-night", "mdi:white-balance-sunny", "mdi:television", "mdi:lightbulb", "mdi:star-outline"];
 const TABS = [
-  ["plugs", "插座", "mdi:power-plug"],
+  ["plugs", "首頁", "mdi:home"],
   ["schedule", "排程", "mdi:clock-outline"],
   ["energy", "用電", "mdi:chart-bar"],
   ["settings", "設定", "mdi:cog-outline"],
@@ -350,11 +350,14 @@ const STYLE = `
   .pill { height: 32px; display: inline-flex; align-items: center; font-size: 13.5px; font-weight: 600; border-radius: var(--r-xs); padding: 0 12px; background: var(--soft); white-space: nowrap; }
   .pill.danger { color: var(--danger); background: var(--danger-soft); }
   .pill.on { color: var(--on-text); background: var(--on-soft); }
+  .pill.quiet { background: transparent; color: var(--muted); gap: 5px; padding: 0 10px; }
+  .pill.quiet .i { width: 15px; height: 15px; }
+  .pill.quiet:hover { background: var(--soft); color: var(--text); }
   .pill.accent { color: var(--accent-text); background: var(--accent-soft); }
   .desc { font-size: 14px; color: var(--muted); line-height: 1.55; margin: 0; }
   .card > .desc { padding: 0 16px 16px; }
 
-  .row { display: flex; align-items: center; gap: 12px; min-height: 64px; padding: 8px 12px 8px 16px; position: relative; width: 100%; text-align: left; transition: background .12s; }
+  .row { display: flex; align-items: center; gap: 12px; min-height: 60px; padding: 8px 12px 8px 16px; position: relative; width: 100%; text-align: left; transition: background .12s; }
   .row + .row::before { content: ""; position: absolute; left: 68px; right: 0; top: 0; border-top: 1px solid var(--line); }
   .row.tap { cursor: pointer; user-select: none; -webkit-user-select: none; }
   .di { width: 40px; height: 40px; border-radius: 12px; background: var(--soft); color: var(--faint); display: flex; align-items: center; justify-content: center; flex: none; transition: background .2s, color .2s; }
@@ -525,6 +528,12 @@ const STYLE = `
   .callout b { font-weight: 600; font-size: 14.5px; font-variant-numeric: tabular-nums; }
   .callout span { font-size: 13px; opacity: .85; }
   .callout.timer { background: var(--timer-soft); color: var(--timer); }
+  .callout.bad { background: var(--danger-soft); color: var(--danger); }
+  .group.power { margin-top: 2px; }
+  .group.power .gl { font-weight: 600; }
+  .opts.four { grid-template-columns: repeat(4, 1fr); }
+  .link.sm { font-size: 13.5px; padding: 10px 2px 8px; display: inline-block; }
+  .meta { font-size: 12px; color: var(--faint); margin: 18px 2px 0; text-align: center; font-variant-numeric: tabular-nums; }
   .callout .btn { background: var(--card); color: var(--text); }
   /* 分組清單（像手機的設定頁） */
   .group { background: var(--soft); border-radius: var(--r-md); overflow: hidden; }
@@ -763,7 +772,7 @@ class PlugApp extends HTMLElement {
     const conn = `<div class="conn"><span class="led ${this._connected ? "" : "bad"}"></span>${this._connected ? "已連線" : "連線中斷"}</div>`;
     let page;
     if (!this._s) {
-      page = `<div class="ph"><div><h1>插座</h1></div></div><div class="card"><div class="empty">${this._connected ? "載入中…" : "連不上插座伺服器。<br>確認這台裝置和樹莓派在同一個網路。"}</div></div>`;
+      page = `<div class="ph"><div><h1>我的家</h1></div></div><div class="card"><div class="empty">${this._connected ? "載入中…" : "連不上插座伺服器。<br>確認這台裝置和樹莓派在同一個網路。"}</div></div>`;
     } else {
       const pages = {
         plugs: () => (this._edit ? this._editPage() : this._plugsPage()),
@@ -791,7 +800,7 @@ class PlugApp extends HTMLElement {
     const onCount = plugs.filter((p) => p.online && this._isOn(p)).length;
     const head = `
       <div class="ph">
-        <div><h1>插座</h1><div class="sub"><b>${onCount} 個開著</b>・共 ${plugs.length} 個</div></div>
+        <div><h1>我的家</h1><div class="sub">${onCount ? `<b>${onCount} 個開著</b>・` : ""}共 ${plugs.length} 個裝置</div></div>
         <div class="right"><button class="link" data-a="edit">編輯</button></div>
       </div>`;
     if (!plugs.length) {
@@ -817,9 +826,9 @@ class PlugApp extends HTMLElement {
       g.id === NO_ROOM
         ? ""
         : canOff
-          ? `<button class="pill danger" data-a="room-off" data-v="${esc(g.id)}">整間關閉</button>`
+          ? `<button class="pill quiet" data-a="room-off" data-v="${esc(g.id)}">${ic("mdi:power")}全關</button>`
           : canOn
-            ? `<button class="pill on" data-a="room-on" data-v="${esc(g.id)}">整間打開</button>`
+            ? `<button class="pill quiet" data-a="room-on" data-v="${esc(g.id)}">${ic("mdi:power")}全開</button>`
             : "";
     const hint = g.id === NO_ROOM ? `<p class="desc">按右上角「編輯」可以把它們分到房間。</p>` : "";
     return `
@@ -832,19 +841,21 @@ class PlugApp extends HTMLElement {
   }
 
   _plugRow(p) {
+    const name = esc(p.name);
     if (!p.online) {
       return `
-        <div class="row offline tap" data-a="offline" data-v="${esc(p.id)}">
+        <div class="row offline tap" data-a="dev" data-v="${esc(p.id)}" role="button" tabindex="0" aria-label="${name}：連不上">
           <div class="di">${ic("mdi:wifi-off")}</div>
-          <div class="nm"><div class="a"><span>${esc(p.name)}</span></div><div class="b bad">連不上</div></div>
+          <div class="nm"><div class="a"><span>${name}</span></div><div class="b bad">連不上</div></div>
         </div>`;
     }
     const on = this._isOn(p);
     const now = this._now();
-    let sub = p.max_on_s ? `關著・最長開 ${fmtSec(p.max_on_s)}` : "關著";
+    // 關著的只顯示名稱；有值得注意的事才多一行
+    let sub = p.max_on_s ? `最長開 ${fmtSec(p.max_on_s)}` : "";
     let cls = "";
     if (on && p.timer) {
-      sub = `開著・${fmtLeft(p.timer - now)}後自動關閉`;
+      sub = `${fmtLeft(p.timer - now)}後自動關閉`;
       cls = "timer";
     } else if (on) {
       const since = p.on_since ? now - p.on_since : null;
@@ -854,12 +865,10 @@ class PlugApp extends HTMLElement {
       if (long) cls = "warn";
     }
     return `
-      <div class="row tap ${on ? "on" : ""} ${this._pending.has(p.id) ? "pending" : ""}" data-a="toggle" data-v="${esc(p.id)}"
-        role="switch" aria-checked="${on}" tabindex="0" aria-label="${esc(p.name)}">
+      <div class="row tap ${on ? "on" : ""} ${this._pending.has(p.id) ? "pending" : ""}" data-a="dev" data-v="${esc(p.id)}" role="button" tabindex="0" aria-label="${name}的詳細資料">
         <div class="di">${ic(deviceIcon(p.name))}</div>
-        <div class="nm"><div class="a"><span>${esc(p.name)}</span></div><div class="b ${cls}">${esc(sub)}</div></div>
-        <button class="tm ${on && p.timer ? "act" : ""}" data-a="timer" data-v="${esc(p.id)}" aria-label="定時關閉 ${esc(p.name)}">${ic("mdi:timer-outline")}</button>
-        <span class="sw" aria-hidden="true"></span>
+        <div class="nm"><div class="a"><span>${name}</span></div>${sub ? `<div class="b ${cls}">${esc(sub)}</div>` : ""}</div>
+        <button class="sw" data-a="toggle" data-v="${esc(p.id)}" role="switch" aria-checked="${on}" aria-label="${name}"></button>
       </div>`;
   }
 
@@ -872,7 +881,7 @@ class PlugApp extends HTMLElement {
         (sc, i) => `
         <div class="row" data-k="scene" data-id="${esc(sc.id)}">
           <div class="di">${ic(sc.icon)}</div>
-          <button class="nm" data-a="scene-edit" data-v="${esc(sc.id)}"><div class="a"><span>${esc(sc.name)}</span><span class="pen">${ic("mdi:pencil")}</span></div><div class="b">設定要開關哪些插座</div></button>
+          <button class="nm" data-a="scene-edit" data-v="${esc(sc.id)}"><div class="a"><span>${esc(sc.name)}</span></div><div class="b">${this._sceneSummary(sc)}</div></button>
           ${this._grip("scene", sc.id, sc.name)}
         </div>`,
       )
@@ -881,7 +890,7 @@ class PlugApp extends HTMLElement {
     const cards = this._groups(true)
       .map((g) => {
         const roomBtns =
-          g.id === NO_ROOM ? "" : `<button class="pill accent" data-a="room-edit" data-v="${esc(g.id)}">改名</button>${this._grip("room", g.id, g.name)}`;
+          g.id === NO_ROOM ? "" : `<button class="pill quiet" data-a="room-edit" data-v="${esc(g.id)}">改名</button>${this._grip("room", g.id, g.name)}`;
         const rows = g.plugs.length
           ? g.plugs
               .map((p) => {
@@ -890,8 +899,7 @@ class PlugApp extends HTMLElement {
                 <div class="row" data-k="plug" data-id="${esc(p.id)}">
                   <div class="di">${ic(deviceIcon(p.name))}</div>
                   <div class="nm">
-                    <button class="a" data-a="plug-edit" data-v="${esc(p.id)}"><span>${esc(p.name)}</span><span class="pen">${ic("mdi:pencil")}</span>${p.keep_on ? '<span class="badge">常開</span>' : ""}${p.max_on_s ? `<span class="badge timer">最長 ${fmtSec(p.max_on_s)}</span>` : ""}</button>
-                    <select class="pick" data-c="plug-room" data-v="${esc(p.id)}" aria-label="${esc(p.name)} 的房間">${opts}</select>
+                    <button class="a" data-a="plug-edit" data-v="${esc(p.id)}"><span>${esc(p.name)}</span>${p.keep_on ? '<span class="badge">常開</span>' : ""}${p.max_on_s ? `<span class="badge timer">最長 ${fmtSec(p.max_on_s)}</span>` : ""}</button>
                   </div>
                   ${this._grip("plug", p.id, p.name)}
                 </div>`;
@@ -910,7 +918,7 @@ class PlugApp extends HTMLElement {
         <div><h1>編輯</h1><div class="sub">改名稱、換房間、拖拉調順序</div></div>
         <div class="right"><button class="btn primary" data-a="edit-done">完成</button></div>
       </div>
-      <div class="hint">點名稱可以改名、設定「常開」；用名稱下面的選單換房間；按住右邊的 ⠿ 拖拉調整順序，插座可以直接拖到別的房間。</div>
+      <div class="hint">按住右邊的 ⠿ 拖拉排順序，也可以把裝置拖到別的房間。點名稱修改設定。</div>
       <div class="grid wide">
         <section class="card" data-scenes>
           <div class="ch"><div class="ri">${ic("mdi:star-outline")}</div><div class="n">情境</div></div>
@@ -920,6 +928,15 @@ class PlugApp extends HTMLElement {
         ${cards}
         <button class="add" data-a="room-new">${ic("mdi:plus")}新增房間</button>
       </div>`;
+  }
+
+  // 情境內容摘要：「打開 2・關閉 9」
+  _sceneSummary(sc) {
+    const acts = Object.values(sc.actions || {});
+    const on = acts.filter((a) => a === "on").length;
+    const off = acts.filter((a) => a === "off").length;
+    const parts = [on && `打開 ${on} 個`, off && `關閉 ${off} 個`].filter(Boolean);
+    return parts.length ? parts.join("・") : "還沒設定";
   }
 
   // 拖拉把手；鍵盤用 ↑ ↓ 也能移動
@@ -1166,6 +1183,7 @@ class PlugApp extends HTMLElement {
       })
       .join("");
     const noMeter = plugs.every((p) => p.mode !== "metered");
+    const setCount = plugs.filter((p) => p.mode === "metered" || p.watts).length;
     return `
       <div class="ph"><div><h1>用電</h1><div class="sub">台電累進電價・${esc(sum.season)} ${fmt(sum.price, 2)} 元/度</div></div></div>
       <div class="grid">
@@ -1180,9 +1198,10 @@ class PlugApp extends HTMLElement {
           ${noMeter ? `<p class="desc">你的插座量不到用電。在「估算用電」幫插座選接的是什麼電器，就會用「開著的時間 × 瓦數」估算。</p>` : ""}
         </section>
         <section class="card">
-          <div class="ch"><div class="ri">${ic("mdi:flash")}</div><div class="n">估算用電</div></div>
-          <p class="desc">沒有計量的插座，選接的是什麼電器：</p>
-          ${rows}
+          <div class="ch"><div class="ri">${ic("mdi:flash")}</div><div class="n">估算用電</div><div class="c">${setCount}／${plugs.length} 個已設定</div></div>
+          <p class="desc">量不到用電的插座，告訴它接的是什麼電器，就能用「開著的時間 × 瓦數」估算。</p>
+          ${this._energyMore ? rows : ""}
+          <button class="add" data-a="energy-more">${this._energyMore ? "收起" : "設定每個插座接的電器"}</button>
         </section>
         <section class="card">
           <div class="ch"><div class="ri">${ic("mdi:cash")}</div><div class="n">電費</div></div>
@@ -1230,7 +1249,7 @@ class PlugApp extends HTMLElement {
         </section>
         ${this._googleHtml()}
         <section class="card">
-          <div class="ch"><div class="ri">${ic("mdi:magnify")}</div><div class="n">插座</div></div>
+          <div class="ch"><div class="ri">${ic("mdi:magnify")}</div><div class="n">裝置</div></div>
           <div class="set">
             <div class="tx"><div class="l">找新插座</div><div class="s">每分鐘會自動找一次；剛插上的插座可以按這裡馬上找</div></div>
             <button class="btn" data-a="discover">現在找</button>
@@ -1313,7 +1332,7 @@ class PlugApp extends HTMLElement {
       this.shadowRoot.querySelector(`[data-drag="${kind}"][data-v="${CSS.escape(v)}"]`)?.focus();
       return;
     }
-    if ((e.key === "Enter" || e.key === " ") && t.matches?.('.row[role="switch"], .sched[role="button"]')) {
+    if ((e.key === "Enter" || e.key === " ") && t.matches?.('.row[role="button"], .sched[role="button"]')) {
       e.preventDefault();
       t.click();
     }
@@ -1344,7 +1363,8 @@ class PlugApp extends HTMLElement {
       tab: (v) => this._go(v),
       toggle: (v) => this._toggle(v),
       offline: (v) => this._showToast(`${this._plug(v)?.name || "插座"}連不上：檢查插頭有沒有插好、Wi-Fi 有沒有訊號`),
-      timer: (v) => this._openSheet({ type: "timer", id: v, live: true }),
+      timer: (v) => this._openSheet({ type: "device", id: v, live: true }),
+      dev: (v) => this._openSheet({ type: "device", id: v, live: true }),
       "all-off": () => this._turnOff({}),
       "room-off": (v) => this._turnOff({ room: v }),
       "room-on": async (v) => {
@@ -1366,7 +1386,7 @@ class PlugApp extends HTMLElement {
         this._render();
         window.scrollTo(0, 0);
       },
-      "plug-edit": (v) => this._openSheet({ type: "plug", id: v, live: true }),
+      "plug-edit": (v) => this._openSheet({ type: "device", id: v, live: true }),
       "room-edit": (v) => this._openSheet({ type: "room", id: v, name: this._room(v)?.name || "" }),
       "room-new": () => this._openSheet({ type: "room", id: null, name: "" }),
       "scene-edit": (v) => this._openSceneEditor(v),
@@ -1405,6 +1425,15 @@ class PlugApp extends HTMLElement {
       // ── 面板裡的動作 ──
       close: () => this._closeSheet(),
       "timer-set": (v) => this._setTimer(this._sheet.id, Number(v)),
+      "timer-more": () => {
+        this._sheet.customTimer = !this._sheet.customTimer;
+        this._renderSheet();
+      },
+      "dev-power": (v) => this._toggle(this._sheet.id),
+      "energy-more": () => {
+        this._energyMore = !this._energyMore;
+        this._render();
+      },
       "timer-custom": () => {
         const n = this._sheet.timerDraft;
         const max = this._plug(this._sheet.id)?.max_on_s || 86400;
@@ -1434,7 +1463,6 @@ class PlugApp extends HTMLElement {
       "timer-stop": () =>
         this._safe(async () => {
           await api("DELETE", `/api/plugs/${this._sheet.id}/timer`);
-          this._closeSheet();
         }),
       "keep-on": (v, t) => {
         const next = !t.classList.contains("on");
@@ -1622,7 +1650,7 @@ class PlugApp extends HTMLElement {
     const p = this._plug(id);
     try {
       await api("POST", `/api/plugs/${id}/timer`, { seconds });
-      this._closeSheet();
+      if (this._sheet) this._sheet.customTimer = false;
     } catch (err) {
       this._sheetError(`沒有成功：${err.message}`);
     }
@@ -1716,7 +1744,7 @@ class PlugApp extends HTMLElement {
   _renderSheet() {
     const s = this._sheet;
     if (!s) return;
-    const builders = { timer: this._timerSheet, plug: this._plugSheet, room: this._roomSheet, scene: this._sceneSheet, sched: this._schedSheet, watts: this._wattsSheet };
+    const builders = { device: this._deviceSheet, timer: this._deviceSheet, plug: this._deviceSheet, room: this._roomSheet, scene: this._sceneSheet, sched: this._schedSheet, watts: this._wattsSheet };
     const html = builders[s.type]?.call(this, s);
     if (html === null || html === undefined) return this._closeSheet();
     const key = `${s.type}|${s.id}|${s.wide ? 1 : 0}`;
@@ -1740,49 +1768,41 @@ class PlugApp extends HTMLElement {
       <button class="x" data-a="close" aria-label="關閉">${ic("mdi:close")}</button></div>`;
   }
 
-  _timerSheet(s) {
+  // 裝置詳細：開關、定時關閉、名稱與設定，全部在同一個面板
+  _deviceSheet(s) {
     const p = this._plug(s.id);
     if (!p) return null;
     const on = this._isOn(p);
     const room = this._room(p.room)?.name || "還沒分房間";
     const now = this._now();
-    const active =
-      p.timer && on
-        ? `<div class="callout timer">${ic("mdi:timer-outline")}<div><b>還有 ${fmtLeft(p.timer - now)}</b><span>${clockSec(p.timer)} 自動關閉</span></div>
-             ${p.max_on_s ? "" : `<button class="btn sm" data-a="timer-stop">取消定時</button>`}</div>`
-        : "";
     const max = p.max_on_s || 86400;
-    const guard = p.max_on_s
-      ? `<div class="callout">${ic("mdi:shield-check-outline")}<div><b>最長只能開 ${fmtSec(p.max_on_s)}</b><span>時間到一定會關，可以在「編輯」裡改</span></div></div>`
-      : "";
     if (s.timerDraft == null) s.timerDraft = Math.min(600, max);
-    // 有最長時間的（澆水）給短的選項，最後一個是「最長」
-    const choices = p.max_on_s ? [...new Set([...SHORT_OPTIONS.filter((x) => x < max), max])].slice(-5) : TIMER_OPTIONS;
+    const status = !p.online ? "連不上" : on ? "開著" : "關著";
+    const callouts = [
+      !p.online && `<div class="callout bad">${ic("mdi:wifi-off")}<div><b>連不上這個插座</b><span>檢查插頭有沒有插好、Wi-Fi 有沒有訊號</span></div></div>`,
+      p.online && on && p.timer && `<div class="callout timer">${ic("mdi:timer-outline")}<div><b>${fmtLeft(p.timer - now)}後自動關閉</b><span>${clockSec(p.timer)} 關閉</span></div>${p.max_on_s ? "" : `<button class="btn sm" data-a="timer-stop">取消</button>`}</div>`,
+    ].filter(Boolean).join("");
+    // 定時：有最長時間（澆水）就給短的選項
+    const choices = p.max_on_s ? [...new Set([...SHORT_OPTIONS.filter((x) => x < max), max])].slice(-4) : TIMER_OPTIONS.slice(0, 4);
     const opts = choices.map((x) => `<button class="opt" data-a="timer-set" data-v="${x}">${fmtSec(x)}</button>`).join("");
+    const timer = p.online
+      ? `<div class="q">${on ? "定時關閉" : "打開，並在多久後關閉"}</div>
+         <div class="opts four">${opts}</div>
+         <button class="link sm" data-a="timer-more">${s.customTimer ? "收起" : "自訂時間…"}</button>
+         ${s.customTimer ? `${durPicker("timer", s.timerDraft)}<button class="btn primary big" style="margin-top:10px" data-a="timer-custom">${on ? "" : "打開，"}${fmtSec(s.timerDraft)}後關閉</button>` : ""}`
+      : "";
+    const roomOpts = [`<option value="">還沒分房間</option>`, ...this._rooms.map((r) => `<option value="${esc(r.id)}" ${p.room === r.id ? "selected" : ""}>${esc(r.name)}</option>`)].join("");
     return `
-      ${this._sheetHead(deviceIcon(p.name), p.name, `${room}・現在${on ? "開著" : "關著"}`, "background:var(--timer-soft);color:var(--timer)")}
-      ${active}${guard}
-      <div class="q">${on ? (p.timer ? "改成多久後關閉" : "多久後自動關閉") : "打開，多久後自動關閉"}</div>
-      <div class="opts">${opts}</div>
-      <div class="q">自訂時間</div>
-      ${durPicker("timer", s.timerDraft)}
-      <div class="err"></div>
-      <p class="note">時間到會自動關閉${this._s.settings.ntfy_topic ? "，手機也會收到通知" : ""}。中途想停，直接按開關關掉就好。</p>
-      <div class="actions"><button class="btn primary" data-a="timer-custom">${on ? "" : "打開，"}${fmtSec(s.timerDraft)}後關閉</button></div>`;
-  }
-
-  _plugSheet(s) {
-    const p = this._plug(s.id);
-    if (!p) return null;
-    const opts = [`<option value="">還沒分房間</option>`, ...this._rooms.map((r) => `<option value="${esc(r.id)}" ${p.room === r.id ? "selected" : ""}>${esc(r.name)}</option>`)].join("");
-    return `
-      ${this._sheetHead(deviceIcon(p.name), p.name, `${p.model}・${p.host}`)}
+      ${this._sheetHead(deviceIcon(p.name), p.name, `${room}・${status}`, on ? "background:var(--on-soft);color:var(--on)" : "")}
+      ${p.online ? `<div class="group power"><div class="gi"><div class="gt"><div class="gl">電源</div></div><button class="sw ${on ? "on" : ""}" data-a="dev-power" role="switch" aria-checked="${on}" aria-label="電源"></button></div></div>` : ""}
+      ${callouts}
+      ${timer}
       <div class="q">名稱</div>
-      <div class="field"><input class="text" data-plug-name data-enter="plug-save" data-autofocus value="${esc(p.name)}" maxlength="30" aria-label="名稱"><button class="btn primary" data-a="plug-save">儲存</button></div>
-      ${p.kasa_name !== p.name ? `<p class="note">插座本身的名稱：${esc(p.kasa_name)}（清空後儲存就改回這個）</p>` : ""}
+      <div class="field"><input class="text" data-plug-name data-enter="plug-save" value="${esc(p.name)}" maxlength="30" aria-label="名稱"><button class="btn" data-a="plug-save">改名</button></div>
+      ${p.kasa_name !== p.name ? `<p class="note">插座本身的名稱：${esc(p.kasa_name)}（清空後改名就改回這個）</p>` : ""}
       <div class="q">設定</div>
       <div class="group">
-        <label class="gi"><span class="gl">房間</span><select class="gsel" data-c="sheet-room" aria-label="房間">${opts}</select></label>
+        <label class="gi"><span class="gl">房間</span><select class="gsel" data-c="sheet-room" aria-label="房間">${roomOpts}</select></label>
         ${p.mode === "metered" ? "" : `<label class="gi"><span class="gl">接的電器<small>估算用電</small></span><select class="gsel" data-c="sheet-watts" aria-label="接的電器">${this._wattOptions(p)}</select></label>`}
         <div class="gi">
           <div class="gt"><div class="gl">常開</div><div class="gs">全部關閉、情境、排程都不會關它（路由器、冰箱）</div></div>
@@ -1794,8 +1814,9 @@ class PlugApp extends HTMLElement {
         </div>
         ${p.max_on_s ? this._maxOnEditor(s, p) : ""}
       </div>
-      ${p.max_on_s ? `<p class="note">不管從 App、Google Home、排程、情境或插座上的按鈕打開都算。「整間打開」不會打開它；關不掉時手機會收到緊急通知。</p>` : ""}
-            <div class="err"></div>`;
+      ${p.max_on_s ? `<p class="note">不管從 App、Google Home、排程、情境或插座上的按鈕打開都算；「整間打開」不會打開它；關不掉時手機會收到緊急通知。</p>` : ""}
+      <div class="err"></div>
+      <p class="meta">${esc(p.model)}・${esc(p.host)}</p>`;
   }
 
   _maxOnEditor(s, p) {
@@ -1815,7 +1836,7 @@ class PlugApp extends HTMLElement {
     const input = this._sheetHost.querySelector("[data-plug-name]");
     this._safe(async () => {
       await api("PATCH", `/api/plugs/${this._sheet.id}`, { name: input.value });
-      this._closeSheet();
+      input.blur();
     });
   }
 
