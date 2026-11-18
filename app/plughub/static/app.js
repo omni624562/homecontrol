@@ -547,6 +547,11 @@ const STYLE = `
     .col > .q:first-child { margin-top: 18px; }
     .grab { display: none; }
     .xwide .wheel.r5 { --rows: 3; }
+    .xwide .cols { align-items: stretch; }
+    .xwide .col { display: flex; flex-direction: column; }
+    .xwide .col > .group:last-child, .xwide .col > .protect:last-child { flex: 1; }
+    .xwide .col > .protect:last-child { align-content: stretch; }
+    .xwide .col > .link { align-self: flex-start; }
     .xwide .chip:not(.day) { height: 32px; font-size: 13.5px; padding: 0 12px; }
     .xwide .group-title { margin: 10px 2px 6px; }
     .xwide .q { margin-top: 16px; }
@@ -575,6 +580,7 @@ const STYLE = `
   .sh .di .i { width: 22px; height: 22px; }
   .sh .t { font-size: 18px; font-weight: 650; letter-spacing: -.2px; line-height: 1.25; }
   .sh .s { font-size: 13px; color: var(--muted); margin-top: 1px; }
+  .sh .m { font-size: 11.5px; color: var(--faint); margin-top: 1px; font-variant-numeric: tabular-nums; }
   .sh .x { margin-left: auto; width: 36px; height: 36px; border-radius: 50%; background: var(--soft); color: var(--muted); display: flex; align-items: center; justify-content: center; flex: none; transition: background .15s; }
   .sh .x .i { width: 18px; height: 18px; }
   /* 區塊標題 */
@@ -2320,8 +2326,8 @@ class PlugApp extends HTMLElement {
     this._syncWheels();
   }
 
-  _sheetHead(icon, title, sub, iconStyle = "") {
-    return `<div class="sh"><div class="di" style="${iconStyle}">${ic(icon)}</div><div style="min-width:0"><div class="t">${esc(title)}</div>${sub ? `<div class="s">${esc(sub)}</div>` : ""}</div>
+  _sheetHead(icon, title, sub, iconStyle = "", meta = "") {
+    return `<div class="sh"><div class="di" style="${iconStyle}">${ic(icon)}</div><div style="min-width:0"><div class="t">${esc(title)}</div>${sub ? `<div class="s">${esc(sub)}</div>` : ""}${meta ? `<div class="m">${esc(meta)}</div>` : ""}</div>
       <button class="x" data-a="close" aria-label="關閉">${ic("mdi:close")}</button></div>`;
   }
 
@@ -2350,13 +2356,13 @@ class PlugApp extends HTMLElement {
          <button class="link sm" data-a="timer-more">${s.customTimer ? "收起" : "自訂時間…"}</button>
          ${s.customTimer ? `${durPicker("timer", s.timerDraft)}<button class="btn primary big" style="margin-top:10px" data-a="timer-custom">${on ? "" : "打開，"}${fmtSec(s.timerDraft)}後關閉</button>` : ""}`
       : "";
-    // 防呆：一般放左欄；有最長開啟時間（左欄比較長）時放右欄，兩邊才差不多高
+    // 防呆放左欄（左：定時、名稱、設定、防呆；右：Google Home、插座本身，兩邊差不多高）
     const protect = `
       <div class="q">防呆</div>
       <div class="protect">${PROTECT.map(([k, label, desc]) => `<button class="pr ${p.protect === k ? "sel" : ""}" data-a="protect" data-v="${k}" aria-pressed="${p.protect === k}"><b>${k === "lock" ? ic("mdi:lock") : ""}${label}</b><span>${desc}</span></button>`).join("")}</div>`;
     const roomOpts = [`<option value="">還沒分房間</option>`, ...this._rooms.map((r) => `<option value="${esc(r.id)}" ${p.room === r.id ? "selected" : ""}>${esc(r.name)}</option>`)].join("");
     return `
-      ${this._sheetHead(deviceIcon(p.name), p.name, `${room}・${status}`, on ? "background:var(--on-soft);color:var(--on)" : "")}
+      ${this._sheetHead(deviceIcon(p.name), p.name, `${room}・${status}`, on ? "background:var(--on-soft);color:var(--on)" : "", `${p.model}・${p.host}`)}
       ${callouts}
       <div class="cols"><div class="col">
       ${timer}
@@ -2378,9 +2384,8 @@ class PlugApp extends HTMLElement {
         ${p.max_on_s ? this._maxOnEditor(s, p) : ""}
       </div>
       ${p.max_on_s ? `<p class="note">App、Google Home、排程、情境、插座按鈕打開都算；插座本身也會倒數，樹莓派停掉照樣會關。</p>` : ""}
-      ${p.max_on_s ? "" : protect}
+      ${protect}
       </div><div class="col">
-      ${p.max_on_s ? protect : ""}
       <div class="q">Google Home</div>
       <div class="group">
         <div class="gi">
@@ -2390,8 +2395,7 @@ class PlugApp extends HTMLElement {
       </div>
       ${this._hardwareHtml(s, p)}
       </div></div>
-      <div class="err"></div>
-      <p class="meta">${esc(p.model)}・${esc(p.host)}</p>`;
+      <div class="err"></div>`;
   }
 
   _netRowsHtml(p) {
