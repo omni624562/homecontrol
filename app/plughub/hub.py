@@ -17,7 +17,7 @@ from typing import Any, Callable
 
 from kasa import Device, Discover, Module
 
-from . import native, tariff
+from . import native, sun, tariff
 from .notify import Notifier
 from .store import Store
 
@@ -522,7 +522,7 @@ class Hub:
                 if not plug or not plug.online:
                     continue
                 for rule in rules:
-                    want = native.lease_enabled(rule, now)
+                    want = native.lease_enabled(rule, now, self._sun_min)
                     if bool(rule.get("enable")) == want:
                         continue
                     dev, ctx = self._target(pid)
@@ -588,12 +588,12 @@ class Hub:
                     issues.append({"plug": self.name(plug), "reason": "裝置已鎖定，不寫進插座"})
                 continue
             total += 1
-            for act, smin, wday in want:
-                item = [act, smin, list(wday)]
+            for act, opt, val, wday in want:
+                item = [act, opt, val, list(wday)]
                 if item not in rules:
                     rules.append(item)
             info = self.native.get(pid)
-            written = {(r["sact"], r["smin"], tuple(r["wday"])) for r in self._native_rules.get(pid, [])}
+            written = {(r["sact"], r["opt"], r["val"], tuple(r["wday"])) for r in self._native_rules.get(pid, [])}
             if all(rule in written for rule in want):
                 ok += 1
             elif not plug.online:
@@ -627,48 +627,81 @@ class Hub:
         dev, ctx = self._target(plug_id)
         return await native.usage(dev, ctx)
 
-    async def adopt_kasa_rule(self, plug_id: str, sact: int, smin: int, wday: list[int], enabled: bool = True) -> dict[str, Any]:
+    async def adopt_kasa_rule(self, plug_id: str, key: native.Key, enabled: bool = True) -> dict[str, Any]:
         """把 Kasa App 設的一條排程轉成家庭中控的排程，再從插座刪掉原本那條。"""
+        act, opt, val, wday = key
         dev, ctx = self._target(plug_id)
         days = sorted((i - 1) % 7 for i, v in enumerate(wday) if v)  # 插座從星期日開始；我們 0 = 星期一
         if not days:
             raise ValueError("這條是單次排程，請在家庭中控重新建立")
-        await native.delete_foreign(dev, ctx, sact, smin, wday)
-        sched = self.store.save_schedule(None, {
-            "time": f"{smin // 60:02d}:{smin % 60:02d}:00", "days": days,
-            "action": "on" if sact == 1 else "off", "plugs": [plug_id],
-        })
+        await native.delete_foreign(dev, ctx, key)
+        body: dict[str, Any] = {"days": days, "action": "on" if act == 1 else "off", "plugs": [plug_id]}
+        if opt:
+            body.update(time_mode="sunrise" if opt == 1 else "sunset", offset_min=val)
+        else:
+            body["time"] = f"{val // 60:02d}:{val % 60:02d}:00"
+        sched = self.store.save_schedule(None, body)
         if not enabled:  # 原本停用的，接管後也先停用
             sched = self.store.save_schedule(sched["id"], {"enabled": False})
-        info = self.native.get(plug_id)
-        if info and info.get("kasa"):
-            info["kasa"] = [r for r in info["kasa"] if not (r["sact"] == sact and r["smin"] == smin and r["wday"] == list(wday))]
+        self._drop_foreign(plug_id, key)
         self.mark_native()
         await self.changed()
         return sched
 
-    def _foreign_fp(self, r: dict[str, Any]) -> list:
-        return [r.get("sact"), r.get("smin"), list(r.get("wday", []))]
+    def _drop_foreign(self, plug_id: str, key: native.Key) -> None:
+        info = self.native.get(plug_id) or {}
+        info["kasa"] = [r for r in info.get("kasa", []) if (r["sact"], r["opt"], r["val"], tuple(r["wday"])) != key]
 
-    async def edit_kasa_rule(self, plug_id: str, match: list, changes: dict[str, Any]) -> None:
+    async def edit_kasa_rule(self, plug_id: str, key: native.Key, new_key: native.Key, enable: bool) -> None:
         dev, ctx = self._target(plug_id)
-        rule = await native.edit_foreign(dev, ctx, match, changes)
+        await native.edit_foreign(dev, ctx, key, new_key, enable)
         info = self.native.get(plug_id) or {}
         for r in info.get("kasa", []):  # 畫面馬上更新，不等下一次同步
-            if self._foreign_fp(r) == match:
-                r.update({k: rule.get(k) for k in ("sact", "smin", "wday", "enable")})
-                r["wday"] = list(r["wday"])
+            if (r["sact"], r["opt"], r["val"], tuple(r["wday"])) == key:
+                act, opt, val, wday = new_key
+                r.update(sact=act, opt=opt, val=val, wday=list(wday), enable=1 if enable else 0,
+                         smin=val if opt == 0 else self._sun_min(opt, date.today()) + val)
                 break
         self.mark_native()
         await self.changed()
 
-    async def delete_kasa_rule(self, plug_id: str, match: list) -> None:
+    async def delete_kasa_rule(self, plug_id: str, key: native.Key) -> None:
         dev, ctx = self._target(plug_id)
-        await native.delete_foreign(dev, ctx, *match)
-        info = self.native.get(plug_id) or {}
-        info["kasa"] = [r for r in info.get("kasa", []) if self._foreign_fp(r) != match]
+        await native.delete_foreign(dev, ctx, key)
+        self._drop_foreign(plug_id, key)
         self.mark_native()
         await self.changed()
+
+    # ---- 日出日落 ----
+
+    def location(self) -> tuple[float, float] | None:
+        """家裡的經緯度：用插座裡存的（Kasa App 設定時寫進去的）。只在樹莓派上用，不會傳出去。"""
+        for entry in self.devices.values():
+            info = getattr(entry.device, "sys_info", None) or {}
+            lat, lon = info.get("latitude_i"), info.get("longitude_i")
+            if lat is not None and lon is not None and (lat or lon):
+                return lat / 10000, lon / 10000
+            lat, lon = info.get("latitude"), info.get("longitude")
+            if lat is not None and lon is not None and (lat or lon):
+                return float(lat), float(lon)
+        return None
+
+    def _sun_min(self, opt: int, day: date) -> int | None:
+        loc = self.location()
+        if loc is None:
+            return None
+        return sun.minutes(day, loc[0], loc[1], "sunrise" if opt == 1 else "sunset")
+
+    def sched_time(self, sched: dict[str, Any], day: date) -> str | None:
+        """排程在這一天實際是幾點（"HH:MM:SS"）；日出日落算不出來（沒有位置）時回傳 None。"""
+        mode = sched.get("time_mode", "clock")
+        if mode not in ("sunrise", "sunset"):
+            return sched["time"]
+        base = self._sun_min(1 if mode == "sunrise" else 2, day)
+        if base is None:
+            return None
+        minute = min(1439, max(0, base + int(sched.get("offset_min") or 0)))
+        return f"{minute // 60:02d}:{minute % 60:02d}:00"
 
     async def cloud_unbind_all(self) -> dict[str, int]:
         ok = failed = 0
@@ -808,7 +841,8 @@ class Hub:
         now = datetime.now()
         for sched in self.store.schedules:
             key = sched["id"]
-            if sched["enabled"] and now.weekday() in sched["days"] and self._due(key, sched["time"], now):
+            at = self.sched_time(sched, now.date())
+            if sched["enabled"] and at and now.weekday() in sched["days"] and self._due(key, at, now):
                 self._spawn(self._run_one(sched))
             # 關閉之後指定時間再打開：只開被這個排程關掉、現在還關著的
             if sched.get("restore_at") and self._due(f"{key}:restore", sched["restore_at"], now):
@@ -934,7 +968,9 @@ class Hub:
             },
             "now": time.time(),
             "scenes": self.store.scenes,
-            "schedules": [{**x, "backup_status": self._backup_status(x)} for x in self.store.schedules],
+            "schedules": [{**x, "today": self.sched_time(x, date.today()), "backup_status": self._backup_status(x)}
+                          for x in self.store.schedules],
+            "sun": {"sunrise": self._sun_min(1, date.today()), "sunset": self._sun_min(2, date.today()), "located": self.location() is not None},
             "settings": settings,
             "can_restore": bool(self.store.data["remembered"].get("undo")),
             "matter": self.matter_status(),

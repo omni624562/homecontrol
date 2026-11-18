@@ -401,38 +401,36 @@ async def set_away(body: dict = Body(...)) -> dict[str, Any]:
     return await _done()
 
 
-def _kasa_match(body: dict) -> tuple[str, list]:
+def _key(m: dict) -> tuple:
+    """{"sact", "opt", "val", "wday"} → 規則的鍵。opt：0 固定時間（val = 第幾分鐘）、1 日出、2 日落（val = 提早／延後分鐘）。"""
+    try:
+        opt = int(m.get("opt", 0))
+        val = int(m["val"])
+        wday = tuple(1 if int(x) else 0 for x in m["wday"])
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(400, "排程內容不對") from None
+    if opt not in (0, 1, 2) or len(wday) != 7 or (opt == 0 and not 0 <= val < 1440) or (opt and not -180 <= val <= 180):
+        raise HTTPException(400, "排程內容不對")
+    return (1 if int(m.get("sact", 0)) else 0, opt, val, wday)
+
+
+def _kasa_plug(body: dict) -> str:
     pid = str(body.get("plug", ""))
     _plug(pid)
-    m = body.get("match") or {}
-    try:
-        return pid, [int(m["sact"]), int(m["smin"]), [int(x) for x in m["wday"]]]
-    except (KeyError, TypeError, ValueError):
-        raise HTTPException(400, "缺少要改哪一條") from None
+    return pid
 
 
 @app.put("/api/kasa-rules")
 async def edit_kasa_rule(body: dict = Body(...)) -> dict[str, Any]:
-    """直接修改插座裡 Kasa App 設的排程：{"plug", "match": {sact, smin, wday}, "set": {enable, sact, smin, wday}}"""
-    pid, match = _kasa_match(body)
-    new = body.get("set") or {}
-    changes: dict[str, Any] = {}
-    if "enable" in new:
-        changes["enable"] = 1 if new["enable"] else 0
-    if "sact" in new:
-        changes["sact"] = 1 if int(new["sact"]) else 0
-    if "smin" in new:
-        smin = int(new["smin"])
-        if not 0 <= smin < 1440:
-            raise HTTPException(400, "時間不對")
-        changes["smin"] = smin
-    if "wday" in new:
-        wday = [1 if int(x) else 0 for x in new["wday"]][:7]
-        if len(wday) != 7 or not any(wday):
-            raise HTTPException(400, "請至少選一天")
-        changes["wday"] = wday
+    """直接修改插座裡 Kasa App 設的排程：{"plug", "match": {sact, opt, val, wday}, "set": {sact, opt, val, wday, enable}}"""
+    pid = _kasa_plug(body)
+    key = _key(body.get("match") or {})
+    new = {**dict(zip(("sact", "opt", "val", "wday"), key)), **(body.get("set") or {})}
+    new_key = _key(new)
+    if not any(new_key[3]):
+        raise HTTPException(400, "請至少選一天")
     try:
-        await hub.edit_kasa_rule(pid, match, changes)
+        await hub.edit_kasa_rule(pid, key, new_key, bool(new.get("enable", True)))
     except Exception as err:  # noqa: BLE001
         raise HTTPException(502, f"沒有成功：{err}") from err
     return {"ok": True}
@@ -440,9 +438,9 @@ async def edit_kasa_rule(body: dict = Body(...)) -> dict[str, Any]:
 
 @app.delete("/api/kasa-rules")
 async def delete_kasa_rule(body: dict = Body(...)) -> dict[str, Any]:
-    pid, match = _kasa_match(body)
+    pid = _kasa_plug(body)
     try:
-        await hub.delete_kasa_rule(pid, match)
+        await hub.delete_kasa_rule(pid, _key(body.get("match") or {}))
     except Exception as err:  # noqa: BLE001
         raise HTTPException(502, f"沒有成功：{err}") from err
     return {"ok": True}
@@ -450,13 +448,11 @@ async def delete_kasa_rule(body: dict = Body(...)) -> dict[str, Any]:
 
 @app.post("/api/kasa-rules/adopt")
 async def adopt_kasa_rule(body: dict = Body(...)) -> dict[str, Any]:
-    """Kasa App 設的排程改由家庭中控管理：{"plug", "sact", "smin", "wday"}"""
-    pid = str(body.get("plug", ""))
-    _plug(pid)
+    """Kasa App 設的排程改由家庭中控管理：{"plug", "match": {sact, opt, val, wday}, "enabled"}"""
+    pid = _kasa_plug(body)
     try:
-        return await hub.adopt_kasa_rule(pid, int(body["sact"]), int(body["smin"]), [int(x) for x in body["wday"]],
-                                         bool(body.get("enabled", True)))
-    except (KeyError, ValueError, TypeError) as err:
+        return await hub.adopt_kasa_rule(pid, _key(body.get("match") or {}), bool(body.get("enabled", True)))
+    except ValueError as err:
         raise HTTPException(400, str(err)) from err
     except Exception as err:  # noqa: BLE001
         raise HTTPException(502, f"插座沒有回應：{err}") from err

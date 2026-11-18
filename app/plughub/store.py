@@ -96,6 +96,8 @@ class Store:
             sched["restore_at"] = _hms(sched.get("restore_at")) if sched.get("restore_at") else None
             sched.setdefault("duration_s", None)
             sched.setdefault("backup", True)
+            sched.setdefault("time_mode", "clock")
+            sched.setdefault("offset_min", 0)
 
     def _migrate_schedule(self) -> None:
         """舊版只有一組夜間排程（勾選的插座晚上關、早上開），轉成新的排程清單。"""
@@ -179,7 +181,8 @@ class Store:
             if sched_id:
                 raise KeyError(sched_id)
             sched = {"id": uuid.uuid4().hex[:8], "enabled": True, "time": "23:00:00", "days": list(range(7)),
-                     "action": "off", "scene": None, "plugs": [], "restore_at": None, "duration_s": None, "backup": True}
+                     "action": "off", "scene": None, "plugs": [], "restore_at": None, "duration_s": None, "backup": True,
+                     "time_mode": "clock", "offset_min": 0}
             self.data["schedules"] = [*self.schedules, sched]
         if "enabled" in body:
             sched["enabled"] = bool(body["enabled"])
@@ -195,6 +198,13 @@ class Store:
             sched["plugs"] = list(dict.fromkeys(str(p) for p in body["plugs"]))
         if "restore_at" in body:
             sched["restore_at"] = _hms(body["restore_at"]) if body["restore_at"] else None
+        if body.get("time_mode") in ("clock", "sunrise", "sunset"):  # 固定時間／日出／日落
+            sched["time_mode"] = body["time_mode"]
+        if "offset_min" in body:  # 日出日落提早（負）或延後（正）幾分鐘
+            try:
+                sched["offset_min"] = max(-180, min(180, int(body["offset_min"] or 0)))
+            except (TypeError, ValueError):
+                pass
         if "backup" in body:  # 樹莓派離線時由插座接手（寫一份到插座）
             sched["backup"] = bool(body["backup"])
         if "duration_s" in body:  # 打開之後多久自動關閉（秒）

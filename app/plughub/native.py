@@ -78,16 +78,38 @@ def _seconds(hms: str) -> int:
     return h * 3600 + m * 60 + s
 
 
-def schedule_rules(store: Any, plug_id: str, only: list | None = None) -> list[tuple[int, int, tuple[int, ...]]]:
-    """這個插座應該有的排程規則：(動作 1 開 / 0 關, 第幾分鐘, 星期)。only：只算這幾個排程。"""
+# 規則的「鍵」：(動作 1 開／0 關, 時間方式 0 固定／1 日出／2 日落, 值, 星期)
+#   固定時間：值 = 第幾分鐘；日出日落：值 = 提早（負）／延後（正）幾分鐘
+Key = tuple
+
+
+def dev_key(r: dict[str, Any]) -> Key:
+    """插座回報的規則 → 鍵。"""
+    opt = int(r.get("stime_opt") or 0)
+    val = r.get("smin") if opt == 0 else (r.get("soffset") or 0)
+    return (r.get("sact"), opt, val, tuple(r.get("wday", [])))
+
+
+def known_key(k: list) -> Key:
+    """存在 store 裡的記錄 → 鍵（舊格式只有 [動作, 分鐘, 星期]）。"""
+    if len(k) == 3:
+        return (k[0], 0, k[1], tuple(k[2]))
+    return (k[0], k[1], k[2], tuple(k[3]))
+
+
+def rule_dict(r: dict[str, Any]) -> dict[str, Any]:
+    act, opt, val, wday = dev_key(r)
+    return {"sact": act, "opt": opt, "val": val, "smin": r.get("smin"), "wday": list(wday), "enable": r.get("enable", 1)}
+
+
+def schedule_rules(store: Any, plug_id: str, only: list | None = None) -> list[Key]:
+    """這個插座應該有的排程規則（鍵）。only：只算這幾個排程。"""
     meta = store.meta(plug_id)
-    rules: list[tuple[int, int, tuple[int, ...]]] = []
+    rules: list[Key] = []
     if meta.protect == "lock":  # 鎖定的插座不寫排程（插座自己執行時不會檢查鎖定）
         return rules
 
-    def add(act: int, total: int, days: list[int]) -> None:
-        smin, ds = _round_up(total, days)
-        rule = (act, smin, tuple(_kasa_wday(ds)))
+    def add(rule: Key) -> None:
         if rule not in rules:
             rules.append(rule)
 
@@ -105,14 +127,25 @@ def schedule_rules(store: Any, plug_id: str, only: list | None = None) -> list[t
             duration = sched.get("duration_s") if act == "on" else None
         else:
             continue
-        total = _seconds(sched["time"])
-        if act == "off" and not meta.keep_on:
-            add(0, total, sched["days"])
-        elif act == "on":
-            add(1, total, sched["days"])
-            limits = [x for x in (duration, meta.max_on_s) if x]
-            if limits:  # 離線時也要關
-                add(0, total + int(min(limits)), sched["days"])
+        if act not in ("on", "off") or (act == "off" and meta.keep_on):
+            continue
+        limits = [x for x in (duration, meta.max_on_s) if x] if act == "on" else []
+        mode = sched.get("time_mode", "clock")
+        if mode in ("sunrise", "sunset"):
+            # 日出日落：插座自己每天算時間（離線好幾天也會跟著季節變）
+            opt = 1 if mode == "sunrise" else 2
+            offset = int(sched.get("offset_min") or 0)
+            wday = tuple(_kasa_wday(sched["days"]))
+            add((1 if act == "on" else 0, opt, offset, wday))
+            if limits:  # 離線時也要關：往後取整到分鐘
+                add((0, opt, offset + -(-int(min(limits)) // 60), wday))
+        else:
+            total = _seconds(sched["time"])
+            smin, ds = _round_up(total, sched["days"])
+            add((1 if act == "on" else 0, 0, smin, tuple(_kasa_wday(ds))))
+            if limits:
+                smin, ds = _round_up(total + int(min(limits)), sched["days"])
+                add((0, 0, smin, tuple(_kasa_wday(ds))))
     return rules
 
 
@@ -145,10 +178,6 @@ async def clock_skew(device: Any) -> float:
     return abs((dev - datetime.now()).total_seconds())
 
 
-def sched_fp(r: dict[str, Any]) -> list:
-    return [r.get("sact"), r.get("smin"), list(r.get("wday", []))]
-
-
 def away_fp(r: dict[str, Any]) -> list:
     return [r.get("smin"), r.get("emin")]
 
@@ -166,6 +195,19 @@ def _mine(rules: list[dict], known: list, fp: Any) -> list[dict]:
     return out
 
 
+def _mine_sched(rules: list[dict], known: list) -> list[dict]:
+    """自己寫的排程規則：內容在記錄裡，或名稱是 homehub。"""
+    out, pool = [], [known_key(k) for k in known]
+    for r in rules:
+        k = dev_key(r)
+        if k in pool:
+            pool.remove(k)
+            out.append(r)
+        elif str(r.get("name", "")).startswith(TAG):
+            out.append(r)
+    return out
+
+
 async def sync_rules(device: Any, ctx: dict[str, Any], schedule: list, away: tuple[int, int] | None,
                      known: dict[str, list]) -> dict[str, Any]:
     """把插座上自己寫的規則改成想要的樣子；一樣的話不動。
@@ -174,22 +216,23 @@ async def sync_rules(device: Any, ctx: dict[str, Any], schedule: list, away: tup
     """
     # 排程（停用中的也算：那是租約暫時停用的）
     cur = (await query(device, ctx, "schedule", "get_rules")).get("rule_list", [])
-    mine = _mine(cur, known.get("schedule", []), sched_fp)
-    have = sorted((r.get("sact"), r.get("smin"), tuple(r.get("wday", []))) for r in mine)
+    mine = _mine_sched(cur, known.get("schedule", []))
+    have = sorted(dev_key(r) for r in mine)
     want = sorted(schedule)
     room = MAX_RULES - (len(cur) - len(mine))
     written = want[:room]
     if written != have:
         for r in mine:
             await query(device, ctx, "schedule", "delete_rule", {"id": r["id"]})
-        for act, smin, wday in written:
-            await query(device, ctx, "schedule", "add_rule",
-                        {**_SCHED_RULE, "name": TAG, "sact": act, "smin": smin, "wday": list(wday)})
+        for act, opt, val, wday in written:
+            await query(device, ctx, "schedule", "add_rule", {
+                **_SCHED_RULE, "name": TAG, "sact": act, "stime_opt": opt,
+                "smin": val if opt == 0 else 0, "soffset": val if opt else 0, "wday": list(wday)})
         if written:
             await query(device, ctx, "schedule", "set_overall_enable", {"enable": 1})
-    new_known = {"schedule": [[a, m, list(w)] for a, m, w in written]}
+    new_known = {"schedule": [[a, o, v, list(w)] for a, o, v, w in written]}
     cur = (await query(device, ctx, "schedule", "get_rules")).get("rule_list", [])
-    mine = _mine(cur, new_known["schedule"], sched_fp)
+    mine = _mine_sched(cur, new_known["schedule"])
     others = [r for r in cur if r not in mine]
     # 離家模式
     cur_a = (await query(device, ctx, "anti_theft", "get_rules")).get("rule_list", [])
@@ -204,61 +247,76 @@ async def sync_rules(device: Any, ctx: dict[str, Any], schedule: list, away: tup
         rest = len(cur_a) - len(mine_a)
         await query(device, ctx, "anti_theft", "set_overall_enable", {"enable": 1 if (away or rest) else 0})
     new_known["away"] = want_away
-    rules = [{"sact": r.get("sact"), "smin": r.get("smin"), "wday": list(r.get("wday", [])), "enable": r.get("enable", 1)} for r in mine]
+    rules = [rule_dict(r) for r in mine]
     # 使用者自己在 Kasa App 設的排程（插座會自己執行，顯示在畫面上讓使用者知道）
-    foreign = [{"sact": r.get("sact"), "smin": r.get("smin"), "wday": list(r.get("wday", [])), "enable": r.get("enable", 1),
-                "repeat": r.get("repeat", 1), "date": f"{r.get('year', 0):04d}-{r.get('month', 0):02d}-{r.get('day', 0):02d}" if not r.get("repeat", 1) else None}
+    foreign = [{**rule_dict(r), "repeat": r.get("repeat", 1), "date": f"{r.get('year', 0):04d}-{r.get('month', 0):02d}-{r.get('day', 0):02d}" if not r.get("repeat", 1) else None}
                for r in others]
     return {"schedule": len(written), "away": 1 if away else 0, "rules": rules, "known": new_known, "kasa": foreign}
 
 
 # ---------- 租約：樹莓派在線時，插座的「打開」規則在執行前後暫時停用 ----------
 
-def lease_enabled(rule: dict[str, Any], now: datetime) -> bool:
-    """這條規則現在應不應該啟用。關閉規則一直啟用；打開規則在執行前後的時段停用。"""
+def lease_enabled(rule: dict[str, Any], now: datetime, sun_min: Any) -> bool:
+    """這條規則現在應不應該啟用。關閉規則一直啟用；打開規則在執行前後的時段停用。
+
+    sun_min(opt, day) → 那天日出（1）／日落（2）是第幾分鐘。日出日落的時段放寬（插座和樹莓派算的可能差 1～2 分鐘）。
+    """
     if rule.get("sact") != 1:
         return True
+    opt = rule.get("opt", 0)
+    before, after = (LEASE_BEFORE, LEASE_AFTER) if opt == 0 else (300, 300)
     for offset in (-1, 0, 1):
         day = now.date() + timedelta(days=offset)
         if not rule["wday"][(day.weekday() + 1) % 7]:
             continue
-        fire = datetime.combine(day, datetime.min.time()) + timedelta(minutes=rule["smin"])
-        if -LEASE_AFTER <= (fire - now).total_seconds() <= LEASE_BEFORE:
+        if opt == 0:
+            minute = rule["val"]
+        else:
+            base = sun_min(opt, day)
+            minute = (base + rule["val"]) if base is not None else rule.get("smin") or 0
+        fire = datetime.combine(day, datetime.min.time()) + timedelta(minutes=minute)
+        if -after <= (fire - now).total_seconds() <= before:
             return False
     return True
 
 
+def _rule_body(key: Key, enable: Any, extra: dict | None = None) -> dict[str, Any]:
+    act, opt, val, wday = key
+    return {**_SCHED_RULE, **(extra or {}), "sact": act, "stime_opt": opt, "smin": val if opt == 0 else (extra or {}).get("smin", 0),
+            "soffset": val if opt else 0, "wday": list(wday), "enable": 1 if enable else 0}
+
+
+async def _find(device: Any, ctx: dict[str, Any], key: Key, foreign: bool) -> dict[str, Any]:
+    cur = (await query(device, ctx, "schedule", "get_rules")).get("rule_list", [])
+    for r in cur:
+        if dev_key(r) == key and (not foreign or not str(r.get("name", "")).startswith(TAG)):
+            return r
+    raise RuntimeError("插座上找不到這條排程，可能已經被改過")
+
+
 async def set_rule_enabled(device: Any, ctx: dict[str, Any], rule: dict[str, Any], enable: bool) -> None:
     """先重新讀插座的規則，用內容找到自己那條再改（有些韌體的 ID 會變，不能直接用舊 ID）。"""
-    cur = (await query(device, ctx, "schedule", "get_rules")).get("rule_list", [])
-    target = next((r for r in cur if sched_fp(r) == sched_fp(rule)), None)
-    if target is None:
-        raise RuntimeError("插座上找不到這條規則")
-    await query(device, ctx, "schedule", "edit_rule", {**_SCHED_RULE, "name": TAG, "id": target["id"], "sact": rule["sact"],
-                                                         "smin": rule["smin"], "wday": rule["wday"], "enable": 1 if enable else 0})
+    key = (rule["sact"], rule["opt"], rule["val"], tuple(rule["wday"]))
+    target = await _find(device, ctx, key, foreign=False)
+    await query(device, ctx, "schedule", "edit_rule", {**_rule_body(key, enable, {"name": TAG}), "id": target["id"]})
     rule["enable"] = 1 if enable else 0
 
 
-async def delete_foreign(device: Any, ctx: dict[str, Any], sact: int, smin: int, wday: list[int]) -> None:
-    """刪除使用者在 Kasa App 設的一條排程（改由家庭中控管理時）。用內容找，找不到就報錯。"""
-    cur = (await query(device, ctx, "schedule", "get_rules")).get("rule_list", [])
-    target = next((r for r in cur if sched_fp(r) == [sact, smin, list(wday)] and not str(r.get("name", "")).startswith(TAG)), None)
-    if target is None:
-        raise RuntimeError("插座上找不到這條排程，可能已經被改過")
+async def delete_foreign(device: Any, ctx: dict[str, Any], key: Key) -> None:
+    """刪除使用者在 Kasa App 設的一條排程。用內容找，找不到就報錯。"""
+    target = await _find(device, ctx, key, foreign=True)
     await query(device, ctx, "schedule", "delete_rule", {"id": target["id"]})
 
 
-async def edit_foreign(device: Any, ctx: dict[str, Any], match: list, changes: dict[str, Any]) -> dict[str, Any]:
-    """直接修改插座裡一條 Kasa App 設的排程（啟用／停用、時間、星期、動作），保留其他欄位。"""
-    cur = (await query(device, ctx, "schedule", "get_rules")).get("rule_list", [])
-    target = next((r for r in cur if sched_fp(r) == match and not str(r.get("name", "")).startswith(TAG)), None)
-    if target is None:
-        raise RuntimeError("插座上找不到這條排程，可能已經被改過")
-    rule = {**_SCHED_RULE, **{k: v for k, v in target.items() if k != "id"}, **changes}
-    await query(device, ctx, "schedule", "edit_rule", {**rule, "id": target["id"]})
-    if rule.get("enable"):
+async def edit_foreign(device: Any, ctx: dict[str, Any], key: Key, new_key: Key, enable: bool) -> dict[str, Any]:
+    """直接修改插座裡一條 Kasa App 設的排程，保留名稱等其他欄位。"""
+    target = await _find(device, ctx, key, foreign=True)
+    keep = {k: v for k, v in target.items() if k not in ("id", "sact", "stime_opt", "smin", "soffset", "wday", "enable")}
+    body = _rule_body(new_key, enable, keep)
+    await query(device, ctx, "schedule", "edit_rule", {**body, "id": target["id"]})
+    if enable:
         await query(device, ctx, "schedule", "set_overall_enable", {"enable": 1})
-    return rule
+    return body
 
 
 # ---------- 使用時間（插座自己記錄的每天開了幾分鐘）----------

@@ -135,6 +135,10 @@ function durPicker(key, sec, rows = 3) {
   const v = splitSec(sec || 0);
   return `<div class="wheel dur r${rows}">${wheelCol(key, "h", 24, v.h, "小時", "時")}${wheelCol(key, "m", 60, v.m, "分鐘", "分")}${wheelCol(key, "s", 60, v.s, "秒", "秒")}</div>`;
 }
+// 日出日落：opt 1 = 日出、2 = 日落；val = 提早（負）／延後（正）幾分鐘
+const sunLabel = (opt, val) => `${opt === 1 ? "日出" : "日落"}${val ? `${val < 0 ? "前" : "後"} ${Math.abs(val)} 分` : ""}`;
+const sunIcon = (opt) => (opt === 1 ? "mdi:white-balance-sunny" : "mdi:weather-night");
+const hhmm = (m) => `${pad2(Math.floor(m / 60))}:${pad2(m % 60)}`;
 const hmsSec = (t) => {
   const [h, m, x] = hms(t).split(":").map(Number);
   return h * 3600 + m * 60 + x;
@@ -439,6 +443,14 @@ const STYLE = `
   .sched .tag { display: inline-flex; align-items: center; gap: 3px; margin-top: 4px; font-size: 11.5px; font-weight: 500; color: var(--muted); background: var(--soft); border-radius: 6px; padding: 2px 7px 2px 5px; }
   .sched .tag .i { width: 13px; height: 13px; }
   .sched .tag.home { background: var(--accent-soft); color: var(--accent-text); }
+  .sched .sun { display: inline-flex; align-items: center; gap: 3px; margin-right: 6px; color: var(--on-text); font-weight: 600; }
+  .sched .sun .i { width: 15px; height: 15px; }
+  .offset { display: flex; align-items: center; gap: 10px; }
+  .offset .btn { width: 56px; height: 56px; font-size: 18px; border-radius: var(--r-md); }
+  .offset .ov { flex: 1; text-align: center; background: var(--soft); border-radius: var(--r-md); padding: 8px; }
+  .offset .ov b { display: inline-flex; align-items: center; gap: 6px; font-size: 18px; font-weight: 600; }
+  .offset .ov b .i { width: 20px; height: 20px; color: var(--on); }
+  .offset .ov span { display: block; font-size: 13px; color: var(--muted); margin-top: 2px; }
   .bstat { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
   .bstat .i { width: 16px; height: 16px; }
   .bstat.ok { color: var(--ok); } .bstat.bad { color: var(--warn); }
@@ -1154,8 +1166,8 @@ class PlugApp extends HTMLElement {
   _schedulePage() {
     const scheds = this._s.schedules || [];
     // 家庭中控的排程和插座裡（Kasa App 設的）排程放在同一個清單，依時間排
-    const items = scheds.map((x) => ({ sec: hmsSec(x.time), html: this._schedRow(x) }));
-    for (const p of this._plugs) for (const r of p.native?.kasa || []) if (r.repeat) items.push({ sec: r.smin * 60 + 0.5, html: this._kasaRow(p, r) });
+    const items = scheds.map((x) => ({ sec: hmsSec(x.today || x.time), html: this._schedRow(x) }));
+    for (const p of this._plugs) for (const r of p.native?.kasa || []) if (r.repeat) items.push({ sec: this._ruleMin(r) * 60 + 0.5, html: this._kasaRow(p, r) });
     const rows = items.sort((a, b) => a.sec - b.sec).map((x) => x.html).join("");
     const timers = this._plugs.filter((p) => p.timer && p.online && this._isOn(p));
     const now = this._now();
@@ -1213,13 +1225,28 @@ class PlugApp extends HTMLElement {
 
   // 插座裡（Kasa App 設的）排程：和家庭中控的排程同樣呈現，可以直接開關、修改
   _kasaKey(p, r) {
-    return [p.id, r.sact, r.smin, r.wday.join("")].join("|");
+    return [p.id, r.sact, r.opt, r.val, r.wday.join("")].join("|");
+  }
+
+  // 規則今天是第幾分鐘（日出日落用插座算的，或樹莓派算的）
+  _ruleMin(r) {
+    if (!r.opt) return r.val;
+    const base = r.opt === 1 ? this._s.sun?.sunrise : this._s.sun?.sunset;
+    return base != null ? base + r.val : r.smin || 0;
+  }
+
+  _ruleText(r) {
+    return r.opt ? `${sunLabel(r.opt, r.val)}（今天 ${hhmm(this._ruleMin(r))}）` : hhmm(r.val);
+  }
+
+  _ruleMatch(r) {
+    return { sact: r.sact, opt: r.opt, val: r.val, wday: r.wday };
   }
 
   _kasaRule(key) {
-    const [pid, sact, smin, wday] = key.split("|");
+    const [pid, sact, opt, val, wday] = key.split("|");
     const p = this._plug(pid);
-    const r = (p?.native?.kasa || []).find((x) => x.sact === Number(sact) && x.smin === Number(smin) && x.wday.join("") === wday);
+    const r = (p?.native?.kasa || []).find((x) => x.sact === Number(sact) && x.opt === Number(opt) && x.val === Number(val) && x.wday.join("") === wday);
     return p && r ? { p, r } : null;
   }
 
@@ -1236,8 +1263,8 @@ class PlugApp extends HTMLElement {
           : "";
     return `
       <div class="sched ${r.enable ? "" : "off"}" data-a="kasa-edit" data-v="${key}" role="button" tabindex="0">
-        <div class="t">${pad2(Math.floor(r.smin / 60))}:${pad2(r.smin % 60)}</div>
-        <div class="d"><div class="x">${days}${r.enable ? "" : "・已暫停"}</div><div class="y">${r.sact ? "打開" : "關閉"} ${esc(p.name)}</div>
+        <div class="t">${hhmm(this._ruleMin(r))}</div>
+        <div class="d"><div class="x">${r.opt ? `<span class="sun">${ic(sunIcon(r.opt))}${sunLabel(r.opt, r.val)}</span>` : ""}${days}${r.enable ? "" : "・已暫停"}</div><div class="y">${r.sact ? "打開" : "關閉"} ${esc(p.name)}</div>
           <div class="tag">${ic("mdi:power-plug-outline")}插座內建・Kasa App</div>${warn ? `<div class="tag warn">${ic("mdi:alert-circle-outline")}${warn}</div>` : ""}</div>
         <button class="sw ${r.enable ? "on" : ""}" data-a="kasa-toggle" data-v="${key}" role="switch" aria-checked="${!!r.enable}" aria-label="啟用排程"></button>
       </div>`;
@@ -1253,8 +1280,9 @@ class PlugApp extends HTMLElement {
       ${this._sheetHead(deviceIcon(p.name), "插座內建排程", `${p.name}・用 Kasa App 設的，存在插座裡`)}
       <div class="group power"><div class="gi"><div class="gt"><div class="gl">啟用</div></div>
         <button class="sw ${d.enable ? "on" : ""}" data-a="kasa-enable" role="switch" aria-checked="${d.enable}" aria-label="啟用"></button></div></div>
-      <div class="q">幾點 <small>插座的排程只到分鐘</small></div>
-      ${hmPicker("kasa_time", d.time)}
+      <div class="q">什麼時候 <small>插座的排程只到分鐘</small></div>
+      ${this._timeModeHtml(d.mode, "kasa-mode")}
+      ${d.mode === "clock" ? hmPicker("kasa_time", d.time) : this._offsetHtml(d.mode, d.offset, "kasa-offset")}
       <div class="q">哪幾天 <small>${daysText(d.days)}</small></div>
       <div class="chips">${days}</div>
       <div class="q">要做什麼</div>
@@ -1296,11 +1324,13 @@ class PlugApp extends HTMLElement {
         : x.action === "on" && x.duration_s
           ? `，${fmtSec(x.duration_s)}後關閉`
           : "";
-    const [hh, mm, ss] = hms(x.time).split(":");
+    const sunMode = x.time_mode === "sunrise" || x.time_mode === "sunset";
+    const [hh, mm, ss] = hms(sunMode ? x.today || "00:00:00" : x.time).split(":");
+    const sunTag = sunMode ? `<span class="sun">${ic(sunIcon(x.time_mode === "sunrise" ? 1 : 2))}${sunLabel(x.time_mode === "sunrise" ? 1 : 2, x.offset_min)}</span>` : "";
     return `
       <div class="sched ${x.enabled ? "" : "off"}" data-a="sched-edit" data-v="${esc(x.id)}" role="button" tabindex="0">
-        <div class="t">${hh}:${mm}<small>${ss === "00" ? "" : `:${ss}`}</small></div>
-        <div class="d"><div class="x">${daysText(x.days)}${x.enabled ? "" : "・已暫停"}</div><div class="y">${this._schedDesc(x)}${extra}</div>
+        <div class="t">${sunMode && !x.today ? "—" : `${hh}:${mm}`}<small>${ss === "00" ? "" : `:${ss}`}</small></div>
+        <div class="d"><div class="x">${sunTag}${daysText(x.days)}${x.enabled ? "" : "・已暫停"}</div><div class="y">${this._schedDesc(x)}${extra}</div>
           ${this._backupTag(x)}</div>
         <button class="sw ${x.enabled ? "on" : ""}" data-a="sched-toggle" data-v="${esc(x.id)}" role="switch" aria-checked="${x.enabled}" aria-label="啟用排程"></button>
       </div>`;
@@ -1619,7 +1649,7 @@ class PlugApp extends HTMLElement {
         const k = this._kasaRule(v);
         if (!k) return;
         this._safe(async () => {
-          await api("POST", "/api/kasa-rules/adopt", { plug: k.p.id, sact: k.r.sact, smin: k.r.smin, wday: k.r.wday, enabled: !!k.r.enable });
+          await api("POST", "/api/kasa-rules/adopt", { plug: k.p.id, match: this._ruleMatch(k.r), enabled: !!k.r.enable });
           if (this._sheet?.type === "kasa") this._closeSheet();
           this._showToast("已轉成家庭中控的排程");
         });
@@ -1627,24 +1657,30 @@ class PlugApp extends HTMLElement {
       "kasa-toggle": (v) => {
         const k = this._kasaRule(v);
         if (!k) return;
-        this._safe(() => api("PUT", "/api/kasa-rules", { plug: k.p.id, match: { sact: k.r.sact, smin: k.r.smin, wday: k.r.wday }, set: { enable: !k.r.enable } }));
+        this._safe(() => api("PUT", "/api/kasa-rules", { plug: k.p.id, match: this._ruleMatch(k.r), set: { enable: !k.r.enable } }));
       },
       "kasa-edit": (v) => {
         const k = this._kasaRule(v);
         if (!k) return;
         const { p, r } = k;
         this._openSheet({ type: "kasa", key: v, wide: true,
-          draft: { pid: p.id, sact: r.sact, time: `${pad2(Math.floor(r.smin / 60))}:${pad2(r.smin % 60)}`, days: kasaDays(r.wday), enable: !!r.enable, match: { sact: r.sact, smin: r.smin, wday: r.wday } } });
+          draft: { pid: p.id, sact: r.sact, mode: ["clock", "sunrise", "sunset"][r.opt], offset: r.opt ? r.val : 0, time: hhmm(r.opt ? this._ruleMin(r) : r.val),
+            days: kasaDays(r.wday), enable: !!r.enable, match: this._ruleMatch(r) } });
       },
       "kasa-enable": () => redraw((d) => (d.enable = !d.enable))(),
+      "kasa-mode": (v) => redraw((d) => (d.mode = v))(),
+      "kasa-offset": (v) => redraw((d) => (d.offset = Math.max(-180, Math.min(180, v === "0" ? 0 : d.offset + Number(v)))))(),
+      "sched-mode": (v) => redraw((d) => (d.time_mode = v))(),
+      "sched-offset": (v) => redraw((d) => (d.offset_min = Math.max(-180, Math.min(180, v === "0" ? 0 : (d.offset_min || 0) + Number(v)))))(),
       "kasa-act": (v) => redraw((d) => (d.sact = Number(v)))(),
       "kasa-day": (v) => redraw((d) => (d.days = d.days.includes(Number(v)) ? d.days.filter((x) => x !== Number(v)) : [...d.days, Number(v)].sort()))(),
       "kasa-save": () => {
         const d = this._sheet.draft;
         if (!d.days.length) return this._sheetError("請至少選一天");
         const [h, m] = d.time.split(":").map(Number);
+        const opt = { clock: 0, sunrise: 1, sunset: 2 }[d.mode];
         this._safe(async () => {
-          await api("PUT", "/api/kasa-rules", { plug: d.pid, match: d.match, set: { enable: d.enable, sact: d.sact, smin: h * 60 + m, wday: toKasaWday(d.days) } });
+          await api("PUT", "/api/kasa-rules", { plug: d.pid, match: d.match, set: { enable: d.enable, sact: d.sact, opt, val: opt ? d.offset : h * 60 + m, wday: toKasaWday(d.days) } });
           this._closeSheet();
         });
       },
@@ -2212,7 +2248,7 @@ class PlugApp extends HTMLElement {
         <div class="gi"><span class="gl">使用時間<small>插座自己記錄的</small></span>${usage}</div>
         ${chart}
         <div class="gi"><span class="gl">內建排程<small>${esc(nativeText)}</small></span>${n && !n.ok ? `<span class="gv warn">${ic("mdi:alert-circle-outline")}</span>` : n ? `<span class="gv ok">${ic("mdi:check-circle")}</span>` : ""}</div>
-        ${(n?.kasa || []).length ? `<div class="gi"><span class="gl">Kasa App 設的排程<small>插座自己會執行，家庭中控不會動它；要改請用 Kasa App</small></span><span class="gv kasa">${n.kasa.map((r) => `${r.sact ? "開" : "關"} ${pad2(Math.floor(r.smin / 60))}:${pad2(r.smin % 60)}${r.wday.every(Boolean) ? "" : ` ${r.wday.map((v, i) => (v ? "日一二三四五六"[i] : "")).join("")}`}${r.enable ? "" : "（停用）"}`).join("<br>")}</span></div>` : ""}
+        ${(n?.kasa || []).length ? `<div class="gi"><span class="gl">Kasa App 設的排程<small>插座自己會執行；在「排程」頁可以修改</small></span><span class="gv kasa">${n.kasa.map((r) => `${r.sact ? "開" : "關"} ${this._ruleText(r)}${r.wday.every(Boolean) ? "" : ` ${r.wday.map((v, i) => (v ? "日一二三四五六"[i] : "")).join("")}`}${r.enable ? "" : "（停用）"}`).join("<br>")}</span></div>` : ""}
         <div class="gi"><span class="gl">TP-Link 雲端</span><span class="gv">${p.cloud ? "連線中" : p.cloud === false ? "未連線" : "—"}</span></div>
         <div class="gi"><span class="gl">重新啟動插座<small>插座卡住時用；${shared ? "整條排插都會重開，" : ""}可能短暫斷電</small></span><button class="btn sm" data-a="reboot" data-confirm="再按一次重新啟動">重新啟動</button></div>
       </div>`;
@@ -2418,8 +2454,9 @@ class PlugApp extends HTMLElement {
           : "";
     return `
       ${this._sheetHead("mdi:calendar-clock", s.id ? "編輯排程" : "新增排程", "")}
-      <div class="q">幾點</div>
-      ${clockPicker("time", d.time)}
+      <div class="q">什麼時候</div>
+      ${this._timeModeHtml(d.time_mode || "clock", "sched-mode")}
+      ${(d.time_mode || "clock") === "clock" ? clockPicker("time", d.time) : this._offsetHtml(d.time_mode, d.offset_min || 0, "sched-offset")}
       <div class="q">哪幾天 <small>${daysText(d.days)}</small></div>
       <div class="chips">${days}</div>
       <div class="chips" style="margin-top:8px">
@@ -2454,10 +2491,11 @@ class PlugApp extends HTMLElement {
     const rules = d.backup && saved && saved.backup !== false && b?.rules?.length
       ? `<div class="bstat">${ic("mdi:power-plug-outline")}插座裡：${Object.entries(
           b.rules
-            .sort((x, y) => x[1] - y[1])
-            .reduce((g, [act, smin, wday]) => {
-              const k = daysText(kasaDays(wday));
-              (g[k] ||= []).push(`${pad2(Math.floor(smin / 60))}:${pad2(smin % 60)} ${act ? "開" : "關"}`);
+            .map(([act, opt, val, wday]) => ({ act, opt, val, wday }))
+            .sort((x, y) => this._ruleMin(x) - this._ruleMin(y))
+            .reduce((g, r) => {
+              const k = daysText(kasaDays(r.wday));
+              (g[k] ||= []).push(`${r.opt ? sunLabel(r.opt, r.val) : hhmm(r.val)} ${r.act ? "開" : "關"}`);
               return g;
             }, {}),
         )
@@ -2478,6 +2516,29 @@ class PlugApp extends HTMLElement {
       </div>`;
   }
 
+  _timeModeHtml(mode, action) {
+    return `<div class="seg full" style="margin-bottom:10px">${[["clock", "固定時間"], ["sunrise", "日出"], ["sunset", "日落"]]
+      .map(([k, label]) => `<button class="${mode === k ? "sel" : ""}" data-a="${action}" data-v="${k}">${label}</button>`)
+      .join("")}</div>`;
+  }
+
+  // 日出日落：提早／延後幾分鐘，顯示今天大約幾點
+  _offsetHtml(mode, offset, action) {
+    const opt = mode === "sunrise" ? 1 : 2;
+    const base = opt === 1 ? this._s.sun?.sunrise : this._s.sun?.sunset;
+    const today = base != null ? `今天約 ${hhmm(Math.min(1439, Math.max(0, base + offset)))}` : "還不知道家裡的位置，算不出今天幾點";
+    return `
+      <div class="offset">
+        <button class="btn" data-a="${action}" data-v="-5" aria-label="提早 5 分鐘">−5</button>
+        <div class="ov"><b>${ic(sunIcon(opt))}${sunLabel(opt, offset) || (opt === 1 ? "日出" : "日落")}</b><span>${today}</span></div>
+        <button class="btn" data-a="${action}" data-v="5" aria-label="延後 5 分鐘">+5</button>
+      </div>
+      <div class="chips" style="margin-top:8px">${[-30, -15, 0, 15, 30]
+        .map((m) => `<button class="chip ${offset === m ? "sel" : ""}" data-a="${action}" data-v="${m === 0 ? "0" : m - offset}">${m === 0 ? "準時" : `${m < 0 ? "提早" : "延後"} ${Math.abs(m)} 分`}</button>`)
+        .join("")}</div>
+      <p class="note">每天跟著日出日落自動調整；寫進插座的備援也用插座內建的日出日落，離線好幾天也準。</p>`;
+  }
+
   _saveSched() {
     const d = this._sheet.draft;
     if (!d.days.length) return this._sheetError("請至少選一天");
@@ -2494,6 +2555,8 @@ class PlugApp extends HTMLElement {
       restore_at: d.action === "off" ? d.restore_at : null,
       duration_s: d.action === "on" ? d.duration_s || null : null,
       backup: d.backup !== false,
+      time_mode: d.time_mode || "clock",
+      offset_min: d.offset_min || 0,
     };
     this._safe(async () => {
       if (id) await api("PUT", `/api/schedules/${id}`, body);
