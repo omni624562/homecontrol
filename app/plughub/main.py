@@ -12,6 +12,7 @@ PUT  /api/schedule、/api/settings
 POST /api/discover          立刻重新找插座
 PUT  /api/matter            Google Home 串接外掛回報配對狀態（只接受樹莓派本機）
 GET  /api/matter/qr.svg     配對用的 QR code
+GET  /matterbridge          拿通行證，轉到 Matterbridge 管理頁（:8283）
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ import io
 import json
 import logging
 import os
+import secrets
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -28,7 +30,7 @@ from typing import Any
 
 import segno
 from fastapi import Body, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .hub import Hub
@@ -274,6 +276,38 @@ async def matter_qr() -> Response:
     out = io.BytesIO()
     segno.make(status["qr_code"], error="m").save(out, kind="svg", scale=6, border=2, dark="#000", light="#fff")
     return Response(out.getvalue(), media_type="image/svg+xml", headers={"Cache-Control": "no-store"})
+
+
+# Matterbridge 管理頁的通行證：從插座 App 點連結才發，12 小時有效。
+# :8283 的 nginx 每個請求都會來問 /api/matterbridge/auth。
+# cookie 不分連接埠，所以 :8100 發的 cookie 瀏覽器到 :8283 也會帶著。
+MB_COOKIE = "plughub_mb"
+MB_TTL = 12 * 3600
+mb_passes: dict[str, float] = {}
+
+
+@app.get("/matterbridge")
+async def open_matterbridge(request: Request) -> RedirectResponse:
+    now = time.time()
+    for token, expires in list(mb_passes.items()):
+        if expires < now:
+            del mb_passes[token]
+    token = secrets.token_urlsafe(32)
+    mb_passes[token] = now + MB_TTL
+    host = request.url.hostname or "localhost"
+    if ":" in host:
+        host = f"[{host}]"
+    response = RedirectResponse(f"http://{host}:8283/", status_code=303)
+    response.set_cookie(MB_COOKIE, token, max_age=MB_TTL, httponly=True, samesite="lax", path="/")
+    return response
+
+
+@app.get("/api/matterbridge/auth")
+async def matterbridge_auth(request: Request) -> Response:
+    if not request.client or request.client.host not in LOCAL:
+        raise HTTPException(403, "只接受本機")
+    expires = mb_passes.get(request.cookies.get(MB_COOKIE, ""))
+    return Response(status_code=204 if expires and expires > time.time() else 401)
 
 
 # ---- 網頁 ----

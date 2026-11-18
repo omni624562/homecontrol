@@ -62,7 +62,7 @@ docker compose up -d --build
 
 要重新配對：停掉容器（`docker compose stop matterbridge`）後刪除 `app/data/matterbridge/`。
 
-安全：Matterbridge 自己的管理頁（:8283）沒有密碼，所以只開給樹莓派本機；配對狀態由外掛回報給插座 App 顯示，配對好之後就不再顯示配對碼。真的要用管理頁時，從電腦開 SSH 通道：`ssh -L 8283:127.0.0.1:8283 樹莓派`，再開 `http://localhost:8283`。Docker 映像用的是 `latest`，要固定版本就改 `docker-compose.yml` 的 `image:`。
+Matterbridge 管理頁：插座 App「設定 → Google Home → Matterbridge 管理頁 → 打開」。它在 `http://樹莓派的IP:8283`，但只有從插座 App 點進去的瀏覽器才進得去（拿到 12 小時有效的通行證），直接開會被送回插座 App。Matterbridge 本身只開在樹莓派本機 `127.0.0.1:8284`，門口是 `matterbridge-gate`（nginx，設定在 `matter/nginx.conf`）。建議在管理頁的 Settings 再設一組密碼，多一層保護。Docker 映像用的是 `latest`，要固定版本就改 `docker-compose.yml` 的 `image:`。
 
 ## 檔案
 
@@ -91,3 +91,4 @@ docker compose up -d --build
 | POST | `/api/discover` | 立刻重新找插座 |
 | PUT | `/api/matter` | Google Home 串接外掛回報配對狀態（只接受樹莓派本機） |
 | GET | `/api/matter/qr.svg` | 配對用的 QR code（配對好之後就沒有了） |
+| GET | `/matterbridge` | 發通行證並轉到 Matterbridge 管理頁（:8283） |

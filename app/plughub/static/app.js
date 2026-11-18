@@ -158,6 +158,7 @@ const STYLE = `
   .toolbar-title { font-size: 15px; font-weight: 600; color: var(--muted); }
   .toolbar.arranging { position: sticky; top: calc(8px + env(safe-area-inset-top)); z-index: 3; padding: 10px 10px 10px 16px; border-radius: 14px; background: var(--accent); color: #fff; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18); }
   .toolbar.arranging .toolbar-title { color: #fff; font-weight: 600; }
+  a.small-btn { color: inherit; text-decoration: none; }
   .toolbar.arranging .small-btn { background: #fff; color: var(--accent); }
   .toolbar-sub { font-size: 12px; font-weight: 400; opacity: 0.92; margin-top: 2px; line-height: 1.4; }
   .toolbar-sub .i { --s: 14px; display: inline-block; vertical-align: -2px; }
@@ -611,6 +612,11 @@ class PlugApp extends HTMLElement {
     const m = this._s.matter;
     const head = (badge) => `
       <div class="panel-head"><div class="room-icon">${ic("mdi:microphone")}</div><div class="panel-title">Google Home</div>${badge}</div>`;
+    const admin = `
+      <div class="row">
+        <div class="row-text"><div class="row-label">Matterbridge 管理頁</div><div class="row-desc">進階：看紀錄、重設配對。只能從這裡點進去</div></div>
+        <a class="small-btn" href="/matterbridge" target="_blank" rel="noopener">${ic("mdi:cog-outline")}打開</a>
+      </div>`;
     if (!m || !m.running) {
       return `
         <section class="block panel">
@@ -626,6 +632,7 @@ class PlugApp extends HTMLElement {
           ${head('<span class="badge ok">已連上</span>')}
           <div class="desc">${m.plugs} 個插座已加入${esc(names.join("、") || "Google Home")}。可以說「Hey Google，關掉${esc(this._plugs[0]?.name || "立燈")}」，或在 Google Home 的「自動化」裡設定。</div>
           <div class="desc">名稱和房間在 Google Home App 裡設定。要再加到 Apple 家庭或 Alexa：在 Google Home 打開任一個插座 → 設定 →「連結的 Matter 應用程式與服務」。</div>
+          ${admin}
         </section>`;
     }
     const code = m.manual_code.replace(/^(\d{4})(\d{3})(\d{4})$/, "$1-$2-$3");
@@ -647,6 +654,7 @@ class PlugApp extends HTMLElement {
           <li>${m.plugs} 個插座會一次加進來，再把它們分到房間</li>
         </ol>
         <div class="desc">配對的手機要和樹莓派在同一個 Wi-Fi。</div>
+        ${admin}
       </section>`;
   }
 
