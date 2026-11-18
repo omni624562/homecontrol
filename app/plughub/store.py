@@ -94,6 +94,7 @@ class Store:
         self.dir = data_dir
         self.dir.mkdir(parents=True, exist_ok=True)
         self.path = self.dir / "store.json"
+        self.sched_skip = None  # hub 設定：排程 → 接下來 7 天要跳過的星期
         self.data = deepcopy(DEFAULTS)
         if self.path.exists():
             loaded = json.loads(self.path.read_text("utf-8"))
@@ -223,6 +224,9 @@ class Store:
                 sched["offset_min"] = max(-180, min(180, int(body["offset_min"] or 0)))
             except (TypeError, ValueError):
                 pass
+        for key in ("skip_holiday", "skip_rain"):  # 國定假日不執行、下雨不執行
+            if key in body:
+                sched[key] = bool(body[key])
         if "backup" in body:  # 樹莓派離線時由插座接手（寫一份到插座）
             sched["backup"] = bool(body["backup"])
         if "duration_s" in body:  # 打開之後多久自動關閉（秒）

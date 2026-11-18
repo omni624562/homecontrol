@@ -114,8 +114,14 @@ def schedule_rules(store: Any, plug_id: str, only: list | None = None) -> list[K
         if rule not in rules:
             rules.append(rule)
 
+    skip_of = getattr(store, "sched_skip", None)
     for sched in (only if only is not None else store.schedules):
         if not sched.get("enabled") or not sched.get("days") or sched.get("backup") is False:
+            continue
+        # 國定假日、下雨要跳過的那幾天，插座裡的備援規則也拿掉
+        skip = skip_of(sched) if skip_of and (sched.get("skip_holiday") or sched.get("skip_rain")) else set()
+        days = [d for d in sched["days"] if d not in skip]
+        if not days:
             continue
         if sched["action"] == "scene":
             scene = store.scene(sched.get("scene") or "")
@@ -136,16 +142,16 @@ def schedule_rules(store: Any, plug_id: str, only: list | None = None) -> list[K
             # 日出日落：插座自己每天算時間（離線好幾天也會跟著季節變）
             opt = 1 if mode == "sunrise" else 2
             offset = int(sched.get("offset_min") or 0)
-            wday = tuple(_kasa_wday(sched["days"]))
+            wday = tuple(_kasa_wday(days))
             add((1 if act == "on" else 0, opt, offset, wday))
             if limits:  # 離線時也要關：往後取整到分鐘
                 add((0, opt, offset + -(-int(min(limits)) // 60), wday))
         else:
             total = _seconds(sched["time"])
-            smin, ds = _round_up(total, sched["days"])
+            smin, ds = _round_up(total, days)
             add((1 if act == "on" else 0, 0, smin, tuple(_kasa_wday(ds))))
             if limits:
-                smin, ds = _round_up(total + int(min(limits)), sched["days"])
+                smin, ds = _round_up(total + int(min(limits)), days)
                 add((0, 0, smin, tuple(_kasa_wday(ds))))
     return rules
 

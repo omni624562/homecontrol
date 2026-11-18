@@ -22,6 +22,7 @@ from kasa import Device, Discover, Module
 from . import habits, native, sun, tariff
 from .sensing import INTERVAL as SENSE_INTERVAL, SAVE_EVERY as SENSE_SAVE_EVERY, Sensing
 from .notify import Notifier
+from .daysoff import DaysOff
 from .router import Router
 from .store import Store
 
@@ -137,6 +138,15 @@ class Hub:
         self._router_sig: Any = None
         self._router_since = 0.0  # 這次連上路由器的時間（剛連上時資料不完整，先不判斷「出門」）
         self._router_fed: dict[str, float] = {}  # MAC → 上次餵給 Wi-Fi 感測的讀數時間
+        self._away_checked = False  # 這次大家出門後，檢查過有沒有電器開著了嗎
+        # 網路用量：MAC → 上次讀到的累計位元組（主路由器的 Wi-Fi 裝置）；每天的用量存在 store["net_usage"]
+        self._traffic_last: dict[str, int] = {}
+        # 放假日、天氣（排程的「國定假日不執行」「下雨不執行」）
+        self.daysoff = DaysOff(store.dir)
+        self._calendar_at = 0.0
+        self._today = date.today()
+        self.sched_skipped: dict[str, str] = {}  # 排程 ID → 今天為什麼沒執行
+        store.sched_skip = self.skip_days  # 寫進插座的備援規則也要跳過那幾天
         self._presence: dict[str, dict[str, Any]] = store.data.setdefault("presence_state", {})
         # 舊資料：第一次讀路由器時記下的裝置還沒標「seed」
         known = store.data["net_devices"]
@@ -636,6 +646,7 @@ class Hub:
             self._native_last = time.time()
             await self.native_sync()
         await self._lease()
+        await self._calendar_tick()
         if time.time() - self._usage_at >= 1800:
             await self.refresh_usage()
         if time.time() - self._habits_at >= 600:
@@ -945,8 +956,10 @@ class Hub:
         if not self._router_since:
             self._router_since = now
         self._router_sense(now)
+        self._router_traffic()
         changed = self._router_new_devices(now)
         changed = self._router_presence(now) or changed
+        self._check_left_on(now)
         sig = (self.router.ok, frozenset(m for m in self.router.clients if self.router.online(m)))
         if changed or sig != self._router_sig:
             self._router_sig = sig
@@ -966,6 +979,57 @@ class Hub:
             if at > self._router_fed.get(mac, 0):
                 self._router_fed[mac] = at
                 self.sensing.add(mac, c["rssi"], at)
+
+    def _router_traffic(self) -> None:
+        """每台裝置今天用了多少網路（下載＋上傳）。路由器的計數器在裝置重新連線時會歸零。"""
+        stats = self.router.traffic
+        if not stats:
+            return
+        day = date.today().isoformat()
+        usage = self.store.data.setdefault("net_usage", {})
+        today = usage.setdefault(day, {})
+        for mac, total in stats.items():
+            last = self._traffic_last.get(mac)
+            self._traffic_last[mac] = total
+            if last is None:
+                continue
+            delta = total - last if total >= last else total
+            if delta > 0:
+                today[mac] = today.get(mac, 0) + delta
+        self.router.traffic = {}
+        for d in [d for d in usage if d < (date.today() - timedelta(days=8)).isoformat()]:
+            del usage[d]
+        self._dirty = True
+
+    def _check_left_on(self, now: float) -> None:
+        """大家都出門 10 分鐘後，還有電器開著：通知（或直接關掉）。常開的不算。"""
+        people = self.people_report()
+        cfg = self.store.data["settings"].get("presence") or {}
+        mode = cfg.get("left_on", "notify")
+        if not people or mode == "none" or any(p.get("home") for p in people):
+            self._away_checked = False
+            return
+        if self._away_checked:
+            return
+        since = max((p.get("since") or 0) for p in people)
+        if now - since < 600:
+            return
+        self._away_checked = True
+        on = [p for p in self.ordered() if p.online and p.is_on and not self.store.meta(p.id).keep_on]
+        if not on:
+            return
+        names = "、".join(self.name(p) for p in on[:8]) + (f" 等 {len(on)} 個" if len(on) > 8 else "")
+        if mode == "off":
+            async def go() -> None:
+                SOURCE.set("auto")
+                results = await asyncio.gather(*(self.set_power(p.id, False) for p in on), return_exceptions=True)
+                done = sum(1 for r in results if not isinstance(r, Exception))
+                self.notifier.send("沒人在家，已經關掉電器", f"關了 {done} 個：{names}")
+                await self.changed()
+
+            self._spawn(go())
+        else:
+            self.notifier.send("沒人在家，但還有電器開著", f"{names}。要關的話打開家庭中控（或把「沒人在家時」設成自動關閉）", "high")
 
     def _router_new_devices(self, now: float) -> bool:
         r = self.router
@@ -1029,7 +1093,8 @@ class Hub:
         if before and not after:
             self._presence_scene(cfg.get("away_scene"), "大家都出門了")
         elif after and not before and arrived:
-            self._presence_scene(cfg.get("home_scene"), f"{'、'.join(arrived)}回家了")
+            if not cfg.get("home_dark_only") or self.is_dark():
+                self._presence_scene(cfg.get("home_scene"), f"{'、'.join(arrived)}回家了")
         return True
 
     def _presence_scene(self, scene_id: str | None, why: str) -> None:
@@ -1045,6 +1110,16 @@ class Hub:
 
         self._spawn(go())
 
+    def is_dark(self) -> bool:
+        """現在是不是天黑了（日落前 30 分鐘到日出之間）；不知道日出日落就用 17:30～06:30。"""
+        now = datetime.now()
+        m = now.hour * 60 + now.minute
+        rise = self._sun_min(1, now.date())
+        sset = self._sun_min(2, now.date())
+        rise = 390 if rise is None else rise
+        sset = 1050 if sset is None else sset
+        return m >= sset - 30 or m < rise
+
     def net_report(self) -> dict[str, Any]:
         r = self.router
         known = self.store.data["net_devices"]
@@ -1052,6 +1127,7 @@ class Hub:
         plug_names = {k: "、".join(self.name(self.plugs[p]) for p in e.plugs) for k, e in self.devices.items()}
         models = {n["mac"]: n for n in r.nodes}
         now = time.time()
+        usage_today = self.store.data.get("net_usage", {}).get(date.today().isoformat(), {})
         clients = []
         for mac in set(r.clients) | {m for m, v in known.items() if v.get("map") or v.get("label")} | set(owner):
             c = r.clients.get(mac, {})
@@ -1077,6 +1153,7 @@ class Hub:
                 "map": bool(k.get("map")),
                 "person": owner.get(mac),
                 "plug": plug_names.get(mac),
+                "today_bytes": usage_today.get(mac),
             })
         clients.sort(key=lambda c: (not c["online"], c["plug"] is not None, c["name"].lower()))
         return {
@@ -1329,11 +1406,95 @@ class Hub:
             key = sched["id"]
             at = self.sched_time(sched, now.date())
             if sched["enabled"] and at and now.weekday() in sched["days"] and self._due(key, at, now):
-                self._spawn(self._run_one(sched))
+                why = self.skip_reason(sched, now.date())
+                if why:
+                    self.sched_skipped[key] = why
+                    _LOGGER.info("排程 %s 今天不執行：%s", key, why)
+                else:
+                    self._spawn(self._run_one(sched))
             # 關閉之後指定時間再打開：只開被這個排程關掉、現在還關著的
             if sched.get("restore_at") and self._due(f"{key}:restore", sched["restore_at"], now):
                 if f"sched:{key}" in self.store.data["remembered"]:
                     self._spawn(self._restore_sched(key))
+
+    def skip_reason(self, sched: dict[str, Any], day: date) -> str | None:
+        """這個排程在這一天要不要跳過：國定假日／手動放假、下雨。回傳原因。"""
+        if sched.get("skip_holiday"):
+            if self.store.data.get("day_off") == day.isoformat():
+                return "今天放假"
+            h = self.daysoff.holiday(day)
+            if h:
+                return h
+        if sched.get("skip_rain"):
+            r = self.daysoff.rainy(day)
+            if r:
+                return r
+        return None
+
+    def skip_days(self, sched: dict[str, Any]) -> set[int]:
+        """接下來 7 天裡要跳過的星期（寫進插座的備援規則也拿掉那幾天）。"""
+        today = date.today()
+        return {(today + timedelta(days=i)).weekday() for i in range(7) if self.skip_reason(sched, today + timedelta(days=i))}
+
+    async def _calendar_tick(self) -> None:
+        today = date.today()
+        if today != self._today:  # 過了午夜：跳過的日子變了，重寫插座裡的規則
+            self._today = today
+            self.sched_skipped.clear()
+            self.mark_native()
+            self._check_weekly()
+        if time.time() - self._calendar_at < 600:
+            return
+        self._calendar_at = time.time()
+        need_weather = any(x.get("skip_rain") and x.get("enabled") for x in self.store.schedules)
+        if await self.daysoff.refresh(self.location(), need_weather):
+            self.mark_native()
+            await self.changed()
+        self._check_weekly()
+
+    def _check_weekly(self) -> None:
+        """每週日晚上 8 點後推播這一週的摘要（一週一次）。"""
+        now = datetime.now()
+        week = now.strftime("%G-W%V")
+        if now.weekday() != 6 or now.hour < 20 or self.store.data.get("weekly_sent") == week:
+            return
+        if not self.store.data["settings"].get("weekly", True):
+            return
+        self.store.data["weekly_sent"] = week
+        self._dirty = True
+        try:
+            self.notifier.send("這週的家", self.weekly_text())
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("每週摘要失敗：%s", err)
+
+    def weekly_text(self) -> str:
+        rep = self.energy_report()
+        days = rep["days"]
+        this = sum(d["kwh"] for d in days[-8:-1])
+        prev = sum(d["kwh"] for d in days[-15:-8])
+        price = rep["price"]
+        lines = [f"用電約 {this:.1f} 度（{this * price:.0f} 元）" + (f"，比上週{'多' if this > prev else '少'} {abs(this - prev) / prev * 100:.0f}%" if prev > 0 else "")]
+        top = sorted(((sum(p["days"][-8:-1]) / 60, p["name"]) for p in rep["plugs"]), reverse=True)[:3]
+        if top and top[0][0] > 0:
+            lines.append("開最久：" + "、".join(f"{n} {h:.0f} 小時" for h, n in top if h > 0))
+        week_ago = time.time() - 7 * 86400
+        new = [m for m, v in self.store.data["net_devices"].items() if not v.get("seed") and v.get("first", 0) >= week_ago]
+        if new:
+            lines.append(f"新連上網路的裝置 {len(new)} 台：" + "、".join(self.router.name_of(m) for m in new[:5]))
+        outages = [e for e in self.store.data["net_events"] if (e.get("start") or 0) >= week_ago]
+        if outages:
+            lines.append(f"Wi-Fi 斷線 {len(outages)} 次")
+        usage = self.store.data.get("net_usage", {})
+        tot: dict[str, int] = {}
+        for d, per in usage.items():
+            if d >= (date.today() - timedelta(days=7)).isoformat():
+                for m, b in per.items():
+                    tot[m] = tot.get(m, 0) + b
+        if tot:
+            m, b = max(tot.items(), key=lambda x: x[1])
+            size = f"{b / 1e9:.1f} GB" if b >= 1e9 else f"{b / 1e6:.0f} MB"
+            lines.append(f"用最多網路：{self.store.data['net_devices'].get(m, {}).get('label') or self.router.name_of(m)} {size}")
+        return "\n".join(lines)
 
     def _spawn(self, coro: Any) -> None:
         """排程在背景執行，同一秒的多個排程不會互相等；保留參照、記錄錯誤。"""
@@ -1455,8 +1616,17 @@ class Hub:
             },
             "now": time.time(),
             "scenes": self.store.scenes,
-            "schedules": [{**x, "today": self.sched_time(x, date.today()), "backup_status": self._backup_status(x)}
+            "schedules": [{**x, "today": self.sched_time(x, date.today()), "backup_status": self._backup_status(x),
+                           "skip_today": self.skip_reason(x, date.today()), "skipped": self.sched_skipped.get(x["id"])}
                           for x in self.store.schedules],
+            "calendar": {
+                "holiday": self.daysoff.holiday(date.today()),
+                "day_off": self.store.data.get("day_off") == date.today().isoformat(),
+                "rain": self.daysoff.rainy(date.today()),
+                "holidays_ready": date.today().year in self.daysoff.years,
+                "weather_at": self.daysoff.weather_at or None,
+                "weather_error": self.daysoff.weather_error,
+            },
             "sun": {"sunrise": self._sun_min(1, date.today()), "sunset": self._sun_min(2, date.today()), "located": self.location() is not None},
             "settings": settings,
             "can_restore": bool(self.store.data["remembered"].get("undo")),

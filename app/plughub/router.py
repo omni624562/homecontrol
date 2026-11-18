@@ -42,6 +42,13 @@ while true; do
     done
   done
   if [ $((n % 3)) -eq 0 ]; then echo "@L $(tr -d '\n' < /tmp/clientlist.json)"; fi
+  if [ $((n % 15)) -eq 0 ]; then
+    for i in $IFS_; do
+      for m in $(wl -i $i assoclist 2>/dev/null | awk '{print $2}'); do
+        echo "T $m $(wl -i $i sta_info $m 2>/dev/null | awk '/tx total bytes|rx data bytes/{s+=$NF} END{printf "%.0f", s}')"
+      done
+    done
+  fi
   if [ $((n % 30)) -eq 0 ]; then
     echo "@N $(tr -d '\n' < /jffs/nmp_cl_json.js)"
     echo "@D $(nvram get cfg_device_list)"
@@ -81,6 +88,7 @@ class Router:
         self.clients: dict[str, dict[str, Any]] = {}  # MAC → {mac, node, band, ssid, rssi, ip, wired, seen}
         self.names: dict[str, dict[str, Any]] = {}  # MAC → {name, vendor, custom}
         self.ifaces: dict[str, dict[str, str]] = {}  # wl0.1 → {band, ssid}
+        self.traffic: dict[str, int] = {}  # MAC → 累計位元組（下載＋上傳），每分鐘讀一次；hub 讀完會清掉
         self._proc: asyncio.subprocess.Process | None = None
 
     @property
@@ -158,6 +166,10 @@ class Router:
                 elif tag == "R":
                     i, mac, rssi = rest.split(" ")
                     live[norm(mac)] = (i, int(rssi))
+                elif tag == "T":
+                    mac, total = rest.split(" ")
+                    if total.isdigit():
+                        self.traffic[norm(mac)] = int(total)
                 elif tag == "@L":
                     self._read_list(json.loads(rest or "{}"))
                 elif tag == "@N":

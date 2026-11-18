@@ -41,6 +41,7 @@ import secrets
 import time
 import uuid
 from contextlib import asynccontextmanager
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -677,6 +678,14 @@ async def set_settings(body: dict = Body(...)) -> dict[str, Any]:
                 pres[key] = v if v and store.scene(v) else None
         if "grace_min" in body["presence"]:
             pres["grace_min"] = min(60, max(2, int(body["presence"]["grace_min"])))
+        if body["presence"].get("left_on") in ("notify", "off", "none"):  # 沒人在家還有電器開著：通知／自動關／不管
+            pres["left_on"] = body["presence"]["left_on"]
+        if "home_dark_only" in body["presence"]:  # 回家的情境只在天黑後執行
+            pres["home_dark_only"] = bool(body["presence"]["home_dark_only"])
+    if "weekly" in body:  # 每週日晚上的摘要推播
+        settings["weekly"] = bool(body["weekly"])
+    if "matter_scenes" in body:  # 情境也放到 Google Home（打開 = 執行）
+        settings["matter_scenes"] = bool(body["matter_scenes"])
     if isinstance(body.get("router"), dict):
         r = body["router"]
         host = str(r.get("host", "")).strip()
@@ -688,6 +697,24 @@ async def set_settings(body: dict = Body(...)) -> dict[str, Any]:
         settings["router"] = {"host": host, "user": user, "port": min(65535, max(1, int(r.get("port") or 22)))}
     store.save()
     return await _done()
+
+
+@app.post("/api/day-off")
+async def day_off(body: dict = Body(...)) -> dict[str, Any]:
+    """今天放假（颱風假、請假）：打開「國定假日不執行」的排程今天都跳過。"""
+    if body.get("on"):
+        store.data["day_off"] = date.today().isoformat()
+    else:
+        store.data.pop("day_off", None)
+    store.save()
+    hub.mark_native()
+    return await _done()
+
+
+@app.get("/api/weekly")
+async def weekly() -> dict[str, Any]:
+    """每週摘要的內容（預覽用）。"""
+    return {"text": hub.weekly_text()}
 
 
 # ---- 路由器：連線裝置、誰在家 ----

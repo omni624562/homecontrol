@@ -37,6 +37,7 @@ export class PlughubPlatform extends MatterbridgeDynamicPlatform {
     super(matterbridge, log, config);
     this.url = String(config.url || 'http://127.0.0.1:8100').replace(/\/$/, '');
     this.devices = new Map(); // 插座 ID → MatterbridgeEndpoint
+    this.scenes = new Map(); // 情境 ID → { device, name }（Google Home 上的一個開關：打開 = 執行情境）
     this.state = new Map(); // 插座 ID → 最後一次的插座資料
     this.abort = undefined;
     this.stopped = false;
@@ -70,6 +71,7 @@ export class PlughubPlatform extends MatterbridgeDynamicPlatform {
     // 在插座 App 裡關掉「讓 Google Home 控制」的不加進來
     for (const plug of snapshot.plugs) if (plug.matter !== false) await this.addPlug(plug);
     this.log.info(`已加入 ${this.devices.size} 個插座`);
+    if (snapshot.settings?.matter_scenes !== false) for (const scene of snapshot.scenes || []) await this.addScene(scene);
     this.listen();
   }
 
@@ -105,6 +107,62 @@ export class PlughubPlatform extends MatterbridgeDynamicPlatform {
     await this.registerDevice(device);
     this.devices.set(plug.id, device);
     this.state.set(plug.id, plug);
+  }
+
+  // 情境：Google Home 上是一個開關，「打開」就執行情境，2 秒後自己變回關
+  async addScene(scene) {
+    const name = matterName(scene.name);
+    const serial = 'SC' + createHash('sha1').update('scene:' + scene.id).digest('hex').slice(0, 16);
+    this.setSelectDevice(serial, name, undefined, 'hub');
+    if (!this.validateDevice(name)) return;
+    const device = new MatterbridgeEndpoint([onOffPlugInUnit, bridgedNode, powerSource], { id: serial }, this.config.debug)
+      .createDefaultIdentifyClusterServer()
+      .createDefaultBridgedDeviceBasicInformationClusterServer(name, serial, 0xfff1, 'Home Hub', '情境')
+      .createDefaultOnOffClusterServer(false)
+      .createDefaultPowerSourceWiredClusterServer()
+      .addRequiredClusterServers();
+    const reset = () => setTimeout(() => device.setAttribute(OnOff.id, 'onOff', false, device.log).catch(() => {}), 2000);
+    device.addCommandHandler('identify', () => {});
+    device.addCommandHandler('on', async () => {
+      this.log.info(`Google Home：執行情境「${scene.name}」`);
+      try {
+        await this.api(`/api/scenes/${encodeURIComponent(scene.id)}/run`, { method: 'POST', body: '{}' });
+      } catch (err) {
+        this.log.error(`情境執行失敗：${err.message}`);
+      }
+      reset();
+    });
+    device.addCommandHandler('off', () => reset());
+    device.addCommandHandler('toggle', async () => {
+      await this.api(`/api/scenes/${encodeURIComponent(scene.id)}/run`, { method: 'POST', body: '{}' }).catch(() => {});
+      reset();
+    });
+    await this.registerDevice(device);
+    this.scenes.set(scene.id, { device, name: scene.name });
+  }
+
+  async syncScenes(snapshot) {
+    const want = snapshot.settings?.matter_scenes === false ? [] : snapshot.scenes || [];
+    const ids = new Set(want.map((x) => x.id));
+    for (const [id, x] of this.scenes) {
+      const now = want.find((s) => s.id === id);
+      if (ids.has(id) && now.name === x.name) continue;
+      try {
+        await this.unregisterDevice(x.device);
+      } catch (err) {
+        this.log.warn(`移除情境「${x.name}」失敗：${err.message}`);
+      }
+      this.scenes.delete(id);
+    }
+    for (const scene of want) {
+      if (this.scenes.has(scene.id)) continue;
+      try {
+        await this.addScene(scene);
+        this.log.info(`Google Home 加入情境：${scene.name}`);
+      } catch (err) {
+        this.log.warn(`情境「${scene.name}」要重新啟動橋接後才會出現：${err.message}`);
+      }
+    }
   }
 
   async command(plugId, on) {
@@ -166,6 +224,7 @@ export class PlughubPlatform extends MatterbridgeDynamicPlatform {
         }
       }
     }
+    await this.syncScenes(snapshot);
     // 插座 App 不再列出的插座，顯示為離線
     for (const [id, plug] of this.state) {
       if (!seen.has(id) && plug.online) await this.applyState({ ...plug, online: false });

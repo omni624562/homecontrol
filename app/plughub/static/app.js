@@ -119,6 +119,7 @@ const hms = (v) => {
 };
 // 時間／長度選擇器：滾輪（像手機鬧鐘）。手指上下滑、滑鼠滾輪、點數字、鍵盤 ↑ ↓ 都可以
 const pad2 = (n) => String(n).padStart(2, "0");
+const fmtBytes = (b) => (b >= 1e9 ? `${fmt(b / 1e9, 1)} GB` : b >= 1e6 ? `${fmt(b / 1e6, 0)} MB` : `${fmt(Math.max(1, b / 1e3), 0)} KB`);
 // 訊號強度分三級：強 / 普通 / 弱（低於 -70 容易斷線）
 const sigQ = (v) => (v >= -55 ? "good" : v >= -70 ? "mid" : "weak");
 // 名字太長就截短：中文字算 1、英數算 0.55
@@ -832,6 +833,15 @@ const STYLE = `
   .set.sugg .sun { display: inline-flex; align-items: center; gap: 2px; }
   .set.sugg .sun .i { width: 15px; height: 15px; }
   .netwarn.past { color: var(--muted); }
+  .usage { display: grid; gap: 4px; }
+  .urow { display: grid; grid-template-columns: minmax(80px, 34%) 1fr auto; gap: 10px; align-items: center; padding: 6px 0; text-align: left; cursor: pointer; }
+  .urow .un { font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .urow .ubar { height: 8px; border-radius: 4px; background: var(--soft); overflow: hidden; }
+  .urow .ubar i { display: block; height: 100%; border-radius: 4px; background: var(--accent); }
+  .urow .uv { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; min-width: 56px; text-align: right; }
+  .cbox .cd { white-space: pre-line; }
+  .card > .callout { margin: 0 16px 12px; }
+  .sched .tag.warn { white-space: normal; }
   .mapside .ch .x { width: 32px; height: 32px; border-radius: 50%; background: var(--soft); color: var(--muted); display: flex; align-items: center; justify-content: center; }
   .mapside .ch .x .i { width: 18px; height: 18px; }
   .netdev .l { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
@@ -1481,7 +1491,8 @@ class PlugApp extends HTMLElement {
       <div class="grid">
         ${narrow ? this._habitCard() : ""}
         <section class="card">
-          <div class="ch"><div class="ri">${ic("mdi:calendar-clock")}</div><div class="n">排程</div></div>
+          <div class="ch"><div class="ri">${ic("mdi:calendar-clock")}</div><div class="n">排程</div>${this._dayOffBtn()}</div>
+          ${this._calendarLine()}
           ${rows || empty}
           ${this._habitLearning()}
           ${rows ? `<p class="desc foot">${ic("mdi:shield-check-outline")}家庭中控的排程也會寫進插座，樹莓派離線時照樣執行。標「插座內建」的是用 Kasa App 設的，存在插座裡，在這裡一樣可以開關、修改、刪除。</p>` : ""}
@@ -1729,6 +1740,24 @@ class PlugApp extends HTMLElement {
     return `${x.action === "on" ? "打開" : "關閉"} ${esc(list)}`;
   }
 
+  // 今天是國定假日／手動放假／下雨：排程清單上方一行說明
+  _calendarLine() {
+    const c = this._s.calendar || {};
+    const scheds = this._s.schedules || [];
+    const parts = [];
+    if (c.holiday) parts.push(`今天是「${esc(c.holiday)}」`);
+    if (c.day_off) parts.push("今天放假");
+    if (c.rain && scheds.some((x) => x.skip_rain)) parts.push(`下雨：${esc(c.rain)}`);
+    if (!parts.length) return "";
+    return `<div class="callout">${ic("mdi:information-outline")}<div><b>${parts.join("・")}</b><span>打開「${c.rain && !c.holiday && !c.day_off ? "下雨不執行" : "國定假日不執行"}」的排程今天會跳過</span></div></div>`;
+  }
+
+  _dayOffBtn() {
+    const c = this._s.calendar || {};
+    if (!(this._s.schedules || []).some((x) => x.skip_holiday)) return "";
+    return `<div class="end"><button class="btn sm ${c.day_off ? "primary" : ""}" data-a="day-off" aria-pressed="${!!c.day_off}">${c.day_off ? `${ic("mdi:check")}今天放假` : "今天放假"}</button></div>`;
+  }
+
   _schedRow(x) {
     const extra =
       x.action === "off" && x.restore_at
@@ -1743,7 +1772,8 @@ class PlugApp extends HTMLElement {
       <div class="sched ${x.enabled ? "" : "off"}" data-a="sched-edit" data-v="${esc(x.id)}" role="button" tabindex="0">
         <div class="t">${sunMode && !x.today ? "—" : `${hh}:${mm}`}<small>${ss === "00" ? "" : `:${ss}`}</small></div>
         <div class="d"><div class="x">${sunTag}${daysText(x.days)}${x.enabled ? "" : "・已暫停"}</div><div class="y">${this._schedDesc(x)}${extra}</div>
-          ${this._backupTag(x)}</div>
+          ${this._backupTag(x)}${x.skip_holiday ? `<div class="tag">${ic("mdi:calendar-clock")}假日跳過</div>` : ""}${x.skip_rain ? `<div class="tag">${ic("mdi:water")}下雨跳過</div>` : ""}
+          ${x.enabled && x.days.includes((new Date().getDay() + 6) % 7) && (x.skipped || x.skip_today) ? `<div class="tag warn">${ic("mdi:information-outline")}今天不執行：${esc(x.skipped || x.skip_today)}</div>` : ""}</div>
         <button class="sw ${x.enabled ? "on" : ""}" data-a="sched-toggle" data-v="${esc(x.id)}" role="switch" aria-checked="${x.enabled}" aria-label="啟用排程"></button>
       </div>`;
   }
@@ -2145,6 +2175,14 @@ class PlugApp extends HTMLElement {
           people.length
             ? `<div class="set"><div class="tx"><div class="l">大家都出門時</div><div class="s">最後一個人的手機離開家裡的 Wi-Fi</div></div>${sceneSel("away_scene")}</div>
           <div class="set"><div class="tx"><div class="l">有人回家時</div><div class="s">大家都出門之後，第一個人回來</div></div>${sceneSel("home_scene")}</div>
+          ${
+            pres.home_scene
+              ? `<div class="set"><div class="tx"><div class="l">只在天黑後</div><div class="s">日落前 30 分鐘到日出之間回家才執行（白天回家不開燈）</div></div>
+            <button class="sw ${pres.home_dark_only ? "on" : ""}" data-a="pres-dark" role="switch" aria-checked="${!!pres.home_dark_only}" aria-label="只在天黑後"></button></div>`
+              : ""
+          }
+          <div class="set"><div class="tx"><div class="l">沒人在家還有電器開著</div><div class="s">大家都出門 10 分鐘後檢查；設成「常開」的不算</div></div>
+            <select class="gsel" data-c="pres" data-v="left_on" aria-label="怎麼處理">${[["notify", "通知我"], ["off", "自動關掉並通知"], ["none", "不用管"]].map(([k, l]) => `<option value="${k}" ${(pres.left_on || "notify") === k ? "selected" : ""}>${l}</option>`).join("")}</select></div>
           <div class="set"><div class="tx"><div class="l">離線多久才算出門</div><div class="s">手機睡著時偶爾會斷線一下，太短會誤判</div></div>
             <select class="gsel" data-c="pres" data-v="grace_min" aria-label="分鐘">${[5, 10, 15, 20, 30].map((m) => `<option value="${m}" ${+pres.grace_min === m ? "selected" : ""}>${m} 分鐘</option>`).join("")}</select></div>`
             : ""
@@ -2164,7 +2202,7 @@ class PlugApp extends HTMLElement {
         c.map ? `<span class="tag">${ic("mdi:wifi")}在地圖上</span>` : "",
         c.first && n.now - c.first < day ? `<span class="tag new">新</span>` : "",
       ].join("");
-      const sub = [c.vendor && c.vendor !== c.name ? c.vendor : "", this._netWhere(c), c.online ? "" : c.seen ? `最後看到 ${this._netAgo(c.seen)}` : ""].filter(Boolean).join("・");
+      const sub = [c.vendor && c.vendor !== c.name ? c.vendor : "", this._netWhere(c), c.today_bytes ? `今天 ${fmtBytes(c.today_bytes)}` : "", c.online ? "" : c.seen ? `最後看到 ${this._netAgo(c.seen)}` : ""].filter(Boolean).join("・");
       return `<button class="set tapset netdev" data-a="netdev-open" data-v="${esc(c.mac)}">
           <div class="tx"><div class="l">${esc(c.name)}${tags}</div><div class="s">${esc(sub)}</div></div>${ic("mdi:chevron-right")}</button>`;
     };
@@ -2186,11 +2224,21 @@ class PlugApp extends HTMLElement {
     const offCard = offline.length
       ? `<section class="card"><div class="ch"><div class="ri">${ic("mdi:wifi-off")}</div><div class="n">現在沒連線</div></div>${offline.map(row).join("")}</section>`
       : "";
+    const heavy = n.clients.filter((c) => c.today_bytes > 0 && !c.plug).sort((a, b) => b.today_bytes - a.today_bytes).slice(0, 5);
+    const maxB = heavy[0]?.today_bytes || 1;
+    const usageCard = heavy.length
+      ? `<section class="card">
+        <div class="ch"><div class="ri">${ic("mdi:chart-bar")}</div><div class="n">今天用最多網路</div></div>
+        <div class="pad usage">${heavy.map((c) => `<button class="urow" data-a="netdev-open" data-v="${esc(c.mac)}"><span class="un">${esc(c.name)}</span><span class="ubar"><i style="width:${Math.max(3, (c.today_bytes / maxB) * 100).toFixed(1)}%"></i></span><span class="uv">${fmtBytes(c.today_bytes)}</span></button>`).join("")}</div>
+        <p class="desc foot">下載＋上傳；只算連在主路由器 Wi-Fi 上的裝置（節點和有線的讀不到）</p>
+      </section>`
+      : "";
     const err = !n.ok ? `<div class="netwarn">${ic("mdi:alert-circle-outline")}<span>連不上路由器${n.error ? `：${esc(n.error)}` : ""}。下面是最後讀到的資料。</span></div>` : "";
     return `${head}${err}
       <div class="grid">
         ${peopleCard}
         ${alertCard}
+        ${usageCard}
         ${groups}
         ${offCard}
       </div>
@@ -2736,6 +2784,11 @@ class PlugApp extends HTMLElement {
             <input class="text" data-c="ntfy" value="${esc(set.ntfy_topic)}" placeholder="ntfy 主題名稱" autocapitalize="off" autocomplete="off" spellcheck="false" aria-label="ntfy 主題名稱">
             <button class="btn" style="height:46px" data-a="test-notify">${ic("mdi:bell-outline")}測試</button>
           </div>
+          <div class="set">
+            <div class="tx"><div class="l">每週摘要</div><div class="s">每週日晚上 8 點推播：這週的電費、開最久的電器、新連上網路的裝置、Wi-Fi 斷線次數、用最多網路的裝置</div></div>
+            <button class="btn sm" data-a="weekly-preview">預覽</button>
+            <button class="sw ${set.weekly !== false ? "on" : ""}" data-a="weekly-toggle" role="switch" aria-checked="${set.weekly !== false}" aria-label="每週摘要"></button>
+          </div>
         </section>
         ${this._googleHtml()}
         <section class="card">
@@ -2792,6 +2845,10 @@ class PlugApp extends HTMLElement {
           ${head('<span class="badge ok">已連上</span>')}
           <p class="desc">${m.plugs} 個插座已加入${esc(names.join("、") || "Google Home")}。可以說「Hey Google，關掉${esc(this._plugs[0]?.name || "立燈")}」。<br>
           名稱和房間在 Google Home App 裡設定。要再加到 Apple 家庭或 Alexa：在 Google Home 打開任一個插座 → 設定 →「連結的 Matter 應用程式與服務」。</p>
+          <div class="set">
+            <div class="tx"><div class="l">情境也放到 Google Home</div><div class="s">每個情境變成一個開關，說「Hey Google，打開${esc(this._scenes[0]?.name || "出門")}」就執行；執行完會自己變回關</div></div>
+            <button class="sw ${this._s.settings.matter_scenes !== false ? "on" : ""}" data-a="matter-scenes" role="switch" aria-checked="${this._s.settings.matter_scenes !== false}" aria-label="情境也放到 Google Home"></button>
+          </div>
           ${admin}
         </section>`;
     }
@@ -3027,6 +3084,29 @@ class PlugApp extends HTMLElement {
           await this._netRefresh();
         });
       },
+      "matter-scenes": () =>
+        this._safe(async () => {
+          await api("PUT", "/api/settings", { matter_scenes: this._s.settings.matter_scenes === false });
+        }),
+      "pres-dark": () =>
+        this._safe(async () => {
+          await api("PUT", "/api/settings", { presence: { home_dark_only: !this._s.settings.presence?.home_dark_only } });
+        }),
+      "weekly-toggle": () =>
+        this._safe(async () => {
+          await api("PUT", "/api/settings", { weekly: this._s.settings.weekly === false });
+        }),
+      "weekly-preview": () =>
+        this._safe(async () => {
+          const r = await api("GET", "/api/weekly");
+          await this._confirm({ title: "這週的家（預覽）", text: r.text || "這週還沒有資料", ok: "好", danger: false });
+        }),
+      "day-off": () =>
+        this._safe(async () => {
+          const on = !this._s.calendar?.day_off;
+          await api("POST", "/api/day-off", { on });
+          this._showToast(on ? "今天放假：打開「國定假日不執行」的排程今天都跳過" : "取消放假，排程照常執行");
+        }),
       "newdev-toggle": () =>
         this._safe(async () => {
           await api("PUT", "/api/settings", { new_device_alert: this._s.settings.new_device_alert === false });
@@ -3322,6 +3402,7 @@ class PlugApp extends HTMLElement {
       "sched-scene": (v) => redraw((d) => (d.scene = v))(),
       "sched-restore": () => redraw((d) => (d.restore_at = d.restore_at ? null : "07:00:00"))(),
       "sched-backup": () => redraw((d) => (d.backup = !d.backup))(),
+      "sched-skip": (v) => redraw((d) => (d[v] = !d[v]))(),
       "sched-duration": () => redraw((d) => (d.duration_s = d.duration_s ? null : 60))(),
       "sched-save": () => this._saveSched(),
       "sched-delete": (v, t) =>
@@ -3369,7 +3450,7 @@ class PlugApp extends HTMLElement {
       },
       pres: (v, t) =>
         this._safe(async () => {
-          const val = v === "grace_min" ? +t.value : t.value || null;
+          const val = v === "grace_min" ? +t.value : v === "left_on" ? t.value : t.value || null;
           await api("PUT", "/api/settings", { presence: { [v]: val } });
         }),
       "map-ap-node": (v, t) => {
@@ -4113,9 +4194,9 @@ class PlugApp extends HTMLElement {
         draft.restore_at = "07:00:00";
       } else if (template === "leave") {
         const sc = this._scenes.find((s) => s.name === "出門") || this._scenes[0];
-        Object.assign(draft, { time: "08:30:00", days: [0, 1, 2, 3, 4], action: "scene", scene: sc?.id || null });
+        Object.assign(draft, { time: "08:30:00", days: [0, 1, 2, 3, 4], action: "scene", scene: sc?.id || null, skip_holiday: true });
       } else if (template === "water") {
-        Object.assign(draft, { time: "06:30:00", action: "on", duration_s: 60, plugs: plugs.filter((p) => /澆水|water/i.test(p.name)).map((p) => p.id) });
+        Object.assign(draft, { time: "06:30:00", action: "on", duration_s: 60, skip_rain: true, plugs: plugs.filter((p) => /澆水|water/i.test(p.name)).map((p) => p.id) });
       }
       if (sugg) {
         Object.assign(draft, {
@@ -4228,6 +4309,15 @@ class PlugApp extends HTMLElement {
         ? `<div class="bstat">${ic("mdi:alert-circle-outline")}插座只到分鐘：樹莓派離線時會在下一個整分鐘才關，最多多開 ${60 - (d.duration_s % 60)} 秒</div>`
         : "";
     return `
+      <div class="q">什麼時候不執行</div>
+      <div class="group">
+        <div class="gi"><div class="gt"><div class="gl">國定假日不執行</div>
+          <div class="gs">平日遇到國定假日、補假就跳過（假日表來自政府公告）；颱風假可以在排程頁按「今天放假」</div></div>
+          <button class="sw ${d.skip_holiday ? "on" : ""}" data-a="sched-skip" data-v="skip_holiday" role="switch" aria-checked="${!!d.skip_holiday}" aria-label="國定假日不執行"></button></div>
+        <div class="gi"><div class="gt"><div class="gl">下雨不執行</div>
+          <div class="gs">前一天下過雨、或預報當天會下雨（超過 3 mm）就跳過，適合澆水。會用大概的位置（約 10 公里）查天氣</div></div>
+          <button class="sw ${d.skip_rain ? "on" : ""}" data-a="sched-skip" data-v="skip_rain" role="switch" aria-checked="${!!d.skip_rain}" aria-label="下雨不執行"></button></div>
+      </div>
       <div class="q">備援</div>
       <div class="group">
         <div class="gi"><div class="gt"><div class="gl">樹莓派離線時由插座接手</div>
@@ -4278,6 +4368,8 @@ class PlugApp extends HTMLElement {
       backup: d.backup !== false,
       time_mode: d.time_mode || "clock",
       offset_min: d.offset_min || 0,
+      skip_holiday: !!d.skip_holiday,
+      skip_rain: !!d.skip_rain,
     };
     this._safe(async () => {
       if (id) await api("PUT", `/api/schedules/${id}`, body);
