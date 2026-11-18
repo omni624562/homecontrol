@@ -3,8 +3,9 @@
 GET  /api/state             目前全部的狀態
 GET  /api/events            狀態一有變動就推送（Server-Sent Events）
 POST /api/plugs/{id}/power  {"on": true/false}
-PATCH /api/plugs/{id}       {"name", "room", "keep_on", "night", "watts"}
+PATCH /api/plugs/{id}       {"name", "room", "keep_on", "night", "watts", "max_on"}
 POST /api/off               {"room", "standby_only"} 關閉並記住，可以 /api/restore 復原
+POST /api/on                {"room"} 打開整個房間，可以 /api/restore 復原
 POST /api/restore
 POST /api/rooms             {"name"}；PATCH/DELETE /api/rooms/{id}
 POST /api/order             {"plugs": [...], "rooms": [...], "scenes": [...]}
@@ -149,6 +150,26 @@ async def update_plug(plug_id: str, body: dict = Body(...)) -> dict[str, Any]:
     for key in ("keep_on", "night"):
         if key in body:
             setattr(meta, key, bool(body[key]))
+    if "max_on" in body:
+        value = body["max_on"]
+        if value in (None, "", 0):
+            meta.max_on = None
+        else:
+            try:
+                value = float(value)
+            except (TypeError, ValueError):
+                raise HTTPException(400, "最長開啟時間要是分鐘數") from None
+            if not 1 <= value <= 24 * 60:
+                raise HTTPException(400, "最長開啟時間要在 1 分鐘到 24 小時之間")
+            meta.max_on = value
+            hub.store.data["timers"].pop(plug_id, None)  # 重新依新的上限算
+    # 「常開」和「最長開啟時間」互相矛盾，後設定的為準
+    if body.get("keep_on"):
+        meta.max_on = None
+    elif meta.max_on:
+        meta.keep_on = False
+    if meta.max_on and hub.plugs[plug_id].is_on:
+        hub._cap_on_time(plug_id)
     if "watts" in body:
         watts = body["watts"]
         meta.watts = float(watts) if watts not in (None, "", 0) and float(watts) > 0 else None
@@ -161,6 +182,16 @@ async def turn_off(body: dict = Body(default={})) -> dict[str, Any]:
     done = await hub.turn_off(
         room=body.get("room"), standby_only=bool(body.get("standby_only")), remember="undo"
     )
+    await hub.changed()
+    return {"ok": True, "count": len(done)}
+
+
+@app.post("/api/on")
+async def turn_on(body: dict = Body(default={})) -> dict[str, Any]:
+    room = body.get("room")
+    if not room or not store.room(room):
+        raise HTTPException(404, "找不到這個房間")
+    done = await hub.turn_on(room, remember="undo")
     await hub.changed()
     return {"ok": True, "count": len(done)}
 

@@ -24,6 +24,10 @@ from .store import Store
 _LOGGER = logging.getLogger(__name__)
 
 POLL_SECONDS = 5
+# 名稱有這些字的插座，第一次看到時自動設「最長開啟 10 分鐘」（之後可以在 App 改）
+WATER_WORDS = ("澆水", "灑水", "water", "sprinkler", "抽水", "水泵")
+DEFAULT_MAX_ON = 10
+SCHEDULE_GRACE = 10  # 排程最多晚幾秒還會補執行
 DISCOVER_SECONDS = 60
 DEVICE_TIMEOUT = 4
 OFFLINE_NOTIFY_MINUTES = 10
@@ -67,7 +71,9 @@ class Hub:
         self.matter_seen = 0.0
         self._changed = asyncio.Condition()
         self._tasks: list[asyncio.Task] = []
-        self._schedule_done: dict[str, str] = {}  # 排程 ID（或「ID:restore」）→ 今天已執行的日期
+        self._schedule_done: dict[str, str] = {}  # 排程 ID（或「ID:restore」）→ 最後執行的「日期 時間」
+        self._bg: set[asyncio.Task] = set()
+        self._timer_failed: set[str] = set()  # 定時關閉失敗、已經通知過的插座
         self._offline_notified: set[str] = set()
         self._overload_notified: set[str] = set()
         self._last_flush = time.monotonic()
@@ -82,7 +88,7 @@ class Hub:
         self._tasks = [
             asyncio.create_task(self._loop(self.discover, DISCOVER_SECONDS)),
             asyncio.create_task(self._loop(self.poll, POLL_SECONDS)),
-            asyncio.create_task(self._loop(self.run_schedule, 20)),
+            asyncio.create_task(self._schedule_loop()),
         ]
 
     async def stop(self) -> None:
@@ -177,6 +183,8 @@ class Hub:
         if on and plug.id not in on_since:
             on_since[plug.id] = time.time()
             self._dirty = True
+        if on:
+            self._cap_on_time(plug.id)
         elif not on and (plug.id in on_since or plug.id in self.store.data["timers"]):
             on_since.pop(plug.id, None)
             self.store.data["timers"].pop(plug.id, None)  # 關掉了，定時就不用了
@@ -187,6 +195,10 @@ class Hub:
         await asyncio.gather(*(self._poll_one(e) for e in list(self.devices.values())))
         self._accrue()
         self._check_alerts()
+        self._default_max_on()
+        for pid, plug in self.plugs.items():
+            if plug.is_on:
+                self._cap_on_time(pid)
         await self._run_timers()
         if self._dirty:
             self._dirty = False
@@ -331,6 +343,20 @@ class Hub:
             self.store.save()
         return done
 
+    async def turn_on(self, room: str, remember: str | None = None) -> list[str]:
+        """打開一個房間裡關著的插座；remember 有給就記住，之後 restore 會把它們關回去。"""
+        targets = [
+            plug.id for plug in self.plugs.values()
+            if plug.online and not plug.is_on and self.store.meta(plug.id).room == room
+            and not self.store.meta(plug.id).max_on  # 澆水這類不會被「整間打開」打開
+        ]
+        results = await asyncio.gather(*(self.set_power(pid, True) for pid in targets), return_exceptions=True)
+        done = [pid for pid, r in zip(targets, results) if not isinstance(r, Exception)]
+        if remember:
+            self.store.data["remembered"][remember] = {pid: False for pid in done}
+            self.store.save()
+        return done
+
     async def restore(self, remember: str) -> list[str]:
         """恢復 remember 記住的狀態。
 
@@ -349,6 +375,7 @@ class Hub:
         if not self.plugs[plug_id].is_on:
             await self.set_power(plug_id, True)
         self.store.data["timers"][plug_id] = time.time() + minutes * 60
+        self._cap_on_time(plug_id)  # 不能超過最長開啟時間
         self.store.save()
         await self.changed()
 
@@ -357,21 +384,65 @@ class Hub:
             self.store.save()
             await self.changed()
 
+    # ---- 最長開啟時間（防呆）----
+
+    def _default_max_on(self) -> None:
+        """新看到的澆水類插座，預設最長開 10 分鐘（每個插座只預設一次，使用者改掉就不再動）。"""
+        seen = self.store.data.setdefault("max_on_defaulted", [])
+        for pid, plug in self.plugs.items():
+            if pid in seen:
+                continue
+            seen.append(pid)
+            self._dirty = True
+            meta = self.store.meta(pid)
+            name = self.name(plug).lower()
+            if meta.max_on is None and not meta.keep_on and any(w in name for w in WATER_WORDS):
+                meta.max_on = DEFAULT_MAX_ON
+                _LOGGER.info("%s 預設最長開啟 %d 分鐘", self.name(plug), DEFAULT_MAX_ON)
+
+    def _cap_on_time(self, plug_id: str) -> None:
+        """有設最長開啟時間的插座：確保有定時，而且不會晚於「打開的時間 + 最長時間」。"""
+        limit_min = self.store.meta(plug_id).max_on
+        if not limit_min:
+            return
+        timers = self.store.data["timers"]
+        limit = self.store.data["on_since"].get(plug_id, time.time()) + limit_min * 60
+        if timers.get(plug_id) is None or timers[plug_id] > limit:
+            timers[plug_id] = limit
+            self._dirty = True
+
     async def _run_timers(self) -> None:
         now = time.time()
         for pid, at in list(self.store.data["timers"].items()):
             if at > now or pid not in self.plugs:
                 continue
             plug = self.plugs[pid]
+            guarded = bool(self.store.meta(pid).max_on)
             try:
                 await self.set_power(pid, False)
             except Exception:  # noqa: BLE001
-                if now - at < 300:  # 插座一時沒回應就下一輪再試，5 分鐘後放棄
+                if pid not in self._timer_failed:
+                    self._timer_failed.add(pid)
+                    if guarded:
+                        self.notifier.send("⚠️ 關不掉！", f"{self.name(plug)} 已經超過最長開啟時間，但插座沒有回應，請立刻手動關閉", "urgent")
+                # 有最長開啟時間的會一直重試；一般定時 5 分鐘後放棄
+                if guarded or now - at < 300:
                     continue
-                self.notifier.send("定時關閉失敗", f"{self.name(plug)} 沒有回應，請手動關閉")
+                self.notifier.send("定時關閉失敗", f"{self.name(plug)} 沒有回應，請手動關閉", "high")
+                self._timer_failed.discard(pid)
+                self.store.data["timers"].pop(pid, None)
+                self._dirty = True
+                continue
+            late = pid in self._timer_failed
+            self._timer_failed.discard(pid)
             self.store.data["timers"].pop(pid, None)
             self._dirty = True
-            self.notifier.send("定時關閉", f"{self.name(plug)} 時間到，已經關閉")
+            if late:
+                self.notifier.send("已經關閉", f"{self.name(plug)} 恢復回應，已經關閉", "high")
+            elif guarded:
+                self.notifier.send("自動關閉", f"{self.name(plug)} 開了 {self.store.meta(pid).max_on:g} 分鐘，已經關閉")
+            else:
+                self.notifier.send("定時關閉", f"{self.name(plug)} 時間到，已經關閉")
 
     # ---- 情境 ----
 
@@ -425,23 +496,53 @@ class Hub:
 
     # ---- 排程 ----
 
+    async def _schedule_loop(self) -> None:
+        """每秒檢查一次排程（對齊到整秒）。"""
+        while True:
+            await asyncio.sleep(1.02 - time.time() % 1)
+            try:
+                await self.run_schedule()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("排程失敗")
+
+    def _due(self, key: str, hms: str, now: datetime) -> bool:
+        """排程時間已到（容許晚 SCHEDULE_GRACE 秒，避免卡住時錯過），而且今天這個時間還沒執行過。"""
+        h, m, sec = (int(x) for x in hms.split(":"))
+        late = now.hour * 3600 + now.minute * 60 + now.second - (h * 3600 + m * 60 + sec)
+        mark = f"{now.date().isoformat()} {hms}"
+        if 0 <= late <= SCHEDULE_GRACE and self._schedule_done.get(key) != mark:
+            self._schedule_done[key] = mark
+            return True
+        return False
+
     async def run_schedule(self) -> None:
         now = datetime.now()
-        hhmm = now.strftime("%H:%M")
-        today = now.date().isoformat()
         for sched in self.store.schedules:
             key = sched["id"]
-            if sched["enabled"] and hhmm == sched["time"] and now.weekday() in sched["days"]:
-                if self._schedule_done.get(key) != today:
-                    self._schedule_done[key] = today
-                    await self._run_one(sched)
+            if sched["enabled"] and now.weekday() in sched["days"] and self._due(key, sched["time"], now):
+                self._spawn(self._run_one(sched))
             # 關閉之後指定時間再打開：只開被這個排程關掉、現在還關著的
-            restore_key = f"{key}:restore"
-            if sched.get("restore_at") and hhmm == sched["restore_at"] and self._schedule_done.get(restore_key) != today:
-                self._schedule_done[restore_key] = today
+            if sched.get("restore_at") and self._due(f"{key}:restore", sched["restore_at"], now):
                 if f"sched:{key}" in self.store.data["remembered"]:
-                    done = await self.restore(f"sched:{key}")
-                    _LOGGER.info("排程 %s 打開 %d 個插座", key, len(done))
+                    self._spawn(self._restore_sched(key))
+
+    def _spawn(self, coro: Any) -> None:
+        """排程在背景執行，同一秒的多個排程不會互相等；保留參照、記錄錯誤。"""
+        task = asyncio.create_task(coro)
+        self._bg.add(task)
+
+        def done(t: asyncio.Task) -> None:
+            self._bg.discard(t)
+            if not t.cancelled() and t.exception():
+                _LOGGER.error("排程執行失敗", exc_info=t.exception())
+
+        task.add_done_callback(done)
+
+    async def _restore_sched(self, key: str) -> None:
+        done = await self.restore(f"sched:{key}")
+        _LOGGER.info("排程 %s 打開 %d 個插座", key, len(done))
 
     async def _run_one(self, sched: dict[str, Any]) -> None:
         if sched["action"] == "scene":
@@ -509,6 +610,7 @@ class Hub:
                 "watts": meta.watts,
                 "mode": self.mode(plug),
                 "keep_on": meta.keep_on,
+                "max_on": meta.max_on,
                 "night": meta.night,
                 "standby": self.is_standby(plug),
                 "on_since": self.store.data["on_since"].get(plug.id) if plug.is_on else None,

@@ -1,7 +1,7 @@
 // 插座 App：手機、平板、電腦共用的網頁介面。
 //
-// 設計原則：看得到的就是全部 —— 開關就是開關、按一次就執行（按錯可以「復原」），
-// 沒有要按住、拖拉這類看不到的操作。改名、換房間、調順序都在「編輯」裡用按鈕完成。
+// 設計原則：看得到的就是全部 —— 開關就是開關、按一次就執行（按錯可以「復原」）。
+// 改名、換房間、調順序都在「編輯」裡：拖拉右邊的 ⠿ 把手（插座可以拖到別的房間）。
 //
 // 版面：手機一欄 + 下方分頁列；平板兩欄 + 下方分頁列；電腦左側選單 + 兩到三欄。
 // 狀態：先拿 /api/state，之後伺服器有變動就從 /api/events 推過來。
@@ -51,6 +51,18 @@ function fmtDur(sec) {
   return `${m} 分鐘`;
 }
 
+// 排程時間：一律存成 "HH:MM:SS"；顯示時秒數是 0 就省略
+const hms = (v) => {
+  const [h = 0, m = 0, sec = 0] = String(v || "").split(":").map(Number);
+  return [h, m, sec].map((n) => String(n || 0).padStart(2, "0")).join(":");
+};
+// 時間欄位（時:分，手機的時鐘選不了秒）＋ 秒的選單
+const secSelect = (key, t, cls = "") =>
+  `<select class="sec ${cls}" data-c="sched-sec" data-v="${key}" aria-label="秒">${Array.from({ length: 60 }, (_, i) => {
+    const v = String(i).padStart(2, "0");
+    return `<option value="${v}" ${t.slice(6) === v ? "selected" : ""}>${v} 秒</option>`;
+  }).join("")}</select>`;
+const showT = (t) => (t && t.endsWith(":00") ? t.slice(0, 5) : t || "");
 const clock = (epoch) => new Date(epoch * 1000).toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", hour12: false });
 
 function daysText(days) {
@@ -232,6 +244,7 @@ const STYLE = `
   .ch .end { margin-left: auto; display: flex; gap: 6px; align-items: center; }
   .pill { font-size: 14px; font-weight: 700; border-radius: 999px; padding: 8px 12px; background: var(--soft); white-space: nowrap; }
   .pill.danger { color: var(--danger); background: var(--danger-soft); }
+  .pill.on { color: var(--on-text); background: var(--on-soft); }
   .pill.accent { color: var(--accent); background: var(--accent-soft); }
   .desc { font-size: 14px; color: var(--muted); line-height: 1.55; margin: 0; }
   .card > .desc { padding: 0 16px 14px; }
@@ -262,9 +275,13 @@ const STYLE = `
   .empty { padding: 28px 18px; text-align: center; color: var(--muted); font-size: 15px; line-height: 1.6; }
 
   /* 編輯模式 */
-  .mv { display: flex; gap: 4px; flex: none; }
-  .mv button { width: 38px; height: 38px; border-radius: 10px; background: var(--soft); display: flex; align-items: center; justify-content: center; }
-  .mv button .i { width: 20px; height: 20px; }
+  .grip { width: 40px; height: 44px; margin-right: -6px; border-radius: 10px; display: flex; align-items: center; justify-content: center; flex: none; color: var(--muted); cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+  .grip:hover { background: var(--soft); color: var(--text); }
+  .grip .i { width: 24px; height: 24px; }
+  .is-dragging, .is-dragging * { cursor: grabbing !important; user-select: none; -webkit-user-select: none; }
+  .dragging { opacity: .35; }
+  .ghost { position: fixed; z-index: 50; margin: 0 !important; pointer-events: none; background: var(--card); border-radius: 16px; box-shadow: 0 14px 34px rgba(0,0,0,.22); opacity: .96; overflow: hidden; transform: scale(1.02); }
+  .ghost::before { display: none; }
   select.pick { height: 38px; border-radius: 999px; border: 0; background: var(--soft); padding: 0 10px; font-size: 14px; font-weight: 700; max-width: 120px; flex: none; }
   .pen { color: var(--faint); display: inline-flex; }
   .nm > button.a { max-width: 100%; }
@@ -280,6 +297,7 @@ const STYLE = `
   .sched .d { flex: 1; min-width: 0; }
   .sched .d .x { font-size: 15px; font-weight: 800; }
   .sched .d .y { font-size: 13px; color: var(--muted); font-weight: 600; margin-top: 2px; line-height: 1.45; }
+  .sched .t.sec { font-size: 24px; }
   .sched.off .t, .sched.off .d { opacity: .45; }
   .templates { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 16px 16px; }
 
@@ -310,6 +328,7 @@ const STYLE = `
   .readout small { display: block; font-size: 12px; color: var(--muted); font-weight: 500; }
   .badge { font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px; background: var(--soft); color: var(--muted); white-space: nowrap; }
   .badge.ok { background: var(--ok-soft); color: var(--ok); }
+  .badge.timer { background: var(--timer-soft); color: var(--timer); }
   .badge.wait { background: var(--accent-soft); color: var(--accent); }
   .pair { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; padding: 4px 16px 6px; }
   .pair img { width: 168px; height: 168px; border-radius: 12px; background: #fff; flex: none; }
@@ -363,6 +382,10 @@ const STYLE = `
   .actions .btn { flex: 1; height: 50px; border-radius: 16px; font-size: 16px; }
   .field { display: flex; align-items: center; gap: 10px; }
   input[type="time"] { height: 56px; border: 0; border-radius: 14px; background: var(--soft); padding: 0 14px; font-size: 26px; font-weight: 800; color-scheme: light dark; }
+  .timeline { display: flex; gap: 8px; align-items: center; }
+  .timeline input[type="time"] { flex: 1; min-width: 0; }
+  select.sec { height: 56px; border: 0; border-radius: 14px; background: var(--soft); padding: 0 10px; font-size: 18px; font-weight: 800; color: inherit; color-scheme: light dark; flex: none; }
+  select.sec.small { height: 46px; font-size: 16px; }
   input[type="time"].small { height: 46px; font-size: 18px; }
   select.text { appearance: auto; }
   .note { font-size: 14px; color: var(--muted); line-height: 1.55; margin: 12px 0 0; }
@@ -410,6 +433,10 @@ class PlugApp extends HTMLElement {
     root.addEventListener("click", (e) => this._onClick(e));
     root.addEventListener("change", (e) => this._onChange(e));
     root.addEventListener("keydown", (e) => this._onKey(e));
+    root.addEventListener("pointerdown", (e) => {
+      const grip = e.target.closest?.("[data-drag]");
+      if (grip) this._dragStart(e, grip);
+    });
     window.addEventListener("hashchange", () => {
       const tab = this._tabFromHash();
       if (tab && tab !== this._tab) this._go(tab, false);
@@ -485,6 +512,7 @@ class PlugApp extends HTMLElement {
   }
 
   _update() {
+    if (this._drag) return; // 拖拉中不要重畫，放開後會重畫
     const active = this.shadowRoot.activeElement;
     const typing = active && /INPUT|SELECT|TEXTAREA/.test(active.tagName);
     if (!(typing && this._root.contains(active))) this._render();
@@ -595,7 +623,16 @@ class PlugApp extends HTMLElement {
   _roomCard(g) {
     const on = g.plugs.filter((p) => p.online && this._isOn(p));
     const canOff = on.some((p) => !p.keep_on);
-    const off = g.id !== NO_ROOM && canOff ? `<button class="pill danger" data-a="room-off" data-v="${esc(g.id)}">整間關閉</button>` : "";
+    // 有開著的 → 整間關閉；全部關著 → 整間打開（按鈕不會消失）
+    const canOn = g.plugs.some((p) => p.online && !this._isOn(p));
+    const off =
+      g.id === NO_ROOM
+        ? ""
+        : canOff
+          ? `<button class="pill danger" data-a="room-off" data-v="${esc(g.id)}">整間關閉</button>`
+          : canOn
+            ? `<button class="pill on" data-a="room-on" data-v="${esc(g.id)}">整間打開</button>`
+            : "";
     const hint = g.id === NO_ROOM ? `<p class="desc">按右上角「編輯」可以把它們分到房間。</p>` : "";
     return `
       <section class="card">
@@ -616,7 +653,7 @@ class PlugApp extends HTMLElement {
     }
     const on = this._isOn(p);
     const now = this._now();
-    let sub = "關著";
+    let sub = p.max_on ? `關著・最長開 ${fmtDur(p.max_on * 60)}` : "關著";
     let cls = "";
     if (on && p.timer) {
       sub = `開著・${fmtDur(p.timer - now)}後自動關閉`;
@@ -645,37 +682,36 @@ class PlugApp extends HTMLElement {
     const sceneRows = scenes
       .map(
         (sc, i) => `
-        <div class="row">
+        <div class="row" data-k="scene" data-id="${esc(sc.id)}">
           <div class="di">${ic(sc.icon)}</div>
           <button class="nm" data-a="scene-edit" data-v="${esc(sc.id)}"><div class="a"><span>${esc(sc.name)}</span><span class="pen">${ic("mdi:pencil")}</span></div><div class="b">設定要開關哪些插座</div></button>
-          ${this._moveBtns("scene", sc.id, i, scenes.length)}
+          ${this._grip("scene", sc.id, sc.name)}
         </div>`,
       )
       .join("");
     const rooms = this._rooms;
     const cards = this._groups(true)
       .map((g) => {
-        const ri = rooms.findIndex((r) => r.id === g.id);
         const roomBtns =
-          g.id === NO_ROOM ? "" : `<button class="pill accent" data-a="room-edit" data-v="${esc(g.id)}">改名</button>${this._moveBtns("room", g.id, ri, rooms.length)}`;
+          g.id === NO_ROOM ? "" : `<button class="pill accent" data-a="room-edit" data-v="${esc(g.id)}">改名</button>${this._grip("room", g.id, g.name)}`;
         const rows = g.plugs.length
           ? g.plugs
-              .map((p, i) => {
+              .map((p) => {
                 const opts = [`<option value="">還沒分房間</option>`, ...rooms.map((r) => `<option value="${esc(r.id)}" ${p.room === r.id ? "selected" : ""}>${esc(r.name)}</option>`)].join("");
                 return `
-                <div class="row">
+                <div class="row" data-k="plug" data-id="${esc(p.id)}">
                   <div class="di">${ic(deviceIcon(p.name))}</div>
                   <div class="nm">
-                    <button class="a" data-a="plug-edit" data-v="${esc(p.id)}"><span>${esc(p.name)}</span><span class="pen">${ic("mdi:pencil")}</span>${p.keep_on ? '<span class="badge">常開</span>' : ""}</button>
+                    <button class="a" data-a="plug-edit" data-v="${esc(p.id)}"><span>${esc(p.name)}</span><span class="pen">${ic("mdi:pencil")}</span>${p.keep_on ? '<span class="badge">常開</span>' : ""}${p.max_on ? `<span class="badge timer">最長 ${fmtDur(p.max_on * 60)}</span>` : ""}</button>
                     <select class="pick" data-c="plug-room" data-v="${esc(p.id)}" aria-label="${esc(p.name)} 的房間">${opts}</select>
                   </div>
-                  ${this._moveBtns("plug", p.id, i, g.plugs.length)}
+                  ${this._grip("plug", p.id, p.name)}
                 </div>`;
               })
               .join("")
-          : `<p class="desc">還沒有插座。用其他插座旁的選單把它換到這個房間。</p>`;
+          : `<p class="desc empty">還沒有插座。把插座拖到這裡，或用插座名稱下面的選單換過來。</p>`;
         return `
-          <section class="card">
+          <section class="card" data-room="${esc(g.id)}" ${g.id === NO_ROOM ? "" : 'data-k="room"'} data-id="${esc(g.id)}">
             <div class="ch"><div class="ri">${ic(g.icon || "mdi:home-outline")}</div><div class="n">${esc(g.name)}</div><div class="end">${roomBtns}</div></div>
             ${rows}
           </section>`;
@@ -683,12 +719,12 @@ class PlugApp extends HTMLElement {
       .join("");
     return `
       <div class="ph">
-        <div><h1>編輯</h1><div class="sub">改名稱、換房間、調順序</div></div>
+        <div><h1>編輯</h1><div class="sub">改名稱、換房間、拖拉調順序</div></div>
         <div class="right"><button class="btn primary" data-a="edit-done">完成</button></div>
       </div>
-      <div class="hint">點名稱可以改名、設定「常開」；用名稱下面的選單換房間；用 ⌃ ⌄ 調整順序。</div>
+      <div class="hint">點名稱可以改名、設定「常開」；用名稱下面的選單換房間；按住右邊的 ⠿ 拖拉調整順序，插座可以直接拖到別的房間。</div>
       <div class="grid wide">
-        <section class="card">
+        <section class="card" data-scenes>
           <div class="ch"><div class="ri">${ic("mdi:star-outline")}</div><div class="n">情境</div></div>
           ${sceneRows}
           <button class="add" data-a="scene-new">${ic("mdi:plus")}新增情境</button>
@@ -698,11 +734,133 @@ class PlugApp extends HTMLElement {
       </div>`;
   }
 
-  _moveBtns(kind, id, i, n) {
-    return `<div class="mv">
-      <button data-a="move" data-k="${kind}" data-v="${esc(id)}" data-d="-1" ${i <= 0 ? "disabled" : ""} aria-label="往上">${ic("mdi:chevron-up")}</button>
-      <button data-a="move" data-k="${kind}" data-v="${esc(id)}" data-d="1" ${i >= n - 1 ? "disabled" : ""} aria-label="往下">${ic("mdi:chevron-down")}</button>
-    </div>`;
+  // 拖拉把手；鍵盤用 ↑ ↓ 也能移動
+  _grip(kind, id, name) {
+    return `<span class="grip" data-drag="${kind}" data-v="${esc(id)}" tabindex="0" role="button" aria-label="拖拉調整「${esc(name)}」的順序（或按 ↑ ↓）">${ic("mdi:drag")}</span>`;
+  }
+
+  // ── 拖拉排序（滑鼠、觸控都用 pointer events）──
+
+  _dragStart(e, grip) {
+    if (e.button > 0 || this._drag) return;
+    const kind = grip.dataset.drag;
+    const item = grip.closest(`[data-k="${kind}"]`);
+    if (!item) return;
+    e.preventDefault();
+    const box = item.getBoundingClientRect();
+    const ghost = item.cloneNode(true);
+    ghost.classList.add("ghost");
+    Object.assign(ghost.style, { width: `${box.width}px`, height: `${box.height}px`, left: `${box.left}px`, top: `${box.top}px` });
+    this._root.append(ghost);
+    item.classList.add("dragging");
+    this._root.classList.add("is-dragging");
+    this._drag = { kind, id: grip.dataset.v, item, ghost, dx: e.clientX - box.left, dy: e.clientY - box.top, x: e.clientX, y: e.clientY, moved: false };
+    grip.setPointerCapture?.(e.pointerId);
+    const move = (ev) => this._dragMove(ev);
+    const end = () => {
+      grip.removeEventListener("pointermove", move);
+      grip.removeEventListener("pointerup", end);
+      grip.removeEventListener("pointercancel", end);
+      this._dragEnd();
+    };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", end);
+    grip.addEventListener("pointercancel", end);
+    navigator.vibrate?.(10);
+    this._dragScroll();
+  }
+
+  _dragMove(e) {
+    const d = this._drag;
+    if (!d) return;
+    d.x = e.clientX;
+    d.y = e.clientY;
+    d.moved = true;
+    d.ghost.style.left = `${d.x - d.dx}px`;
+    d.ghost.style.top = `${d.y - d.dy}px`;
+    this._dragPlace();
+  }
+
+  // 依手指位置，把原本的項目搬到新位置（畫面立刻看到結果）
+  _dragPlace() {
+    const d = this._drag;
+    const under = this.shadowRoot.elementFromPoint(d.x, d.y);
+    if (!under) return;
+    const before = (el) => {
+      const r = el.getBoundingClientRect();
+      return d.y < r.top + r.height / 2;
+    };
+    if (d.kind === "plug") {
+      const card = under.closest("[data-room]");
+      if (!card) return;
+      const row = under.closest('[data-k="plug"]');
+      if (row && row !== d.item) {
+        row.parentNode.insertBefore(d.item, before(row) ? row : row.nextSibling);
+      } else if (!row) {
+        const rows = [...card.querySelectorAll('[data-k="plug"]')].filter((x) => x !== d.item);
+        card.querySelector(".desc.empty")?.remove();
+        if (!rows.length) card.append(d.item);
+        else if (d.y < rows[0].getBoundingClientRect().top) rows[0].before(d.item);
+        else if (d.y > rows[rows.length - 1].getBoundingClientRect().bottom) rows[rows.length - 1].after(d.item);
+      }
+    } else if (d.kind === "scene") {
+      const row = under.closest('[data-k="scene"]');
+      if (row && row !== d.item) row.parentNode.insertBefore(d.item, before(row) ? row : row.nextSibling);
+    } else {
+      const card = under.closest('[data-k="room"]');
+      if (card && card !== d.item) card.parentNode.insertBefore(d.item, before(card) ? card : card.nextSibling);
+    }
+  }
+
+  // 拖到畫面上下邊緣時自動捲動
+  _dragScroll() {
+    const d = this._drag;
+    if (!d) return;
+    const edge = 70;
+    const h = window.innerHeight;
+    const speed = d.y < edge ? -(edge - d.y) / 4 : d.y > h - edge ? (d.y - (h - edge)) / 4 : 0;
+    if (speed && d.moved) {
+      window.scrollBy(0, speed);
+      this._dragPlace();
+    }
+    requestAnimationFrame(() => this._dragScroll());
+  }
+
+  _dragEnd() {
+    const d = this._drag;
+    if (!d) return;
+    this._drag = null;
+    d.ghost.remove();
+    d.item.classList.remove("dragging");
+    this._root.classList.remove("is-dragging");
+    const ids = (sel) => [...this._root.querySelectorAll(sel)].map((el) => el.dataset.id);
+    if (d.kind === "scene") {
+      const order = ids('[data-k="scene"]');
+      if (order.join() !== this._scenes.map((x) => x.id).join()) {
+        this._s.scenes = order.map((x) => this._scenes.find((sc) => sc.id === x));
+        this._safe(() => api("POST", "/api/order", { scenes: order }));
+      }
+    } else if (d.kind === "room") {
+      const order = ids('[data-k="room"]');
+      if (order.join() !== this._rooms.map((r) => r.id).join()) {
+        this._roomOrder = order;
+        this._safe(() => api("POST", "/api/order", { rooms: order }));
+      }
+    } else {
+      const order = ids('[data-k="plug"]');
+      const plug = this._plug(d.id);
+      const room = d.item.closest("[data-room]")?.dataset.room ?? NO_ROOM;
+      const roomChanged = plug && this._roomOf(plug) !== room;
+      if (roomChanged) plug.room = room || null;
+      const changed = order.join() !== this._plugs.map((p) => p.id).join();
+      if (changed) this._order = order;
+      this._safe(async () => {
+        if (roomChanged) await api("PATCH", `/api/plugs/${d.id}`, { room: room || null });
+        if (changed) await api("POST", "/api/order", { plugs: order });
+      });
+      if (roomChanged) this._showToast(`已把「${plug.name}」移到${this._room(room)?.name || "還沒分房間"}`);
+    }
+    this._render();
   }
 
   // ── 排程 ──
@@ -759,10 +917,10 @@ class PlugApp extends HTMLElement {
   }
 
   _schedRow(x) {
-    const extra = x.action === "off" && x.restore_at ? `，${x.restore_at < x.time ? "隔天" : ""} ${x.restore_at} 再打開` : "";
+    const extra = x.action === "off" && x.restore_at ? `，${x.restore_at < x.time ? "隔天" : ""} ${showT(x.restore_at)} 再打開` : "";
     return `
       <div class="sched ${x.enabled ? "" : "off"}" data-a="sched-edit" data-v="${esc(x.id)}" role="button" tabindex="0">
-        <div class="t">${esc(x.time)}</div>
+        <div class="t ${showT(x.time).length > 5 ? "sec" : ""}">${esc(showT(x.time))}</div>
         <div class="d"><div class="x">${daysText(x.days)}${x.enabled ? "" : "・已暫停"}</div><div class="y">${this._schedDesc(x)}${extra}</div></div>
         <button class="sw ${x.enabled ? "on" : ""}" data-a="sched-toggle" data-v="${esc(x.id)}" role="switch" aria-checked="${x.enabled}" aria-label="啟用排程"></button>
       </div>`;
@@ -937,6 +1095,13 @@ class PlugApp extends HTMLElement {
   _onKey(e) {
     if (e.key === "Escape" && this._sheet) return this._closeSheet();
     const t = e.target;
+    if ((e.key === "ArrowUp" || e.key === "ArrowDown") && t.matches?.("[data-drag]")) {
+      e.preventDefault();
+      const { drag: kind, v } = t.dataset;
+      this._move(kind, v, e.key === "ArrowUp" ? -1 : 1);
+      this.shadowRoot.querySelector(`[data-drag="${kind}"][data-v="${CSS.escape(v)}"]`)?.focus();
+      return;
+    }
     if ((e.key === "Enter" || e.key === " ") && t.matches?.('.row[role="switch"], .sched[role="button"]')) {
       e.preventDefault();
       t.click();
@@ -971,6 +1136,15 @@ class PlugApp extends HTMLElement {
       timer: (v) => this._openSheet({ type: "timer", id: v, live: true }),
       "all-off": () => this._turnOff({}),
       "room-off": (v) => this._turnOff({ room: v }),
+      "room-on": async (v) => {
+        try {
+          const res = await api("POST", "/api/on", { room: v });
+          const where = this._room(v)?.name || "";
+          this._showToast(res.count ? `已打開${where} ${res.count} 個插座` : "沒有關著的插座", res.count > 0);
+        } catch (err) {
+          this._showToast(`沒有成功：${err.message}`);
+        }
+      },
       scene: (v) => this._runScene(v),
       edit: () => {
         this._edit = true;
@@ -982,8 +1156,7 @@ class PlugApp extends HTMLElement {
         this._render();
         window.scrollTo(0, 0);
       },
-      move: (v, t) => this._move(t.dataset.k, v, Number(t.dataset.d)),
-      "plug-edit": (v) => this._openSheet({ type: "plug", id: v }),
+      "plug-edit": (v) => this._openSheet({ type: "plug", id: v, live: true }),
       "room-edit": (v) => this._openSheet({ type: "room", id: v, name: this._room(v)?.name || "" }),
       "room-new": () => this._openSheet({ type: "room", id: null, name: "" }),
       "scene-edit": (v) => this._openSceneEditor(v),
@@ -1026,7 +1199,8 @@ class PlugApp extends HTMLElement {
       "timer-set": (v) => this._setTimer(this._sheet.id, Number(v)),
       "timer-custom": () => {
         const n = Number(this._sheetHost.querySelector("[data-timer-min]")?.value);
-        if (!(n >= 1 && n <= 1440)) return this._sheetError("請輸入 1～1440 分鐘");
+        const max = this._plug(this._sheet.id)?.max_on || 1440;
+        if (!(n >= 1 && n <= max)) return this._sheetError(`請輸入 1～${max} 分鐘`);
         this._setTimer(this._sheet.id, n);
       },
       "timer-stop": () =>
@@ -1085,7 +1259,7 @@ class PlugApp extends HTMLElement {
           d.plugs = all ? d.plugs.filter((id) => !ids.includes(id)) : [...new Set([...d.plugs, ...ids])];
         })(),
       "sched-scene": (v) => redraw((d) => (d.scene = v))(),
-      "sched-restore": () => redraw((d) => (d.restore_at = d.restore_at ? null : "07:00"))(),
+      "sched-restore": () => redraw((d) => (d.restore_at = d.restore_at ? null : "07:00:00"))(),
       "sched-save": () => this._saveSched(),
       "sched-delete": (v, t) =>
         sure(t) &&
@@ -1107,15 +1281,24 @@ class PlugApp extends HTMLElement {
       number: (v, t) => this._setSetting(v, parseFloat(t.value)),
       ntfy: (v, t) => this._safe(() => api("PUT", "/api/settings", { ntfy_topic: t.value })),
       "sheet-room": (v, t) => this._safe(() => api("PATCH", `/api/plugs/${this._sheet.id}`, { room: t.value || null })),
+      "sheet-max-on": (v, t) =>
+        this._safe(async () => {
+          await api("PATCH", `/api/plugs/${this._sheet.id}`, { max_on: Number(t.value) || null });
+          this._showToast(Number(t.value) ? `已設定最長開 ${fmtDur(Number(t.value) * 60)}` : "已取消最長開啟時間");
+        }),
       "sheet-watts": (v, t) => {
         if (t.value === "custom") return this._openSheet({ type: "watts", id: this._sheet.id });
         this._safe(() => api("PATCH", `/api/plugs/${this._sheet.id}`, { watts: t.value ? Number(t.value) : null }));
       },
       "sched-time": (v, t) => {
         if (t.value) {
-          this._sheet.draft[v] = t.value;
+          this._sheet.draft[v] = hms(t.value).slice(0, 6) + hms(this._sheet.draft[v]).slice(6);
           if (v === "time" || v === "restore_at") this._renderSheet();
         }
+      },
+      "sched-sec": (v, t) => {
+        const d = this._sheet.draft;
+        d[v] = hms(d[v]).slice(0, 6) + t.value;
       },
       "scene-name": (v, t) => (this._sheet.draft.name = t.value),
     };
@@ -1288,15 +1471,19 @@ class PlugApp extends HTMLElement {
     const active =
       p.timer && on
         ? `<div class="hint" style="margin:14px 0 10px;background:var(--timer-soft);color:var(--timer)">還有 ${fmtDur(p.timer - now)}，${clock(p.timer)} 自動關閉。</div>
-           <button class="btn big" data-a="timer-stop">取消定時（保持開著）</button>`
+           ${p.max_on ? "" : `<button class="btn big" data-a="timer-stop">取消定時（保持開著）</button>`}`
         : "";
-    const opts = TIMER_OPTIONS.map((m) => `<button class="opt timer" data-a="timer-set" data-v="${m}">${m < 60 ? `${m} 分鐘` : `${m / 60} 小時`}</button>`).join("");
+    const max = p.max_on || 1440;
+    const guard = p.max_on
+      ? `<div class="hint" style="margin:14px 0 0">${ic("mdi:shield-check-outline")} 防呆：這個插座最長只能開 ${fmtDur(p.max_on * 60)}，時間到一定會關（可以在「編輯」裡改）。</div>`
+      : "";
+    const opts = TIMER_OPTIONS.filter((m) => m <= max).map((m) => `<button class="opt timer" data-a="timer-set" data-v="${m}">${m < 60 ? `${m} 分鐘` : `${m / 60} 小時`}</button>`).join("");
     return `
       ${this._sheetHead(deviceIcon(p.name), p.name, `${room}・現在${on ? "開著" : "關著"}`, "background:var(--timer-soft);color:var(--timer)")}
-      ${active}
+      ${active}${guard}
       <div class="q">${on ? (p.timer ? "改成多久後關閉？" : "多久後自動關閉？") : "打開，多久後自動關閉？"}</div>
       <div class="opts">${opts}
-        <div class="opt" style="padding:6px"><input class="text" data-timer-min data-enter="timer-custom" type="number" inputmode="numeric" min="1" max="1440" placeholder="自訂分鐘" style="height:44px;text-align:center;background:var(--card)" aria-label="自訂分鐘"></div>
+        <div class="opt" style="padding:6px"><input class="text" data-timer-min data-enter="timer-custom" type="number" inputmode="numeric" min="1" max="${max}" placeholder="自訂分鐘" style="height:44px;text-align:center;background:var(--card)" aria-label="自訂分鐘"></div>
       </div>
       <button class="btn big" style="margin-top:10px" data-a="timer-custom">用自訂的分鐘數</button>
       <div class="err"></div>
@@ -1319,6 +1506,14 @@ class PlugApp extends HTMLElement {
         <div class="tx"><div class="l">常開</div><div class="s">全部關閉、整間關閉、情境、排程都不會關它（例如路由器、冰箱）</div></div>
         <button class="sw ${p.keep_on ? "on" : ""}" data-a="keep-on" role="switch" aria-checked="${p.keep_on}" aria-label="常開"></button>
       </div>
+      <div class="q">最長開啟時間 <small>防呆</small></div>
+      <select class="text" data-c="sheet-max-on" aria-label="最長開啟時間">
+        ${[[0, "不限制"], [5], [10], [15], [30], [60], [120], [240]]
+          .map(([m, label]) => `<option value="${m}" ${(p.max_on || 0) === m ? "selected" : ""}>${label || fmtDur(m * 60)}</option>`)
+          .join("")}
+        ${p.max_on && ![5, 10, 15, 30, 60, 120, 240].includes(p.max_on) ? `<option value="${p.max_on}" selected>${fmtDur(p.max_on * 60)}</option>` : ""}
+      </select>
+      <p class="note">像澆水、電暖器這類開太久會出事的：不管從 App、Google Home、排程、情境或插座上的按鈕打開，時間到一定關掉，不能取消；「整間打開」也不會打開它。關不掉時手機會收到緊急通知。</p>
       <div class="err"></div>`;
   }
 
@@ -1451,16 +1646,16 @@ class PlugApp extends HTMLElement {
     if (x) {
       draft = { ...x, days: [...x.days], plugs: [...x.plugs] };
     } else {
-      draft = { enabled: true, time: "23:00", days: [0, 1, 2, 3, 4, 5, 6], action: "off", scene: null, plugs: [], restore_at: null };
+      draft = { enabled: true, time: "23:00:00", days: [0, 1, 2, 3, 4, 5, 6], action: "off", scene: null, plugs: [], restore_at: null };
       const plugs = this._plugs;
       if (template === "night") {
         draft.plugs = plugs.filter((p) => deviceIcon(p.name) === "mdi:lightbulb" && !p.keep_on).map((p) => p.id);
-        draft.restore_at = "07:00";
+        draft.restore_at = "07:00:00";
       } else if (template === "leave") {
         const sc = this._scenes.find((s) => s.name === "出門") || this._scenes[0];
-        Object.assign(draft, { time: "08:30", days: [0, 1, 2, 3, 4], action: "scene", scene: sc?.id || null });
+        Object.assign(draft, { time: "08:30:00", days: [0, 1, 2, 3, 4], action: "scene", scene: sc?.id || null });
       } else if (template === "water") {
-        Object.assign(draft, { time: "06:30", action: "on", plugs: plugs.filter((p) => /澆水|water/i.test(p.name)).map((p) => p.id) });
+        Object.assign(draft, { time: "06:30:00", action: "on", plugs: plugs.filter((p) => /澆水|water/i.test(p.name)).map((p) => p.id) });
       }
     }
     this._openSheet({ type: "sched", id, draft, wide: true });
@@ -1501,12 +1696,12 @@ class PlugApp extends HTMLElement {
             <div class="tx"><div class="l">之後再打開</div><div class="s">只打開被這個排程關掉的；本來就關著的不會被打開</div></div>
             <button class="sw ${d.restore_at ? "on" : ""}" data-a="sched-restore" role="switch" aria-checked="${!!d.restore_at}" aria-label="之後再打開"></button>
           </div>
-          ${d.restore_at ? `<div class="field" style="margin-top:10px"><input type="time" class="small" data-c="sched-time" data-v="restore_at" value="${esc(d.restore_at)}" aria-label="再打開的時間"><span class="desc">${d.restore_at <= d.time ? "隔天" : "當天"}這個時間打開</span></div>` : ""}`
+          ${d.restore_at ? `<div class="field" style="margin-top:10px"><input type="time" class="small" data-c="sched-time" data-v="restore_at" value="${esc(hms(d.restore_at).slice(0, 5))}" aria-label="再打開的時間">${secSelect("restore_at", hms(d.restore_at), "small")}<span class="desc">${d.restore_at <= d.time ? "隔天" : "當天"}這個時間打開</span></div>` : ""}`
         : "";
     return `
       ${this._sheetHead("mdi:calendar-clock", s.id ? "編輯排程" : "新增排程", "")}
       <div class="q">幾點</div>
-      <input type="time" data-c="sched-time" data-v="time" value="${esc(d.time)}" aria-label="時間">
+      <div class="timeline"><input type="time" data-c="sched-time" data-v="time" value="${esc(hms(d.time).slice(0, 5))}" aria-label="時間">${secSelect("time", hms(d.time))}</div>
       <div class="q">哪幾天 <small>${daysText(d.days)}</small></div>
       <div class="chips">${days}</div>
       <div class="chips" style="margin-top:8px">
@@ -1529,7 +1724,7 @@ class PlugApp extends HTMLElement {
   _saveSched() {
     const d = this._sheet.draft;
     // 時間欄位可能還沒觸發 change
-    for (const input of this._sheetHost.querySelectorAll('[data-c="sched-time"]')) if (input.value) d[input.dataset.v] = input.value;
+    for (const input of this._sheetHost.querySelectorAll('[data-c="sched-time"]')) if (input.value) d[input.dataset.v] = hms(input.value).slice(0, 6) + hms(d[input.dataset.v]).slice(6);
     if (!d.days.length) return this._sheetError("請至少選一天");
     if (d.action === "scene" && !d.scene) return this._sheetError("請選一個情境");
     if (d.action !== "scene" && !d.plugs.length) return this._sheetError("請至少選一個插座");
@@ -1547,7 +1742,7 @@ class PlugApp extends HTMLElement {
       if (id) await api("PUT", `/api/schedules/${id}`, body);
       else await api("POST", "/api/schedules", body);
       this._closeSheet();
-      this._showToast(id ? "已儲存排程" : `已新增排程：${daysText(d.days)} ${d.time}`);
+      this._showToast(id ? "已儲存排程" : `已新增排程：${daysText(d.days)} ${showT(d.time)}`);
     });
   }
 }

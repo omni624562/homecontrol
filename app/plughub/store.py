@@ -37,9 +37,9 @@ DEFAULTS: dict[str, Any] = {
     # 情境：[{"id", "name", "icon", "actions": {插座 ID: "on"/"off"/"keep"}, "others": "keep"/"off"}]
     # others：actions 裡沒有的插座（之後新找到的）要怎麼做。None = 還沒建立預設情境
     "scenes": None,
-    # 排程：[{"id", "enabled", "time": "HH:MM", "days": [0-6，0 = 星期一],
+    # 排程：[{"id", "enabled", "time": "HH:MM:SS", "days": [0-6，0 = 星期一],
     #         "action": "scene"/"on"/"off", "scene": 情境 ID, "plugs": [插座 ID...],
-    #         "restore_at": "HH:MM" 或 None（關閉之後幾點再打開被它關掉的）}]
+    #         "restore_at": "HH:MM:SS" 或 None（關閉之後幾點再打開被它關掉的）}]
     # None = 還沒從舊版的夜間排程轉過來
     "schedules": None,
 }
@@ -52,6 +52,9 @@ class PlugMeta:
     keep_on: bool = False
     night: bool = False
     watts: float | None = None  # 沒有計量的插座，用這個瓦數估算用電
+    # 最長開啟時間（分鐘）：澆水、電暖器這類開太久會出事的。不管從哪裡打開
+    # （App、Google Home、排程、情境、插座上的按鈕），時間到一定關掉，不能取消。
+    max_on: float | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "PlugMeta":
@@ -78,6 +81,10 @@ class Store:
         self.energy = EnergyLog(self.dir / "energy.db")
         if self.data["schedules"] is None:
             self._migrate_schedule()
+        # 舊資料只到分鐘（"HH:MM"），補上秒
+        for sched in self.schedules:
+            sched["time"] = _hms(sched.get("time")) or "23:00:00"
+            sched["restore_at"] = _hms(sched.get("restore_at")) if sched.get("restore_at") else None
 
     def _migrate_schedule(self) -> None:
         """舊版只有一組夜間排程（勾選的插座晚上關、早上開），轉成新的排程清單。"""
@@ -160,13 +167,13 @@ class Store:
         if sched is None:
             if sched_id:
                 raise KeyError(sched_id)
-            sched = {"id": uuid.uuid4().hex[:8], "enabled": True, "time": "23:00", "days": list(range(7)),
+            sched = {"id": uuid.uuid4().hex[:8], "enabled": True, "time": "23:00:00", "days": list(range(7)),
                      "action": "off", "scene": None, "plugs": [], "restore_at": None}
             self.data["schedules"] = [*self.schedules, sched]
         if "enabled" in body:
             sched["enabled"] = bool(body["enabled"])
-        if "time" in body and _hhmm(body["time"]):
-            sched["time"] = _hhmm(body["time"])
+        if "time" in body and _hms(body["time"]):
+            sched["time"] = _hms(body["time"])
         if "days" in body:
             sched["days"] = sorted({int(d) for d in body["days"] if 0 <= int(d) <= 6})
         if body.get("action") in ("scene", "on", "off"):
@@ -176,7 +183,7 @@ class Store:
         if "plugs" in body:
             sched["plugs"] = list(dict.fromkeys(str(p) for p in body["plugs"]))
         if "restore_at" in body:
-            sched["restore_at"] = _hhmm(body["restore_at"]) if body["restore_at"] else None
+            sched["restore_at"] = _hms(body["restore_at"]) if body["restore_at"] else None
         self.save()
         return sched
 
@@ -206,14 +213,18 @@ ROOM_ICONS = [
 ]
 
 
-def _hhmm(value: Any) -> str | None:
-    """"7:5"、"07:05:00" → "07:05"；不合法就 None。"""
+def _hms(value: Any) -> str | None:
+    """"7:5"、"07:05"、"07:05:30" → "07:05:00"、"07:05:30"；不合法就 None。"""
     try:
-        h, m = str(value).split(":")[:2]
-        h, m = int(h), int(m)
+        parts = [int(x) for x in str(value).split(":")]
     except (ValueError, TypeError):
         return None
-    return f"{h:02d}:{m:02d}" if 0 <= h < 24 and 0 <= m < 60 else None
+    if len(parts) == 2:
+        parts.append(0)
+    if len(parts) != 3:
+        return None
+    h, m, sec = parts
+    return f"{h:02d}:{m:02d}:{sec:02d}" if 0 <= h < 24 and 0 <= m < 60 and 0 <= sec < 60 else None
 
 
 def guess_icon(name: str) -> str:
