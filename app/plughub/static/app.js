@@ -119,6 +119,19 @@ const hms = (v) => {
 };
 // 時間／長度選擇器：滾輪（像手機鬧鐘）。手指上下滑、滑鼠滾輪、點數字、鍵盤 ↑ ↓ 都可以
 const pad2 = (n) => String(n).padStart(2, "0");
+// 訊號強度分三級：強 / 普通 / 弱（低於 -70 容易斷線）
+const sigQ = (v) => (v >= -55 ? "good" : v >= -70 ? "mid" : "weak");
+// 名字太長就截短：中文字算 1、英數算 0.55
+function shortName(name, max) {
+  let w = 0;
+  let out = "";
+  for (const ch of name) {
+    w += /[\u0000-\u024f]/.test(ch) ? 0.55 : 1;
+    if (w > max) return `${out.trimEnd()}…`;
+    out += ch;
+  }
+  return out;
+}
 const splitSec = (sec) => ({ h: Math.floor(sec / 3600), m: Math.floor((sec % 3600) / 60), s: sec % 60 });
 const WHEEL_ROW = 40; // 每一格的高度（px）
 function wheelCol(key, unit, n, v, label, suffix = "") {
@@ -841,21 +854,29 @@ const STYLE = `
   .mapwrap { padding: 4px 16px 16px; }
   svg.map { width: 100%; height: auto; display: block; border-radius: var(--r-md); background: var(--soft); touch-action: none; user-select: none; -webkit-user-select: none; }
   svg.map .bgimg { opacity: .55; }
-  svg.map .room rect:first-child { fill: transparent; stroke: var(--soft2); stroke-width: 2; }
+  svg.map .room rect:first-child { fill: transparent; stroke: var(--line); stroke-width: 1.5; }
   svg.map .roomsbg rect { fill: var(--card); }
   svg.map .room.sel rect:first-child { stroke: var(--accent); stroke-width: 3; }
-  svg.map .room .rl { font-weight: 600; fill: var(--text2); }
+  svg.map .room .rl { font-weight: 600; fill: var(--muted); }
+  svg.map .g-good stop { stop-color: var(--accent); }
+  svg.map .g-mid stop { stop-color: color-mix(in srgb, var(--accent) 45%, var(--card)); }
+  svg.map .g-weak stop { stop-color: var(--warn); }
+  svg.map radialGradient stop:first-child { stop-opacity: .2; }
+  svg.map radialGradient stop:last-child { stop-opacity: 0; }
   svg.map .room .rh { fill: var(--accent); cursor: nwse-resize; }
   svg.map.editing .room rect:first-child { cursor: move; }
-  svg.map .mk .dot { fill: var(--card); stroke: var(--accent); stroke-width: 2.5; }
+  svg.map .mk .dot { fill: var(--card); stroke: var(--accent); stroke-width: 2.5; filter: drop-shadow(0 1px 2px rgba(15,23,42,.18)); }
+  svg.map .mk.mid .dot { stroke: color-mix(in srgb, var(--accent) 50%, var(--card)); }
   svg.map .mk.weak .dot { stroke: var(--warn); }
   svg.map .mk.off .dot { stroke: var(--faint); stroke-dasharray: 3 3; }
-  svg.map .mk.sel .dot, svg.map .ap.sel rect { stroke-width: 4; }
+  svg.map .mk.sel .dot { stroke-width: 4; }
   svg.map .mk .v { font-size: 11px; font-weight: 700; text-anchor: middle; fill: var(--text); font-variant-numeric: tabular-nums; }
   svg.map .mk.weak .v { fill: var(--warn); }
-  svg.map .n { font-size: 12px; font-weight: 500; text-anchor: middle; fill: var(--text); }
+  svg.map .n { font-size: 11.5px; font-weight: 500; text-anchor: middle; fill: var(--text2); paint-order: stroke; stroke: var(--card); stroke-width: 3px; stroke-linejoin: round; }
+  svg.map .n.apn { font-weight: 650; fill: var(--accent-text); }
   svg.map .halo { fill: var(--warn); fill-opacity: calc(var(--a) * .45 + .1); }
-  svg.map .ap rect { fill: var(--text); stroke: var(--card); stroke-width: 2; }
+  svg.map .ap .bg { fill: var(--accent); stroke: var(--card); stroke-width: 3; filter: drop-shadow(0 2px 4px rgba(37,99,235,.35)); }
+  svg.map .ap.sel .bg { stroke: var(--accent-soft); stroke-width: 5; }
   svg.map .ap .w { fill: none; stroke: var(--card); stroke-width: 2.2; stroke-linecap: round; }
   svg.map .ap .wd { fill: var(--card); }
   svg.map.editing .mk, svg.map.editing .ap { cursor: grab; }
@@ -865,6 +886,10 @@ const STYLE = `
   svg.map .link.poor { opacity: .25; stroke-dasharray: 3 9; }
   svg.map .link.hot { stroke: var(--warn); opacity: var(--a); stroke-dasharray: none; }
   .legend.lk { margin-left: 12px; gap: 6px; }
+  .legend.sig { gap: 5px; }
+  .legend.sig b { width: 10px; height: 10px; border-radius: 50%; border: 2.5px solid var(--accent); background: var(--card); margin-left: 6px; }
+  .legend.sig b.mid { border-color: color-mix(in srgb, var(--accent) 50%, var(--card)); }
+  .legend.sig b.weak { border-color: var(--warn); }
   .legend.lk b { display: inline-block; width: 18px; height: 0; border-top: 2.5px solid var(--text2); opacity: .6; margin-left: 4px; }
   .legend.lk b.poor { border-top-style: dotted; opacity: .4; }
   .mapside .gsel { width: 100%; max-width: none; }
@@ -2303,7 +2328,7 @@ class PlugApp extends HTMLElement {
     const net = this._mapSense?.net;
     const cl = Object.fromEntries((net?.clients || []).map((c) => [c.mac, c]));
     for (const d of devs.values()) {
-      d.name = d.plugs.length > 1 ? `${d.plugs[0].name} 等 ${d.plugs.length} 個` : d.plugs[0].name;
+      d.name = d.plugs.length > 1 ? `${d.plugs[0].name} +${d.plugs.length - 1}` : d.plugs[0].name;
       d.full = d.plugs.map((p) => p.name).join("、");
       d.ssid = d.plugs.find((p) => p.net?.ssid)?.net.ssid || null;
       d.node = cl[d.key]?.online ? cl[d.key].node : null;
@@ -2341,38 +2366,6 @@ class PlugApp extends HTMLElement {
         fp.items[d.key] = { x: room.x + ((i % c) + 0.5) * (room.w / c), y: room.y + 30 + (Math.floor(i / c) + 0.5) * ((room.h - 30) / r) };
       });
     }
-  }
-
-  // 訊號覆蓋：反距離加權推算每一格，畫成一張小圖再放大（瀏覽器會自動平滑）
-  _mapHeat(pts, W, H) {
-    if (!pts.length) return "";
-    const accent = getComputedStyle(this).getPropertyValue("--accent").trim() || "#2563eb";
-    const key = JSON.stringify([pts, W, H, accent]);
-    if (this._heatKey === key) return this._heatUrl;
-    const cell = 10;
-    const cw = Math.ceil(W / cell);
-    const chh = Math.ceil(H / cell);
-    const c = document.createElement("canvas");
-    c.width = cw;
-    c.height = chh;
-    const ctx = c.getContext("2d");
-    ctx.fillStyle = accent;
-    for (let y = 0; y < chh; y++)
-      for (let x = 0; x < cw; x++) {
-        let num = 0;
-        let den = 0;
-        for (const p of pts) {
-          const w = 1 / ((p.x - (x + 0.5) * cell) ** 2 + (p.y - (y + 0.5) * cell) ** 2 + 900);
-          num += w * p.v;
-          den += w;
-        }
-        // -80 dBm 以下最淡，-40 以上最深
-        ctx.globalAlpha = Math.max(0.05, Math.min(0.8, ((num / den + 80) / 40) * 0.8));
-        ctx.fillRect(x, y, 1, 1);
-      }
-    this._heatKey = key;
-    this._heatUrl = c.toDataURL();
-    return this._heatUrl;
   }
 
   _mapSave() {
@@ -2509,7 +2502,7 @@ class PlugApp extends HTMLElement {
     const head = `
       <div class="ph">
         <div><button class="link back" data-a="map-back">${ic("mdi:chevron-left")}設定</button><h1>訊號地圖</h1>
-          <div class="sub">${edit ? "拖曳房間和裝置到實際的位置；拉右下角改大小" : "各裝置的 Wi-Fi 訊號強度，顏色越深訊號越好"}</div></div>
+          <div class="sub">${edit ? "拖曳房間和裝置到實際的位置；拉右下角改大小" : "各裝置的 Wi-Fi 訊號：藍色好、橘色弱；點裝置看詳細、設定高度"}</div></div>
         <div class="right"><button class="btn ${edit ? "primary" : ""}" data-a="map-edit">${edit ? "完成" : `${ic("mdi:pencil")}編輯`}</button></div>
       </div>`;
     if (!fp || !fp.rooms) return `${head}<div class="card"><div class="empty">讀取中…</div></div>`;
@@ -2522,12 +2515,19 @@ class PlugApp extends HTMLElement {
     const placed = devs.filter((d) => fp.items[d.key]);
 
     // 訊號覆蓋：用擺好的裝置的訊號強度（反距離加權）推算每一格
-    const pts = placed.filter((d) => d.online && d.rssi != null).map((d) => ({ ...fp.items[d.key], v: d.rssi }));
-    const heatUrl = layer === "signal" ? this._mapHeat(pts, W, H) : "";
-    const heat = heatUrl ? `<image href="${heatUrl}" x="0" y="0" width="${W}" height="${H}" preserveAspectRatio="none"/>` : "";
+    // 每個裝置周圍一圈柔和的光暈，顏色代表它的訊號；沒有裝置的地方不上色（不用猜的）
+    const glowR = Math.max(60, Math.min(220, 2.2 / ((fp.meters || 12) / W)));
+    const heat =
+      layer === "signal"
+        ? placed
+            .filter((d) => d.online && d.rssi != null)
+            .map((d) => `<circle cx="${fp.items[d.key].x}" cy="${fp.items[d.key].y}" r="${glowR.toFixed(0)}" fill="url(#g-${sigQ(d.rssi)})"/>`)
+            .join("")
+        : "";
+    const grad = ["good", "mid", "weak"].map((q) => `<radialGradient id="g-${q}" class="g-${q}"><stop offset="0"/><stop offset="1"/></radialGradient>`).join("");
     // 標記大小跟著螢幕寬度：手機上地圖縮得很小，標記要放大才看得到
     const px = this._root.querySelector("svg.map")?.clientWidth || Math.min(innerWidth - 64, 900);
-    const k = Math.max(1, Math.min(2.6, (W / px) * 0.9));
+    const k = Math.max(1, Math.min(2.1, (W / px) * 0.85));
     const showNames = k < 1.9;
     const clip = `<clipPath id="rooms">${fp.rooms.map((r) => `<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="10"/>`).join("")}</clipPath>`;
     const img = fp.image ? `<image href="/api/floorplan/image?v=${encodeURIComponent(fp.image)}" x="0" y="0" width="${W}" height="${H}" preserveAspectRatio="xMidYMid meet" class="bgimg"/>` : "";
@@ -2562,9 +2562,9 @@ class PlugApp extends HTMLElement {
         const ring = layer === "motion" && m != null && m > 0.15 ? `<circle r="${20 + Math.min(m, 3) * 12}" class="halo" style="--a:${Math.min(1, m / 3).toFixed(2)}"/>` : "";
         const sel = this._mapSel?.kind === "dev" && this._mapSel.id === d.key;
         const tip = `${d.full}：${d.online ? `訊號 ${sigText(d.rssi)} dBm` : "離線"}${m != null ? `・擾動 ${fmt(m, 1)}` : ""}`;
-        return `<g class="mk ${weak(d.rssi) ? "weak" : ""} ${d.online ? "" : "off"} ${sel ? "sel" : ""}" transform="translate(${it.x} ${it.y}) scale(${k.toFixed(2)})" ${edit ? `data-mdrag="item" data-id="${esc(d.key)}"` : `data-a="map-pick" data-v="${esc(d.key)}"`} data-tip="${esc(tip)}">
+        return `<g class="mk ${d.online && d.rssi != null ? sigQ(d.rssi) : ""} ${d.online ? "" : "off"} ${sel ? "sel" : ""}" transform="translate(${it.x} ${it.y}) scale(${k.toFixed(2)})" ${edit ? `data-mdrag="item" data-id="${esc(d.key)}"` : `data-a="map-pick" data-v="${esc(d.key)}"`} data-tip="${esc(tip)}">
           ${ring}<circle r="15" class="dot"/><text class="v" y="5">${layer === "motion" ? (m == null ? "·" : fmt(m, 1)) : sigText(d.rssi)}</text>
-          ${showNames || sel ? `<text class="n" y="31">${esc(d.name.length > 10 ? `${d.name.slice(0, 9)}…` : d.name)}</text>` : ""}</g>`;
+          ${showNames || sel ? `<text class="n" y="31">${esc(shortName(d.name, 6))}</text>` : ""}</g>`;
       })
       .join("");
     const aps = fp.aps
@@ -2573,13 +2573,13 @@ class PlugApp extends HTMLElement {
         const it = fp.items[`ap:${a.id}`];
         const sel = this._mapSel?.kind === "ap" && this._mapSel.id === a.id;
         return `<g class="ap ${sel ? "sel" : ""}" transform="translate(${it.x} ${it.y}) scale(${k.toFixed(2)})" ${edit ? `data-mdrag="item" data-id="ap:${esc(a.id)}"` : `data-a="map-pick" data-v="ap:${esc(a.id)}"`} data-tip="${esc(a.name)}">
-          <rect x="-17" y="-17" width="34" height="34" rx="9"/><path d="M-9,-2 Q0,-11 9,-2 M-5,2 Q0,-3 5,2" class="w"/><circle cy="6" r="2.5" class="wd"/>
-          <text class="n" y="33">${esc(a.name.length > 12 ? `${a.name.slice(0, 11)}…` : a.name)}</text></g>`;
+          <circle r="18" class="bg"/><path d="M-9,-1 Q0,-10 9,-1 M-5,3 Q0,-2 5,3" class="w"/><circle cy="7" r="2.3" class="wd"/>
+          ${showNames || sel ? `<text class="n apn" y="34">${esc(shortName(a.name, 9))}</text>` : ""}</g>`;
       })
       .join("");
     const svg = `
       <svg class="map ${edit ? "editing" : ""}" viewBox="0 0 ${W} ${H}" role="img" aria-label="訊號地圖">
-        <defs>${clip}</defs>
+        <defs>${clip}${grad}</defs>
         ${img}
         <g class="roomsbg">${fp.rooms.map((r) => `<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="10"/>`).join("")}</g>
         ${heat ? `<g clip-path="url(#rooms)">${heat}</g>` : ""}
@@ -2588,7 +2588,7 @@ class PlugApp extends HTMLElement {
     const dflt = layer === "signal" ? "滑過裝置看訊號強度" : sense?.enabled === false ? "Wi-Fi 感測已暫停（設定 → Wi-Fi 感測）" : "橘色光圈越大，那附近越可能有人在走動・每 10 秒更新";
     const legend =
       layer === "signal"
-        ? `<span class="legend">訊號弱<i style="--a:.15"></i><i style="--a:.4"></i><i style="--a:.7"></i><i style="--a:1"></i>訊號好</span>`
+        ? `<span class="legend sig"><b class="good"></b>強<b class="mid"></b>普通<b class="weak"></b>弱</span>`
         : `<span class="legend warm">安靜<i style="--a:.15"></i><i style="--a:.4"></i><i style="--a:.7"></i><i style="--a:1"></i>擾動大</span>${links.length ? `<span class="legend lk"><b class="good"></b>適合偵測的線<b class="poor"></b>不太適合</span>` : ""}`;
     const tools = edit
       ? `<div class="maptools">
@@ -2679,7 +2679,7 @@ class PlugApp extends HTMLElement {
                   ? ""
                   : `<p class="desc" style="margin-top:10px">按右上角「編輯」可以把你的 Wi-Fi 基地台也擺上去，比較容易看出哪裡離基地台太遠。</p>`
             }
-            <p class="desc" style="margin-top:10px">點裝置或 Wi-Fi 基地台可以設定它放的高度。顏色是用各裝置的訊號強度推算出來的，只是大概的樣子：沒有裝置的地方是猜的。</p>
+            <p class="desc" style="margin-top:10px">點裝置或 Wi-Fi 基地台可以設定它放的高度。裝置周圍的顏色是它的訊號：藍色強（-55 dBm 以上）、淡藍普通、橘色弱（低於 -70，容易斷線）。</p>
           </div>
         </section>`;
     }
