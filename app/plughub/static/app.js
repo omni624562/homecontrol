@@ -29,6 +29,14 @@ const TABS = [
   ["settings", "設定", "mdi:cog-outline"],
 ];
 const NO_ROOM = "";
+const LAYOUTS = [
+  ["classic", "原本的", "卡片依房間排列，頁首跟著捲動"],
+  ["a", "固定頂欄", "頁名、狀態、全部關閉一直在最上面；房間標題也固定"],
+  ["b", "控制面板", "深色大方塊，上面固定時鐘、誰在家、用電；適合放牆上的平板"],
+  ["c", "三欄工作區", "電腦上：左邊選單、中間清單、右邊固定顯示選到的裝置"],
+];
+// 三欄工作區：這幾種面板固定在右邊，其他（排程編輯、用電明細…）照樣跳出來
+const DOCK = new Set(["device", "plug", "timer", "netdev", "person", "room", "watts", "kasa", "cloud", "away"]);
 
 // ───────────── 小工具 ─────────────
 
@@ -390,6 +398,177 @@ const STYLE = `
   }
   .led { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex: none; display: inline-block; box-shadow: 0 0 0 3px var(--ok-soft); }
   .led.bad { background: var(--danger); box-shadow: 0 0 0 3px var(--danger-soft); }
+
+  /* ═════════ 版面：A／B／C 共用的固定頁首 ═════════ */
+  :host(:not([data-layout="classic"])) .page { padding-top: 0; }
+  :host(:not([data-layout="classic"])) .page > .ph {
+    position: sticky; top: var(--ph-top, 0px); z-index: 15; margin: 0 -16px 16px; padding: max(14px, env(safe-area-inset-top)) 18px 12px;
+    background: color-mix(in srgb, var(--bg) 86%, transparent); backdrop-filter: saturate(1.5) blur(14px); -webkit-backdrop-filter: saturate(1.5) blur(14px);
+    border-bottom: 1px solid var(--line);
+  }
+  :host(:not([data-layout="classic"])) .page > .ph h1 { font-size: 24px; }
+  @media (min-width: 720px) { :host(:not([data-layout="classic"])) .page > .ph { margin: 0 -28px 18px; padding: 16px 30px 12px; } }
+  @media (min-width: 1100px) { :host(:not([data-layout="classic"])) .page > .ph { margin: 0 -40px 20px; padding: 18px 42px 14px; } }
+  .ph.stack { flex-direction: column; align-items: stretch; gap: 10px; }
+  .ph .phr { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .ph .phr .right { margin-left: auto; }
+  .spills { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+  .spills::-webkit-scrollbar { display: none; }
+  .spill { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 11px; border-radius: 999px; background: var(--card); border: 1px solid var(--line); font-size: 13px; color: var(--text2); white-space: nowrap; flex: none; }
+  .spill .i { width: 15px; height: 15px; color: var(--muted); }
+  .spill.ok, .spill.ok .i { color: var(--ok); }
+  .spill.bad, .spill.bad .i { color: var(--danger); }
+  .btn.dark { background: var(--text); color: var(--bg); }
+  .btn.sm .i { width: 17px; height: 17px; }
+  .chips.rf { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 0 -2px; }
+  .chips.rf::-webkit-scrollbar { display: none; }
+  .chips.rf .chip { flex: none; height: 32px; }
+  @media (min-width: 900px) { :host([data-layout="a"]) .ph .phr > .spills { margin-left: auto; } :host([data-layout="a"]) .ph .phr .right { margin-left: 0; } }
+  @media (max-width: 899px) { :host([data-layout="a"]) .ph .phr > .spills { order: 3; width: 100%; } }
+
+  /* ── A：固定頂欄 ── */
+  .scenes.four { grid-template-columns: repeat(4, 1fr); }
+  .rsec { margin-bottom: 14px; }
+  .rh { position: sticky; top: var(--ph-h, 0px); z-index: 10; display: flex; align-items: center; gap: 8px; margin: 0 -4px; padding: 10px 4px 8px; font-size: 15.5px; font-weight: 700; background: var(--bg); }
+  .rh > .i { width: 18px; height: 18px; color: var(--muted); }
+  .rh small { font-size: 12.5px; color: var(--muted); font-weight: 500; }
+  .rh .end { margin-left: auto; }
+  .dgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; }
+  .dgrid .row { background: var(--card); border-radius: var(--r-md); box-shadow: var(--shadow); }
+  .dgrid .row + .row::before { display: none; }
+
+  /* ── B：控制面板（深色）── */
+  :host([data-layout="b"]) {
+    --bg: #0b0d11; --card: #15181e; --raised: #1b1f26;
+    --text: #f1f5f9; --text2: #cbd5e1; --muted: #94a3b8; --faint: #64748b;
+    --line: #242932; --soft: #20242c; --soft2: #2e333d; --hover: #1b1f26;
+    --on-soft: rgba(245,158,11,.16); --on-text: #fbbf24;
+    --accent: #60a5fa; --accent-hover: #93c5fd; --accent-soft: rgba(96,165,250,.14); --accent-text: #93c5fd;
+    --danger: #f87171; --danger-soft: rgba(248,113,113,.12);
+    --timer: #a78bfa; --timer-soft: rgba(167,139,250,.16);
+    --warn: #fb923c; --ok: #4ade80; --ok-soft: rgba(74,222,128,.13);
+    --shadow: 0 0 0 1px rgba(255,255,255,.05);
+    --shadow-md: 0 0 0 1px rgba(255,255,255,.06), 0 6px 16px -4px rgba(0,0,0,.5);
+    --shadow-lg: 0 0 0 1px rgba(255,255,255,.07), 0 24px 48px -12px rgba(0,0,0,.7);
+    color-scheme: dark;
+  }
+  :host([data-layout="b"]) .side, :host([data-layout="b"]) .tabbar { display: none !important; }
+  :host([data-layout="b"]) .content { margin-left: 0 !important; padding-bottom: 40px; }
+  :host([data-layout="b"]) .page { max-width: 1500px; }
+  .bbar { position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border-bottom: 1px solid var(--line); padding-top: env(safe-area-inset-top); }
+  .bbar .r1 { display: flex; align-items: center; gap: 22px; padding: 12px 24px 6px; max-width: 1552px; margin: 0 auto; }
+  .bbar .clock { font-size: 30px; font-weight: 300; letter-spacing: .5px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .bbar .clock small { display: block; font-size: 12.5px; color: var(--muted); font-weight: 400; letter-spacing: 0; }
+  .bbar .stat { display: flex; align-items: center; gap: 7px; font-size: 14px; color: var(--text2); white-space: nowrap; }
+  .bbar .stat b { font-size: 17px; font-weight: 600; color: var(--text); }
+  .bbar .stat .i { color: var(--muted); }
+  .bbar .avs { display: flex; }
+  .bbar .av { width: 30px; height: 30px; border-radius: 50%; margin-left: -6px; border: 2px solid var(--bg); display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; background: var(--soft); color: var(--muted); }
+  .bbar .av:first-child { margin-left: 0; }
+  .bbar .av.home { background: var(--ok-soft); color: var(--ok); }
+  .bbar .end { margin-left: auto; }
+  .bigoff { height: 40px; padding: 0 16px; border-radius: 12px; background: rgba(251,146,60,.14); color: #fdba74; font-weight: 600; display: inline-flex; align-items: center; gap: 8px; }
+  .btabs { display: flex; gap: 4px; padding: 2px 20px 8px; max-width: 1552px; margin: 0 auto; overflow-x: auto; scrollbar-width: none; }
+  .btabs .tab { flex: none; flex-direction: row; gap: 8px; height: 38px; padding: 0 14px; border-radius: 10px; font-size: 15px; color: var(--muted); }
+  .btabs .tab .i { width: 20px; height: 20px; }
+  .btabs .tab.sel { background: var(--soft); color: var(--text); }
+  .bscenes { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .bscene { height: 70px; border-radius: 18px; background: var(--card); box-shadow: var(--shadow); display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 17px; font-weight: 650; }
+  .bscene .i { width: 26px; height: 26px; color: var(--accent); }
+  .brooms { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(440px, 100%), 1fr)); gap: 16px; align-items: start; }
+  .broom { background: var(--card); border-radius: 22px; padding: 14px; box-shadow: var(--shadow); }
+  .broom h2 { display: flex; align-items: center; gap: 10px; font-size: 18px; font-weight: 700; margin: 2px 4px 12px; }
+  .broom h2 small { font-size: 13px; color: var(--muted); font-weight: 500; }
+  .broom h2 .end { margin-left: auto; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 10px; }
+  .tile { position: relative; min-height: 118px; border-radius: 16px; background: var(--soft); padding: 12px; display: flex; flex-direction: column; justify-content: flex-start; text-align: left; cursor: pointer; border: 1px solid transparent; transition: background .15s, border-color .15s, transform .1s; user-select: none; -webkit-user-select: none; }
+  .tile:active { transform: scale(.97); }
+  .tile .ti { color: var(--faint); margin-bottom: auto; padding-bottom: 10px; }
+  .tile .ti .i { width: 28px; height: 28px; }
+  .tile .more { position: absolute; top: 6px; right: 6px; width: 34px; height: 34px; border-radius: 10px; color: var(--faint); display: flex; align-items: center; justify-content: center; }
+  .tile .more:hover { background: rgba(255,255,255,.06); color: var(--text); }
+  .tile .tn { font-weight: 600; font-size: 14.5px; line-height: 1.3; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .tile .ts { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .tile.on { background: #2b2410; border-color: #5a4512; }
+  .tile.on .ti { color: var(--on); }
+  .tile.on .ts { color: #e8c873; }
+  .tile .ts.timer { color: var(--timer); }
+  .tile.off { opacity: .55; }
+  .tile.pending { opacity: .7; }
+  @media (max-width: 719px) {
+    .bbar .r1 { padding: 10px 14px 4px; gap: 12px; }
+    .bbar .clock { font-size: 24px; }
+    .bbar .hide-s, .bigoff span { display: none; }
+    .bigoff { width: 40px; padding: 0; justify-content: center; }
+    .btabs { padding: 2px 8px 8px; }
+    .btabs .tab { padding: 0 11px; font-size: 14px; }
+    .bscenes { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+    .bscene { height: 62px; flex-direction: column; gap: 3px; font-size: 13px; border-radius: 14px; }
+    .bscene .i { width: 22px; height: 22px; }
+    .broom { padding: 10px; border-radius: 18px; }
+    .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+    .tile { min-height: 104px; padding: 10px; border-radius: 14px; }
+    .tile .ti .i { width: 24px; height: 24px; }
+    .tile .tn { font-size: 13px; }
+  }
+
+  /* ── C：三欄工作區 ── */
+  .csearch { height: 40px; }
+  .seg.full { display: flex; }
+  .seg.full button { flex: 1; }
+  .gh { position: sticky; top: var(--ph-h, 0px); z-index: 10; display: flex; align-items: center; gap: 8px; padding: 12px 4px 6px; font-size: 12.5px; font-weight: 700; color: var(--muted); background: var(--bg); }
+  .gh .ghb { margin-left: auto; }
+  .gh .ghb .pill { height: 26px; font-size: 12px; }
+  .clist { background: var(--card); border-radius: var(--r-md); box-shadow: var(--shadow); overflow: hidden; margin-bottom: 8px; }
+  .clist .desc { padding: 14px 16px; margin: 0; }
+  .row.sel { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+  .cpane-empty { display: none; }
+  @media (min-width: 1100px) {
+    :host([data-layout="c"]) .side { width: 84px; padding: 16px 8px; align-items: center; }
+    :host([data-layout="c"]) .side .logo { padding: 2px 0 18px; }
+    :host([data-layout="c"]) .side .logo div, :host([data-layout="c"]) .side .conn { display: none; }
+    :host([data-layout="c"]) .side .tab { flex-direction: column; height: auto; width: 68px; padding: 8px 0; gap: 3px; font-size: 11.5px; justify-content: center; }
+    :host([data-layout="c"]) .content { margin-left: 84px; }
+  }
+  @media (min-width: 1280px) {
+    :host([data-layout="c"]) .content { margin-right: 440px; padding: 0 28px 40px; }
+    :host([data-layout="c"]) .page { max-width: 760px; }
+    :host([data-layout="c"]) .page > .ph { margin: 0 -28px 12px; padding: 18px 28px 12px; }
+    :host([data-layout="c"]) .cpane-empty { display: flex; position: fixed; top: 0; right: 0; bottom: 0; width: 440px; border-left: 1px solid var(--line); background: var(--card); flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--muted); text-align: center; padding: 40px; }
+    :host([data-layout="c"]) .cpane-empty .i { width: 44px; height: 44px; color: var(--faint); }
+    :host([data-layout="c"]) .cpane-empty b { color: var(--text); font-size: 16px; }
+    :host([data-layout="c"]) .wrap.dock { left: auto; width: 440px; background: transparent; padding: 0; align-items: stretch; animation: none; }
+    :host([data-layout="c"]) .wrap.dock .sheet { width: 100%; max-height: none; height: 100%; border-radius: 0; box-shadow: none; border-left: 1px solid var(--line); animation: none; }
+    :host([data-layout="c"]) .toast { margin-left: -180px; }
+    :host([data-layout="c"]) .wrap.dock .cols { grid-template-columns: minmax(0, 1fr); gap: 0; }
+    :host([data-layout="c"]) .wrap.dock .sheet { padding: 0 20px 20px; }
+    :host([data-layout="c"]) .wrap.dock .actions { margin: 20px -20px 0; padding: 14px 20px 18px; bottom: -20px; }
+  }
+
+  /* ── 設定：版面選擇 ── */
+  .layouts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 0 16px 6px; }
+  @media (min-width: 1300px) { .layouts { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+  .lopt { display: grid; gap: 4px; padding: 10px; border-radius: var(--r-md); border: 2px solid var(--line); text-align: left; background: var(--card); }
+  .lopt.sel { border-color: var(--accent); background: var(--accent-soft); }
+  .lopt .ln { display: flex; align-items: center; gap: 4px; font-weight: 650; font-size: 14.5px; margin-top: 4px; }
+  .lopt .ln .i { width: 17px; height: 17px; color: var(--accent); }
+  .lopt .ld { font-size: 12px; color: var(--muted); line-height: 1.4; }
+  .mini { position: relative; display: block; height: 64px; border-radius: 8px; background: #eef1f5; overflow: hidden; }
+  .mini i, .mini b { position: absolute; display: block; }
+  .mini .mside { left: 0; top: 0; bottom: 0; width: 16%; background: #fff; }
+  .mini .mcards { left: 22%; right: 6%; top: 10px; bottom: 6px; display: grid; grid-template-columns: 1fr 1fr; gap: 4px; position: absolute; }
+  .mini .mcards b, .mini .mgrid b, .mini .mlist b { position: static; background: #fff; border-radius: 3px; }
+  .mini .mtop { left: 16%; right: 0; top: 0; height: 16px; background: #fff; border-bottom: 1px solid #dfe3ea; }
+  .mini .mgrid { left: 22%; right: 6%; top: 22px; bottom: 6px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; position: absolute; }
+  .mini.m-b { background: #0e1116; }
+  .mini .mbar { left: 0; right: 0; top: 0; height: 15px; background: #1e232c; }
+  .mini .mtiles { left: 6%; right: 6%; top: 21px; bottom: 6px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 3px; position: absolute; }
+  .mini .mtiles b { position: static; background: #262c36; border-radius: 3px; }
+  .mini .mtiles b.on { background: #5a4512; }
+  .mini.m-c { background: #f6f5f2; }
+  .mini .mrail { left: 0; top: 0; bottom: 0; width: 9%; background: #fff; }
+  .mini .mlist { left: 12%; width: 36%; top: 6px; bottom: 6px; display: grid; gap: 3px; position: absolute; }
+  .mini .mdetail { right: 0; top: 0; bottom: 0; width: 46%; background: #fff; border-left: 1px solid #e8e4dc; }
 
   /* ═════════ 頁首、按鈕 ═════════ */
   .ph { display: flex; align-items: flex-end; gap: 12px; margin: 6px 2px 18px; }
@@ -1007,6 +1186,12 @@ class PlugApp extends HTMLElement {
     this._sheetHost = this.shadowRoot.querySelector(".sheet-host");
     this._toastHost = this.shadowRoot.querySelector(".toast-host");
     this._confirmHost = this.shadowRoot.querySelector(".confirm-host");
+    // 版面（這台裝置）：classic 原本的、a 固定頂欄、b 控制面板、c 三欄工作區
+    this._layout = LAYOUTS.some(([k]) => k === memo.get("plughub-layout")) ? memo.get("plughub-layout") : "classic";
+    this.setAttribute("data-layout", this._layout);
+    this._roomFilter = "all";
+    this._cView = "rooms";
+    this._q = "";
     this._s = null; // 伺服器給的狀態
     this._skew = 0; // 伺服器時間 - 本機時間（秒）
     this._connected = false;
@@ -1022,6 +1207,11 @@ class PlugApp extends HTMLElement {
     const root = this.shadowRoot;
     root.addEventListener("click", (e) => this._onClick(e));
     root.addEventListener("change", (e) => this._onChange(e));
+    root.addEventListener("input", (e) => {
+      if (!e.target.matches?.("[data-q]")) return;
+      this._q = e.target.value;
+      this._render();
+    });
     root.addEventListener("keydown", (e) => this._onKey(e));
     // 滾輪停下來時讀取中間那一格（scroll 事件不會冒泡，用 capture 接）
     root.addEventListener("scroll", (e) => e.target.classList?.contains("wcol") && this._wheelScroll(e.target), true);
@@ -1051,7 +1241,10 @@ class PlugApp extends HTMLElement {
       const grip = e.target.closest?.("[data-drag]");
       if (grip) this._dragStart(e, grip);
     });
-    window.addEventListener("resize", () => this._tab === "map" && this._render());
+    window.addEventListener("resize", () => {
+      if (this._tab === "map") this._render();
+      this._measure();
+    });
     window.addEventListener("hashchange", () => {
       const tab = this._tabFromHash();
       if (tab && tab !== this._tab) this._go(tab, false);
@@ -1223,19 +1416,68 @@ class PlugApp extends HTMLElement {
       page = (pages[this._tab] || pages.plugs)();
     }
     const banner = this._s && !this._connected ? `<div class="banner">${ic("mdi:cloud-off-outline")}連不上插座伺服器，重新連線中…</div>` : "";
-    const html = `
+    const html =
+      this._layout === "b"
+        ? `${this._panelBar(nav)}<main class="content"><div class="page">${banner}${page}</div></main>`
+        : `
       <nav class="side" aria-label="選單"><div class="logo">${ic("mdi:home-automation")}<div><b>家庭中控</b><small>Home Hub</small></div></div>${nav}${conn}</nav>
-      <main class="content"><div class="page">${banner}${page}</div></main>
+      <main class="content"><div class="page">${banner}${page}</div>${this._layout === "c" && this._tab === "plugs" ? `<aside class="cpane-empty">${ic("mdi:power-plug-outline")}<b>選一個裝置</b><span>點左邊清單裡的裝置，詳細資料會固定顯示在這裡</span></aside>` : ""}</main>
       <nav class="tabbar" aria-label="選單">${nav}</nav>`;
-    if (html === this._lastHtml) return; // 沒有變就不動畫面
+    if (html === this._lastHtml) return this._measure(); // 沒有變就不動畫面
     this._lastHtml = html;
     if (this._root.firstElementChild) morph(this._root, html);
     else this._root.innerHTML = html;
+    this._measure();
+  }
+
+  // 固定的表頭有多高：房間標題要接在它下面
+  _measure() {
+    if (this._layout === "classic") return;
+    const bar = this._root.querySelector(".bbar");
+    const top = bar ? bar.offsetHeight : 0;
+    const ph = this._root.querySelector(".page > .ph");
+    this.style.setProperty("--ph-top", `${top}px`);
+    this.style.setProperty("--ph-h", `${top + (ph ? ph.offsetHeight : 0)}px`);
+  }
+
+  _setLayout(v) {
+    this._layout = v;
+    memo.set("plughub-layout", v);
+    this.setAttribute("data-layout", v);
+    this._lastHtml = null;
+    if (this._sheet) this._closeSheet();
+    this._render();
+  }
+
+  // 控制面板（B）的固定頂欄：時鐘、誰在家、用電、分頁
+  _panelBar(nav) {
+    const s = this._s;
+    const d = new Date(this._now() * 1000);
+    const people = s?.people || [];
+    const home = people.filter((x) => x.home);
+    const cal = s?.calendar || {};
+    const note = cal.holiday ? `・${cal.holiday}` : cal.rain ? "・下雨" : "";
+    const on = this._plugs.filter((p) => p.online && this._isOn(p)).length;
+    const power = s?.summary?.power;
+    return `<header class="bbar">
+      <div class="r1">
+        <div class="clock">${pad2(d.getHours())}:${pad2(d.getMinutes())}<small>${d.getMonth() + 1}/${d.getDate()} 星期${DAYS[(d.getDay() + 6) % 7]}${esc(note)}</small></div>
+        ${people.length ? `<div class="stat"><span class="avs">${people.map((x) => `<span class="av ${x.home ? "home" : ""}" title="${esc(x.name)}">${esc([...x.name][0])}</span>`).join("")}</span><span>${home.length === people.length ? "都在家" : home.length ? `${home.length} 人在家` : "都出門了"}</span></div>` : ""}
+        ${power != null ? `<div class="stat hide-s">${ic("mdi:flash")}<b>${fmt(power)}</b> W</div>` : ""}
+        <div class="stat hide-s">${ic("mdi:power")}<b>${on}</b> 個開著</div>
+        ${s ? `<div class="stat hide-s">${ic("mdi:chart-bar")}本月 <b>${fmt(s.summary.cost_month)}</b> 元</div>` : ""}
+        <div class="end"><button class="bigoff" data-a="all-off">${ic("mdi:power")}<span>全部關閉</span></button></div>
+      </div>
+      <nav class="btabs" aria-label="選單">${nav}</nav>
+    </header>`;
   }
 
   // ── 插座 ──
 
   _plugsPage() {
+    if (this._layout === "a") return this._plugsPageA();
+    if (this._layout === "b") return this._plugsPageB();
+    if (this._layout === "c") return this._plugsPageC();
     const plugs = this._plugs;
     const onCount = plugs.filter((p) => p.online && this._isOn(p)).length;
     const head = `
@@ -1255,6 +1497,114 @@ class PlugApp extends HTMLElement {
         ${scenes}
       </div>
       <div class="grid wide">${this._groups().map((g) => this._roomCard(g)).join("")}</div>`;
+  }
+
+  // 整間關閉／打開的按鈕
+  _roomBtn(g) {
+    if (g.id === NO_ROOM) return "";
+    const on = g.plugs.filter((p) => p.online && this._isOn(p));
+    if (on.some((p) => !p.keep_on)) return `<button class="pill quiet" data-a="room-off" data-v="${esc(g.id)}">${ic("mdi:power")}全關</button>`;
+    if (g.plugs.some((p) => p.online && !this._isOn(p))) return `<button class="pill quiet" data-a="room-on" data-v="${esc(g.id)}">${ic("mdi:power")}全開</button>`;
+    return "";
+  }
+
+  _statusPills() {
+    const s = this._s;
+    const people = s.people || [];
+    const home = people.filter((x) => x.home).length;
+    const on = this._plugs.filter((p) => p.online && this._isOn(p)).length;
+    const r = s.router || {};
+    return [
+      people.length ? `<span class="spill ${home ? "ok" : ""}">${ic("mdi:home-outline")}${home ? `${home} 人在家` : "都出門了"}</span>` : "",
+      s.summary.power != null ? `<span class="spill">${ic("mdi:flash")}${fmt(s.summary.power)} W</span>` : "",
+      `<span class="spill">${ic("mdi:power")}${on} 個開著</span>`,
+      r.configured ? `<span class="spill ${r.ok ? "" : "bad"}">${ic(r.ok ? "mdi:wifi" : "mdi:wifi-off")}${r.ok ? "網路正常" : "路由器連不上"}</span>` : "",
+    ].join("");
+  }
+
+  // A：固定頂欄（頁名、狀態、全部關閉、房間篩選），房間標題也固定
+  _plugsPageA() {
+    const plugs = this._plugs;
+    const groups = this._groups();
+    const f = groups.some((g) => g.id === this._roomFilter) ? this._roomFilter : "all";
+    const head = `
+      <div class="ph stack">
+        <div class="phr"><div><h1>我的家</h1></div>
+          <div class="spills">${this._statusPills()}</div>
+          <div class="right"><button class="link" data-a="edit">編輯</button><button class="btn dark sm" data-a="all-off">${ic("mdi:power")}全部關閉</button></div></div>
+        <div class="chips rf">${[["all", "全部"], ...groups.map((g) => [g.id || "none", g.name])].map(([k, l]) => `<button class="chip ${f === (k === "none" ? NO_ROOM : k) ? "sel" : ""}" data-a="room-filter" data-v="${esc(k)}">${esc(l)}</button>`).join("")}</div>
+      </div>`;
+    if (!plugs.length) return `${head}<div class="card"><div class="empty">還沒找到插座。</div></div>`;
+    const scenes = this._scenes.map((sc) => `<button class="scene" data-a="scene" data-v="${esc(sc.id)}"><div class="si">${ic(sc.icon)}</div><span>${esc(sc.name)}</span></button>`).join("");
+    const secs = groups
+      .filter((g) => f === "all" || g.id === f)
+      .map((g) => {
+        const on = g.plugs.filter((p) => p.online && this._isOn(p)).length;
+        return `<section class="rsec"><h2 class="rh">${ic(g.icon || "mdi:home-outline")}${esc(g.name)}<small>${on}／${g.plugs.length} 開著</small><span class="end">${this._roomBtn(g)}</span></h2>
+          <div class="dgrid">${g.plugs.map((p) => this._plugRow(p)).join("")}</div></section>`;
+      })
+      .join("");
+    return `${head}${f === "all" ? `<div class="scenes four">${scenes}</div>` : ""}${secs}`;
+  }
+
+  // B：控制面板（深色大方塊，點方塊就開關）
+  _plugsPageB() {
+    const groups = this._groups();
+    const scenes = this._scenes.map((sc) => `<button class="bscene" data-a="scene" data-v="${esc(sc.id)}">${ic(sc.icon)}<span>${esc(sc.name)}</span></button>`).join("");
+    const tile = (p) => {
+      const on = p.online && this._isOn(p);
+      const now = this._now();
+      const sub = !p.online ? "連不上" : on && p.timer ? `還有 ${fmtLeft(p.timer - now)}` : on ? (p.on_since ? `開了 ${fmtDur(now - p.on_since)}` : "開著") : "關著";
+      const act = !p.online || p.protect === "lock" ? "dev" : "toggle";
+      return `<div class="tile ${on ? "on" : ""} ${p.online ? "" : "off"} ${this._pending.has(p.id) ? "pending" : ""}" data-a="${act}" data-v="${esc(p.id)}" role="button" tabindex="0" aria-pressed="${on}" aria-label="${esc(p.name)}">
+          <span class="ti">${ic(p.online ? deviceIcon(p.name) : "mdi:wifi-off")}</span>
+          <button class="more" data-a="dev" data-v="${esc(p.id)}" aria-label="${esc(p.name)}的詳細">${ic("mdi:dots-horizontal")}</button>
+          <span class="tn">${esc(p.name)}</span><span class="ts ${on && p.timer ? "timer" : ""}">${esc(sub)}${p.protect === "lock" ? "・已鎖定" : ""}</span>
+        </div>`;
+    };
+    return `
+      <div class="ph"><div><h1>我的家</h1></div><div class="right"><button class="link" data-a="edit">編輯</button></div></div>
+      <div class="bscenes">${scenes}</div>
+      <div class="brooms">${groups
+        .map((g) => `<section class="broom"><h2>${esc(g.name)}<small>${g.plugs.filter((p) => p.online && this._isOn(p)).length} 個開著</small><span class="end">${this._roomBtn(g)}</span></h2><div class="tiles">${g.plugs.map(tile).join("")}</div></section>`)
+        .join("")}</div>`;
+  }
+
+  // C：三欄工作區（中間清單，右邊固定顯示選到的裝置）
+  _plugsPageC() {
+    const plugs = this._plugs;
+    const on = plugs.filter((p) => p.online && this._isOn(p));
+    const view = this._cView;
+    const q = this._q.trim().toLowerCase();
+    const match = (p) => !q || p.name.toLowerCase().includes(q) || (this._room(p.room)?.name || "").includes(q);
+    const sel = this._sheet && ["device", "plug", "timer"].includes(this._sheet.type) ? this._sheet.id : null;
+    const row = (p) => {
+      const html = this._plugRow(p);
+      return p.id === sel ? html.replace('class="row ', 'class="row sel ') : html;
+    };
+    let body;
+    if (view === "scenes") {
+      body = `<div class="clist">${this._scenes.filter((sc) => !q || sc.name.toLowerCase().includes(q)).map((sc) => `<button class="row tap" data-a="scene" data-v="${esc(sc.id)}"><div class="di">${ic(sc.icon)}</div><div class="nm"><div class="a"><span>${esc(sc.name)}</span></div><div class="b">點一下執行</div></div></button>`).join("")}
+        <button class="row tap" data-a="all-off"><div class="di">${ic("mdi:power")}</div><div class="nm"><div class="a"><span>全部關閉</span></div></div></button></div>`;
+    } else if (view === "on") {
+      const list = on.filter(match);
+      body = `<div class="clist">${list.map(row).join("") || `<p class="desc">${q ? "找不到" : "目前沒有開著的裝置"}</p>`}</div>`;
+    } else {
+      body = this._groups()
+        .map((g) => ({ g, list: g.plugs.filter(match) }))
+        .filter(({ list }) => list.length)
+        .map(({ g, list }) => `<div class="gh">${esc(g.name)}<span>${g.plugs.filter((p) => p.online && this._isOn(p)).length}／${g.plugs.length}</span><span class="ghb">${this._roomBtn(g)}</span></div><div class="clist">${list.map(row).join("")}</div>`)
+        .join("") || `<p class="desc">找不到「${esc(this._q)}」</p>`;
+    }
+    return `
+      <div class="ph stack">
+        <div class="phr"><div><h1>我的家</h1><div class="sub">${on.length ? `<b>${on.length} 個開著</b>・` : ""}共 ${plugs.length} 個裝置</div></div>
+          <div class="right"><button class="link" data-a="edit">編輯</button></div></div>
+        <div class="spills">${this._statusPills()}</div>
+        <input class="text csearch" type="search" data-q value="${esc(this._q)}" placeholder="找裝置或房間" aria-label="找裝置或房間" autocomplete="off">
+        <div class="seg full">${[["rooms", "依房間"], ["on", `開著的 ${on.length}`], ["scenes", "情境"]].map(([k, l]) => `<button class="${view === k ? "sel" : ""}" data-a="c-view" data-v="${k}">${l}</button>`).join("")}</div>
+      </div>
+      ${body}`;
   }
 
   _roomCard(g) {
@@ -2908,6 +3258,7 @@ class PlugApp extends HTMLElement {
             <button class="sw ${set.weekly !== false ? "on" : ""}" data-a="weekly-toggle" role="switch" aria-checked="${set.weekly !== false}" aria-label="每週摘要"></button>
           </div>
         </section>
+        ${this._layoutCard()}
         ${this._googleHtml()}
         <section class="card">
           <div class="ch"><div class="ri">${ic("mdi:magnify")}</div><div class="n">裝置</div></div>
@@ -2941,6 +3292,22 @@ class PlugApp extends HTMLElement {
   }
 
   // Google Home（Matter）配對：狀態由 Matterbridge 外掛回報
+  _layoutCard() {
+    const mini = {
+      classic: `<i class="mside"></i><i class="mcards"><b></b><b></b><b></b><b></b></i>`,
+      a: `<i class="mside"></i><i class="mtop"></i><i class="mgrid"><b></b><b></b><b></b><b></b><b></b><b></b></i>`,
+      b: `<i class="mbar"></i><i class="mtiles"><b></b><b class="on"></b><b></b><b class="on"></b><b></b><b></b><b class="on"></b><b></b></i>`,
+      c: `<i class="mrail"></i><i class="mlist"><b></b><b></b><b></b><b></b></i><i class="mdetail"></i>`,
+    };
+    return `
+      <section class="card">
+        <div class="ch"><div class="ri">${ic("mdi:home-automation")}</div><div class="n">版面</div><div class="end"><span class="badge">這台裝置</span></div></div>
+        <div class="layouts">${LAYOUTS.map(([k, l, d]) => `<button class="lopt ${this._layout === k ? "sel" : ""}" data-a="layout" data-v="${k}" aria-pressed="${this._layout === k}">
+            <span class="mini m-${k}">${mini[k]}</span><span class="ln">${l}${this._layout === k ? ic("mdi:check") : ""}</span><span class="ld">${d}</span></button>`).join("")}</div>
+        <p class="desc foot">只改這台裝置的樣子（存在這個瀏覽器裡），例如手機用「固定頂欄」、牆上的平板用「控制面板」。</p>
+      </section>`;
+  }
+
   _googleHtml() {
     const m = this._s.matter;
     const head = (badge) => `<div class="ch"><div class="ri">${ic("mdi:microphone")}</div><div class="n">Google Home</div><div class="end">${badge}</div></div>`;
@@ -3070,6 +3437,16 @@ class PlugApp extends HTMLElement {
         this._renderSheet();
       },
       "all-off": () => this._turnOff({}),
+      layout: (v) => this._setLayout(v),
+      "room-filter": (v) => {
+        this._roomFilter = v === "none" ? NO_ROOM : v;
+        this._render();
+        window.scrollTo(0, 0);
+      },
+      "c-view": (v) => {
+        this._cView = v;
+        this._render();
+      },
       "room-off": (v) => this._turnOff({ room: v }),
       "room-on": async (v) => {
         try {
@@ -3998,6 +4375,7 @@ class PlugApp extends HTMLElement {
   _openSheet(sheet) {
     this._sheet = sheet;
     this._renderSheet();
+    if (this._layout === "c") this._render();
     // 電腦上直接把游標放進輸入框；手機上不要自動跳出鍵盤
     const first = this._sheetHost.querySelector("[data-autofocus]");
     if (first && matchMedia("(hover: hover) and (pointer: fine)").matches) first.focus();
@@ -4033,7 +4411,8 @@ class PlugApp extends HTMLElement {
       return;
     }
     this._sheetKey = key;
-    this._sheetHost.innerHTML = `<div class="wrap" data-backdrop><div class="${cls}" role="dialog" aria-modal="true"><div class="grab"></div>${html}</div></div>`;
+    const dock = this._layout === "c" && DOCK.has(s.type) && !s.wide ? "dock" : "";
+    this._sheetHost.innerHTML = `<div class="wrap ${dock}" data-backdrop><div class="${cls}" role="dialog" aria-modal="true"><div class="grab"></div>${html}</div></div>`;
     this._sheetHost.querySelector("[data-backdrop]").addEventListener("click", (e) => {
       if (e.target.matches("[data-backdrop]")) this._closeSheet();
     });
