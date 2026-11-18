@@ -438,6 +438,9 @@ const STYLE = `
   .sched .d { flex: 1; min-width: 0; }
   .sched .tag { display: inline-flex; align-items: center; gap: 3px; margin-top: 4px; font-size: 11.5px; font-weight: 500; color: var(--muted); background: var(--soft); border-radius: 6px; padding: 2px 7px 2px 5px; }
   .sched .tag .i { width: 13px; height: 13px; }
+  .sched .tag.home { background: var(--accent-soft); color: var(--accent-text); }
+  .sched .tag.warn { background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--warn); margin-left: 4px; }
+  .sched.off .tag { opacity: .8; }
   .sched .d .x { font-size: 14.5px; font-weight: 600; }
   .sched .d .y { font-size: 13px; color: var(--muted); margin-top: 2px; line-height: 1.45; }
   .sched.off .t, .sched.off .d { opacity: .45; }
@@ -1208,11 +1211,19 @@ class PlugApp extends HTMLElement {
   _kasaRow(p, r) {
     const key = esc(this._kasaKey(p, r));
     const days = daysText(kasaDays(r.wday));
+    // 插座自己執行，樹莓派擋不住：和防呆設定衝突時要提醒
+    const warn = !r.enable
+      ? ""
+      : p.protect === "lock"
+        ? "裝置已鎖定，但這條排程仍會開關它"
+        : p.keep_on && !r.sact
+          ? "裝置設為常開，但這條排程仍會關掉它"
+          : "";
     return `
       <div class="sched ${r.enable ? "" : "off"}" data-a="kasa-edit" data-v="${key}" role="button" tabindex="0">
         <div class="t">${pad2(Math.floor(r.smin / 60))}:${pad2(r.smin % 60)}</div>
         <div class="d"><div class="x">${days}${r.enable ? "" : "・已暫停"}</div><div class="y">${r.sact ? "打開" : "關閉"} ${esc(p.name)}</div>
-          <div class="tag">${ic("mdi:power-plug-outline")}插座內建・Kasa App</div></div>
+          <div class="tag">${ic("mdi:power-plug-outline")}插座內建・Kasa App</div>${warn ? `<div class="tag warn">${ic("mdi:alert-circle-outline")}${warn}</div>` : ""}</div>
         <button class="sw ${r.enable ? "on" : ""}" data-a="kasa-toggle" data-v="${key}" role="switch" aria-checked="${!!r.enable}" aria-label="啟用排程"></button>
       </div>`;
   }
@@ -1233,7 +1244,7 @@ class PlugApp extends HTMLElement {
       <div class="chips">${days}</div>
       <div class="q">要做什麼</div>
       <div class="seg full">${act}</div>
-      <p class="note">改的是插座裡的設定，Kasa App 也會看到一樣的內容。插座自己執行，不需要樹莓派。</p>
+      <p class="note">改的是插座裡的設定，Kasa App 也會看到一樣的內容。插座自己執行，不需要樹莓派，但也<b>不會</b>遵守鎖定、常開這些防呆設定。</p>
       <div class="group" style="margin-top:14px"><div class="gi"><div class="gt"><div class="gl">改由家庭中控管理</div><div class="gs">轉成家庭中控的排程：可以設到秒、套用防呆和最長開啟時間，樹莓派離線時一樣由插座接手</div></div>
         <button class="btn sm" data-a="kasa-adopt" data-v="${esc(s.key)}" data-confirm="再按一次轉換">轉換</button></div></div>
       <div class="err"></div>
@@ -1274,7 +1285,8 @@ class PlugApp extends HTMLElement {
     return `
       <div class="sched ${x.enabled ? "" : "off"}" data-a="sched-edit" data-v="${esc(x.id)}" role="button" tabindex="0">
         <div class="t">${hh}:${mm}<small>${ss === "00" ? "" : `:${ss}`}</small></div>
-        <div class="d"><div class="x">${daysText(x.days)}${x.enabled ? "" : "・已暫停"}</div><div class="y">${this._schedDesc(x)}${extra}</div></div>
+        <div class="d"><div class="x">${daysText(x.days)}${x.enabled ? "" : "・已暫停"}</div><div class="y">${this._schedDesc(x)}${extra}</div>
+          <div class="tag home">${ic("mdi:home-automation")}家庭中控</div></div>
         <button class="sw ${x.enabled ? "on" : ""}" data-a="sched-toggle" data-v="${esc(x.id)}" role="switch" aria-checked="${x.enabled}" aria-label="啟用排程"></button>
       </div>`;
   }
