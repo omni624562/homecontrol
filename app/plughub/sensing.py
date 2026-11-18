@@ -11,15 +11,20 @@
 from __future__ import annotations
 
 import asyncio
+import gzip
+import json
+import os
 import statistics
 import time
 from collections import deque
+from pathlib import Path
 from typing import Any
 
 INTERVAL = 2.0  # 秒
 KEEP = 3600  # 保留幾秒
 WINDOW = 30  # 擾動用幾秒的資料算
 INVALID = -95  # 比這個低的讀數是錯誤值（插座偶爾回報 -105、-110）
+SAVE_EVERY = 300  # 每幾秒存一次到樹莓派（重啟後接著用）
 
 
 class Sensing:
@@ -27,6 +32,37 @@ class Sensing:
         self.samples: dict[str, deque[tuple[float, int]]] = {}  # 裝置 → (時間, RSSI)
         self.motion: dict[str, deque[tuple[float, float]]] = {}  # 裝置 → (時間, 擾動指數)
         self._raw: dict[str, deque[tuple[float, float]]] = {}  # 裝置 → (時間, 原始標準差)
+
+    def _buf(self) -> deque:
+        return deque(maxlen=int(KEEP / INTERVAL) + 10)
+
+    def save(self, path: Path) -> None:
+        """存最近一小時的資料（gzip JSON，先寫暫存檔再換掉，斷電也不會壞）。"""
+        cut = time.time() - KEEP
+        pack = lambda buf, nd: [[round(t, 1), round(v, nd)] for t, v in buf if t >= cut]  # noqa: E731
+        data = {
+            k: {"s": pack(self.samples[k], 0), "m": pack(self.motion.get(k, []), 2), "r": pack(self._raw.get(k, []), 3)}
+            for k in self.samples
+        }
+        tmp = path.with_suffix(".tmp")
+        with gzip.open(tmp, "wt", encoding="utf-8") as f:
+            json.dump({"v": 1, "devices": data}, f, separators=(",", ":"))
+        os.replace(tmp, path)
+
+    def load(self, path: Path) -> None:
+        """讀回上次存的資料，丟掉超過一小時的。"""
+        try:
+            with gzip.open(path, "rt", encoding="utf-8") as f:
+                data = json.load(f)["devices"]
+        except FileNotFoundError:
+            return
+        except Exception:  # noqa: BLE001 - 檔案壞了就從頭記錄
+            return
+        cut = time.time() - KEEP
+        for k, d in data.items():
+            for name, store, cast in (("s", self.samples, int), ("m", self.motion, float), ("r", self._raw, float)):
+                buf = store.setdefault(k, self._buf())
+                buf.extend((t, cast(v)) for t, v in d.get(name, []) if t >= cut)
 
     async def sample(self, devices: dict[str, Any]) -> None:
         """讀一輪：devices = {裝置 key: python-kasa 裝置}。"""

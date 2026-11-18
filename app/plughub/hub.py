@@ -19,7 +19,7 @@ from typing import Any, Callable
 from kasa import Device, Discover, Module
 
 from . import native, sun, tariff
-from .sensing import INTERVAL as SENSE_INTERVAL, Sensing
+from .sensing import INTERVAL as SENSE_INTERVAL, SAVE_EVERY as SENSE_SAVE_EVERY, Sensing
 from .notify import Notifier
 from .store import Store
 
@@ -108,6 +108,9 @@ class Hub:
         self._usage: dict[str, dict[str, dict[str, int]]] = {}
         self._usage_at = 0.0
         self.sensing = Sensing()
+        self._sense_path = store.dir / "sensing.json.gz"
+        self.sensing.load(self._sense_path)
+        self._sense_saved = time.monotonic()
         # 每台插座的 Wi-Fi、韌體（裝置 MAC → {...}）
         self.dev_info: dict[str, dict[str, Any]] = {}
         self._lease_busy = False
@@ -135,6 +138,7 @@ class Hub:
         for task in self._tasks:
             task.cancel()
         self.store.energy.flush()
+        self._save_sensing()
         for entry in self.devices.values():
             try:
                 await entry.device.disconnect()
@@ -795,6 +799,15 @@ class Hub:
             return
         devs = {k: e.device for k, e in self.devices.items() if native.supported(e.device) and any(self.plugs[p].online for p in e.plugs)}
         await self.sensing.sample(devs)
+        if time.monotonic() - self._sense_saved >= SENSE_SAVE_EVERY:
+            await asyncio.to_thread(self._save_sensing)
+
+    def _save_sensing(self) -> None:
+        self._sense_saved = time.monotonic()
+        try:
+            self.sensing.save(self._sense_path)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("Wi-Fi 感測資料沒有存到：%s", err)
 
     def sensing_report(self, minutes: int = 60) -> dict[str, Any]:
         """每台插座（排插算一台）一列：用它的孔的名稱表示。"""

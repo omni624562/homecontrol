@@ -1914,7 +1914,7 @@ class PlugApp extends HTMLElement {
         <div class="readout-line" data-default="${dflt}">${dflt}</div>
         <div class="heat sense" style="grid-template-columns:minmax(72px,140px) repeat(${cols},1fr) 40px"><div class="hname"></div>${header}<span>現在</span>${rows}</div>
       </div>
-      <div class="group" style="margin-top:12px"><div class="gi"><div class="gt"><div class="gl">記錄訊號</div><div class="gs">每 2 秒讀一次每台插座的訊號強度，只保留最近 1 小時；只讀取，不控制任何東西</div></div>
+      <div class="group" style="margin-top:12px"><div class="gi"><div class="gt"><div class="gl">記錄訊號</div><div class="gs">每 2 秒讀一次每台插座的訊號強度，保留最近 1 小時（存在樹莓派上，重啟後接著用）；只讀取，不控制任何東西</div></div>
         <button class="sw ${d.enabled ? "on" : ""}" data-a="sense-toggle" role="switch" aria-checked="${d.enabled}" aria-label="記錄訊號"></button></div></div>
       <p class="note"><b>怎麼測試：</b>在某台插座附近走動 1～2 分鐘，再看那一列有沒有變深。<br>
         <b>限制：</b>插座只回報訊號強度（一個數字），只能偵測走動，偵測不到靜止的人；路由器、其他 Wi-Fi、微波爐也會造成擾動。要可靠地偵測有沒有人，建議用毫米波雷達感測器。</p>`;
