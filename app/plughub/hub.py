@@ -923,6 +923,15 @@ class Hub:
             return
         devs = {k: e.device for k, e in self.devices.items() if native.supported(e.device) and any(self.plugs[p].online for p in e.plugs)}
         await self.sensing.sample(devs)
+        # 每過一分鐘：把上一分鐘的摘要存進長期紀錄（30 天）
+        minute = int(time.time() // 60) * 60
+        last = getattr(self, "_sense_minute", minute)
+        if minute > last:
+            try:
+                self.store.energy.add_sense(self.sensing.minute_summary(last))
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning("Wi-Fi 感測的每分鐘摘要沒有存到：%s", err)
+        self._sense_minute = minute
         if time.monotonic() - self._sense_saved >= SENSE_SAVE_EVERY:
             await asyncio.to_thread(self._save_sensing)
 
@@ -932,6 +941,29 @@ class Hub:
             self.sensing.save(self._sense_path)
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning("Wi-Fi 感測資料沒有存到：%s", err)
+
+    SENSE_RANGES = {"24h": (86400, 1800), "7d": (7 * 86400, 4 * 3600), "30d": (30 * 86400, 86400)}
+
+    def sensing_history(self, rng: str) -> dict[str, Any]:
+        """長期紀錄：24 小時（每 30 分一格）、7 天（每 4 小時）、30 天（每天）。"""
+        span, bucket = self.SENSE_RANGES[rng]
+        rep = self.sensing_report(60)
+        names = {d["key"]: d["name"] for d in rep["devices"]}
+        now = time.time()
+        if rng == "30d":  # 每天一格：從當地的午夜開始算
+            start = datetime.combine(date.today() - timedelta(days=29), datetime.min.time()).timestamp()
+        else:
+            start = (now // bucket + 1) * bucket - span
+        n = int(span // bucket)
+        data = self.store.energy.sense_buckets(int(start), bucket)
+        devices = []
+        for d in rep["devices"]:
+            per = data.get(d["key"], {})
+            cols = [{"rssi": round(per[i][0], 1) if i in per else None, "motion": per[i][1] if i in per else None} for i in range(n)]
+            devices.append({**d, "cols": cols})
+        first = self.store.energy.sense_first()
+        return {**rep, "range": rng, "bucket": bucket, "start": start, "minutes": n, "devices": devices,
+                "since": first, "names": names}
 
     def sensing_report(self, minutes: int = 60) -> dict[str, Any]:
         """每台插座（排插算一台）一列：用它的孔的名稱表示。"""

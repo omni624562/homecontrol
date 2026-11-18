@@ -1038,6 +1038,8 @@ const STYLE = `
   .set.sugg .sun { display: inline-flex; align-items: center; gap: 2px; }
   .set.sugg .sun .i { width: 15px; height: 15px; }
   .netwarn.past { color: var(--muted); }
+  .senseleg { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 0 16px 4px; }
+  .senseleg .desc { margin: 0; font-size: 12.5px; }
   /* 網路裝置頁 */
   .netgrid { display: grid; gap: 16px; grid-template-columns: 1fr; grid-template-areas: "people" "auto" "devs" "usage" "alert"; }
   .netgrid > .card { margin: 0; }
@@ -2474,11 +2476,18 @@ class PlugApp extends HTMLElement {
     const CAP = 3; // 擾動 3 dB 以上算最深
     const cols = d.minutes;
     const t0 = d.start;
+    const rng = s.range || "1h";
+    const step = d.bucket || 60;
+    // 每一格的時間：1 小時、24 小時顯示幾點；7 天、30 天顯示日期
     const hhmmAt = (i) => {
-      const t = new Date((t0 + i * 60) * 1000);
-      return `${pad2(t.getHours())}:${pad2(t.getMinutes())}`;
+      const t = new Date((t0 + i * step) * 1000);
+      const hm = `${pad2(t.getHours())}:${pad2(t.getMinutes())}`;
+      const md = `${t.getMonth() + 1}/${t.getDate()}`;
+      return rng === "30d" ? md : rng === "7d" ? `${md} ${hm}` : hm;
     };
-    const header = Array.from({ length: cols }, (_, i) => `<span>${i % 10 === 0 && i < cols - 5 ? hhmmAt(i) : ""}</span>`).join("");
+    const every = { "1h": 10, "24h": 8, "7d": 6, "30d": 5 }[rng];
+    const label = (i) => (rng === "7d" ? hhmmAt(i).split(" ")[0] : hhmmAt(i));
+    const header = Array.from({ length: cols }, (_, i) => `<span>${i % every === 0 && i < cols - every / 2 ? label(i) : ""}</span>`).join("");
     const rows = d.devices
       .map((dev) => {
         const cells = dev.cols
@@ -2499,16 +2508,21 @@ class PlugApp extends HTMLElement {
       : d.active.length
         ? `<div class="callout timer">${ic("mdi:wifi")}<div><b>最近 30 秒有動靜</b><span>${esc(d.active.join("、"))} 附近</span></div></div>`
         : `<div class="callout">${ic("mdi:wifi")}<div><b>目前沒有偵測到動靜</b><span>${d.samples ? `已記錄 ${fmt(d.samples)} 筆` : "剛開始記錄，等幾分鐘"}</span></div></div>`;
-    const dflt = "每一格是一分鐘，顏色越深擾動越大・滑過看數字";
+    const unit = { "1h": "一分鐘", "24h": "30 分鐘", "7d": "4 小時", "30d": "一天" }[rng];
+    const dflt = `每一格是${unit}（那段時間裡最大的擾動），顏色越深擾動越大・滑過看數字`;
+    const title = { "1h": `最近 ${cols} 分鐘`, "24h": "最近 24 小時", "7d": "最近 7 天", "30d": "最近 30 天" }[rng];
+    const since = d.since && rng !== "1h" ? new Date(d.since * 1000) : null;
+    const ranges = `<div class="seg">${[["1h", "1 小時"], ["24h", "24 小時"], ["7d", "7 天"], ["30d", "30 天"]].map(([k, l]) => `<button class="${rng === k ? "sel" : ""}" data-a="sense-range" data-v="${k}">${l}</button>`).join("")}</div>`;
     return `
       ${head}
       ${status}
       <div class="card viz flat">
-        <div class="ch"><div class="n">最近 ${cols} 分鐘</div><div class="end"><span class="legend warm">安靜<i style="--a:.15"></i><i style="--a:.4"></i><i style="--a:.7"></i><i style="--a:1"></i>擾動大</span></div></div>
+        <div class="ch"><div class="n">${title}</div><div class="end">${ranges}</div></div>
+        <div class="pad senseleg"><span class="legend warm">安靜<i style="--a:.15"></i><i style="--a:.4"></i><i style="--a:.7"></i><i style="--a:1"></i>擾動大</span>${since ? `<span class="desc">從 ${since.getMonth() + 1}/${since.getDate()} 開始有長期紀錄</span>` : ""}</div>
         <div class="readout-line" data-default="${dflt}">${dflt}</div>
         <div class="heat sense" style="grid-template-columns:minmax(72px,140px) repeat(${cols},1fr) 40px"><div class="hname"></div>${header}<span>現在</span>${rows}</div>
       </div>
-      <div class="group" style="margin-top:12px"><div class="gi"><div class="gt"><div class="gl">記錄訊號</div><div class="gs">每 2 秒讀一次每台插座的訊號強度，保留最近 1 小時（存在樹莓派上，重啟後接著用）；只讀取，不控制任何東西</div></div>
+      <div class="group" style="margin-top:12px"><div class="gi"><div class="gt"><div class="gl">記錄訊號</div><div class="gs">每 2 秒讀一次每台插座的訊號強度；細的資料留 1 小時，每分鐘的摘要留 30 天（都存在樹莓派上）；只讀取，不控制任何東西</div></div>
         <button class="sw ${d.enabled ? "on" : ""}" data-a="sense-toggle" role="switch" aria-checked="${d.enabled}" aria-label="記錄訊號"></button></div></div>
       <p class="note"><b>怎麼測試：</b>在某台插座附近走動 1～2 分鐘，再看那一列有沒有變深。<br>
         <b>限制：</b>插座只回報訊號強度（一個數字），只能偵測走動，偵測不到靜止的人；路由器、其他 Wi-Fi、微波爐也會造成擾動。要可靠地偵測有沒有人，建議用毫米波雷達感測器。</p>`;
@@ -3739,16 +3753,24 @@ class PlugApp extends HTMLElement {
         this._mapSave();
         this._render();
       },
+      "sense-range": (v) => {
+        if (this._sheet?.type !== "sense") return;
+        this._sheet.range = v;
+        this._sheet.data = null;
+        this._renderSheet();
+        this._senseLoad?.();
+      },
       "sense-open": () => {
-        this._openSheet({ type: "sense", wide: true });
+        this._openSheet({ type: "sense", wide: true, range: "1h" });
         const load = () =>
-          api("GET", "/api/sensing")
+          api("GET", `/api/sensing?range=${this._sheet?.range || "1h"}`)
             .then((d) => {
               if (this._sheet?.type !== "sense") return;
               this._sheet.data = d;
               this._renderSheet();
             })
             .catch(() => {});
+        this._senseLoad = load;
         load();
         clearInterval(this._senseTimer);
         this._senseTimer = setInterval(load, 10000);

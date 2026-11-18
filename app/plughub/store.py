@@ -298,7 +298,37 @@ class EnergyLog:
         # 開關紀錄（找習慣用）：source = app／matter（Google Home）／button（插座上的按鈕或 Kasa App）／auto（排程、情境、定時）
         self.db.execute("CREATE TABLE IF NOT EXISTS switch (ts REAL, plug TEXT, is_on INTEGER, source TEXT)")
         self.db.execute("CREATE INDEX IF NOT EXISTS switch_ts ON switch (ts)")
+        # Wi-Fi 感測的每分鐘摘要（平均訊號、最大擾動），留 30 天
+        self.db.execute("CREATE TABLE IF NOT EXISTS sense_min (ts INTEGER, key TEXT, rssi REAL, motion REAL)")
+        self.db.execute("CREATE INDEX IF NOT EXISTS sense_min_ts ON sense_min (ts)")
         self.db.commit()
+        self._sense_pruned = 0.0
+
+    SENSE_KEEP_DAYS = 30
+
+    def add_sense(self, rows: list[tuple[int, str, float, float | None]]) -> None:
+        if not rows:
+            return
+        self.db.executemany("INSERT INTO sense_min VALUES (?, ?, ?, ?)", rows)
+        if rows[0][0] - self._sense_pruned > 3600:
+            self._sense_pruned = rows[0][0]
+            self.db.execute("DELETE FROM sense_min WHERE ts < ?", (rows[0][0] - self.SENSE_KEEP_DAYS * 86400,))
+        self.db.commit()
+
+    def sense_buckets(self, since: int, bucket: int) -> dict[str, dict[int, tuple[float, float | None]]]:
+        """since 之後，每 bucket 秒一格：裝置 → {格子: (平均訊號, 最大擾動)}。"""
+        rows = self.db.execute(
+            "SELECT key, (ts - ?) / ? AS b, AVG(rssi), MAX(motion) FROM sense_min WHERE ts >= ? GROUP BY key, b",
+            (since, bucket, since),
+        ).fetchall()
+        out: dict[str, dict[int, tuple[float, float | None]]] = {}
+        for key, b, rssi, motion in rows:
+            out.setdefault(key, {})[int(b)] = (rssi, motion)
+        return out
+
+    def sense_first(self) -> int | None:
+        row = self.db.execute("SELECT MIN(ts) FROM sense_min").fetchone()
+        return int(row[0]) if row and row[0] is not None else None
 
     def log_switch(self, ts: float, plug: str, on: bool, source: str) -> None:
         self.db.execute("INSERT INTO switch VALUES (?, ?, ?, ?)", (ts, plug, int(on), source))

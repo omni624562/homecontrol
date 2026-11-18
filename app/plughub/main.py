@@ -494,8 +494,10 @@ async def manifest() -> Response:
 
 
 @app.get("/api/sensing")
-async def sensing(minutes: int = 60) -> dict[str, Any]:
-    """Wi-Fi 感測（實驗）：每台插座每分鐘的訊號強度和擾動。"""
+async def sensing(minutes: int = 60, range: str = "1h") -> dict[str, Any]:  # noqa: A002
+    """Wi-Fi 感測（實驗）：每台插座每分鐘的訊號強度和擾動；range = 24h／7d／30d 看長期紀錄。"""
+    if range in hub.SENSE_RANGES:
+        return hub.sensing_history(range)
     return hub.sensing_report(max(5, min(60, minutes)))
 
 

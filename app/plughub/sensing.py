@@ -89,6 +89,17 @@ class Sensing:
         self.samples.setdefault(key, self._buf()).append((now, rssi))
         self._update_motion(key, now)
 
+    def minute_summary(self, start: float) -> list[tuple[int, str, float, float | None]]:
+        """start～start+60 這一分鐘：每台裝置的平均訊號、最大擾動（存成長期紀錄）。"""
+        out = []
+        for key, buf in self.samples.items():
+            vals = [v for t, v in buf if start <= t < start + 60]
+            if not vals:
+                continue
+            mot = [m for t, m in self.motion.get(key, []) if start <= t < start + 60]
+            out.append((int(start), key, round(statistics.mean(vals), 1), round(max(mot), 2) if mot else None))
+        return out
+
     def forget(self, key: str) -> None:
         """拿掉不再讀的裝置（例如從地圖拿下來的）。"""
         for store in (self.samples, self.motion, self._raw):
