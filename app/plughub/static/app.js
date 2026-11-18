@@ -71,12 +71,21 @@ const hms = (v) => {
   const [h = 0, m = 0, sec = 0] = String(v || "").split(":").map(Number);
   return [h, m, sec].map((n) => String(n || 0).padStart(2, "0")).join(":");
 };
-// 時間欄位（時:分，手機的時鐘選不了秒）＋ 秒的選單
-const secSelect = (key, t, cls = "") =>
-  `<select class="sec ${cls}" data-c="sched-sec" data-v="${key}" aria-label="秒">${Array.from({ length: 60 }, (_, i) => {
-    const v = String(i).padStart(2, "0");
-    return `<option value="${v}" ${t.slice(6) === v ? "selected" : ""}>${v} 秒</option>`;
-  }).join("")}</select>`;
+// 時間／長度選擇器：三個選單（時、分、秒），手機上會跳出清單讓你選
+const pad2 = (n) => String(n).padStart(2, "0");
+const numOpts = (n, sel) => Array.from({ length: n }, (_, i) => `<option value="${i}" ${i === sel ? "selected" : ""}>${pad2(i)}</option>`).join("");
+const tpSel = (key, unit, n, v, label) => `<select data-c="tp" data-v="${key}:${unit}" aria-label="${label}">${numOpts(n, v)}</select>`;
+// 幾點：07 : 00 : 50（秒比較淡）
+function clockPicker(key, t, small = false) {
+  const [h, m, x] = hms(t).split(":").map(Number);
+  return `<div class="tp ${small ? "small" : ""}">${tpSel(key, "h", 24, h, "時")}<span>:</span>${tpSel(key, "m", 60, m, "分")}<span class="s">:</span>${tpSel(key, "s", 60, x, "秒")}<span class="s"></span></div>`;
+}
+// 多久：0 時 1 分 30 秒
+function durPicker(key, sec) {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  return `<div class="tp small dur">${tpSel(key, "h", 24, h, "時")}<b>時</b>${tpSel(key, "m", 60, m, "分")}<b>分</b>${tpSel(key, "s", 60, sec % 60, "秒")}<b>秒</b></div>`;
+}
 const showT = (t) => (t && t.endsWith(":00") ? t.slice(0, 5) : t || "");
 const clockSec = (epoch) => new Date(epoch * 1000).toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 const clock = (epoch) => new Date(epoch * 1000).toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", hour12: false });
@@ -309,11 +318,11 @@ const STYLE = `
   /* ── 排程 ── */
   .sched { display: flex; align-items: center; gap: 14px; padding: 12px 12px 12px 16px; width: 100%; text-align: left; position: relative; cursor: pointer; }
   .sched + .sched::before { content: ""; position: absolute; left: 16px; right: 0; top: 0; border-top: 1px solid var(--line); }
-  .sched .t { font-size: 30px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -.5px; min-width: 86px; }
+  .sched .t { font-size: 30px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -.5px; min-width: 116px; flex: none; }
   .sched .d { flex: 1; min-width: 0; }
   .sched .d .x { font-size: 15px; font-weight: 800; }
   .sched .d .y { font-size: 13px; color: var(--muted); font-weight: 600; margin-top: 2px; line-height: 1.45; }
-  .sched .t.sec { font-size: 24px; }
+  .sched .t small { font-size: 17px; font-weight: 700; color: var(--muted); letter-spacing: 0; }
   .sched.off .t, .sched.off .d { opacity: .45; }
   .templates { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 16px 16px; }
 
@@ -402,10 +411,19 @@ const STYLE = `
   .durcell { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; font-weight: 700; color: var(--muted); }
   .durcell input { width: 100%; min-width: 0; text-align: center; height: 46px; }
   .dur .btn { flex: none; height: 46px; }
-  .timeline { display: flex; gap: 8px; align-items: center; }
-  .timeline input[type="time"] { flex: 1; min-width: 0; }
-  select.sec { height: 56px; border: 0; border-radius: 14px; background: var(--soft); padding: 0 10px; font-size: 18px; font-weight: 800; color: inherit; color-scheme: light dark; flex: none; }
-  select.sec.small { height: 46px; font-size: 16px; }
+  .tp { display: flex; align-items: center; justify-content: center; gap: 2px; height: 76px; border-radius: 18px; background: var(--soft); }
+  .tp select { appearance: none; -webkit-appearance: none; border: 0; background: transparent; color: var(--text); font: inherit; font-size: 40px; font-weight: 800; font-variant-numeric: tabular-nums; text-align: center; text-align-last: center; width: 2.1em; padding: 6px 0; border-radius: 12px; cursor: pointer; color-scheme: light dark; }
+  .tp select:hover, .tp select:focus-visible { background: color-mix(in srgb, var(--accent) 12%, transparent); outline: none; }
+  .tp span { font-size: 34px; font-weight: 800; color: var(--muted); margin-top: -4px; }
+  .tp span.s, .tp select[data-v$=":s"] { color: var(--muted); }
+  .tp select[data-v$=":s"] { font-size: 28px; width: 1.9em; }
+  .tp span.s { font-size: 26px; }
+  .tp.small { height: 58px; justify-content: flex-start; padding: 0 8px; }
+  .tp.small select { font-size: 26px; }
+  .tp.small select[data-v$=":s"] { font-size: 22px; }
+  .tp.small span { font-size: 24px; }
+  .tp.dur select, .tp.dur select[data-v$=":s"] { font-size: 26px; color: var(--text); }
+  .tp.dur b { font-size: 15px; color: var(--muted); margin: 0 10px 0 2px; }
   input[type="time"].small { height: 46px; font-size: 18px; }
   select.text { appearance: auto; }
   .note { font-size: 14px; color: var(--muted); line-height: 1.55; margin: 12px 0 0; }
@@ -900,24 +918,23 @@ class PlugApp extends HTMLElement {
     const rows = scheds.map((x) => this._schedRow(x)).join("");
     const timers = this._plugs.filter((p) => p.timer && p.online && this._isOn(p));
     const now = this._now();
-    const timerRows = timers.length
-      ? timers
+    const timerRows = timers
+
           .map(
             (p) => `
           <div class="row on">
             <div class="di">${ic(deviceIcon(p.name))}</div>
-            <div class="nm"><div class="a"><span>${esc(p.name)}</span></div><div class="b timer">還有 ${fmtDur(p.timer - now)}・${clock(p.timer)} 關閉</div></div>
+            <div class="nm"><div class="a"><span>${esc(p.name)}</span></div><div class="b timer">還有 ${fmtLeft(p.timer - now)}・${clockSec(p.timer)} 關閉</div></div>
             <button class="pill" data-a="timer-cancel" data-v="${esc(p.id)}">取消</button>
           </div>`,
           )
-          .join("")
-      : `<p class="desc">在「插座」頁按插座旁的 ⏱，可以設定幾分鐘後自動關閉。</p>`;
+          .join("");
     const empty = `
       <p class="desc" style="padding:0 16px 12px">還沒有排程。可以從這些開始：</p>
       <div class="templates">
         <button class="chip" data-a="sched-template" data-v="night">每晚 23:00 關燈、早上再開</button>
         <button class="chip" data-a="sched-template" data-v="leave">平日 08:30 執行「出門」</button>
-        <button class="chip" data-a="sched-template" data-v="water">每天 06:30 打開澆水</button>
+        <button class="chip" data-a="sched-template" data-v="water">每天 06:30 澆水 1 分鐘</button>
       </div>`;
     return `
       <div class="ph">
@@ -929,10 +946,14 @@ class PlugApp extends HTMLElement {
           <div class="ch"><div class="ri">${ic("mdi:calendar-clock")}</div><div class="n">排程</div></div>
           ${rows || empty}
         </section>
-        <section class="card">
+        ${
+          timers.length
+            ? `<section class="card">
           <div class="ch"><div class="ri" style="background:var(--timer-soft);color:var(--timer)">${ic("mdi:timer-outline")}</div><div class="n">定時關閉中</div></div>
           ${timerRows}
-        </section>
+        </section>`
+            : ""
+        }
       </div>`;
   }
 
@@ -947,10 +968,16 @@ class PlugApp extends HTMLElement {
   }
 
   _schedRow(x) {
-    const extra = x.action === "off" && x.restore_at ? `，${x.restore_at < x.time ? "隔天" : ""} ${showT(x.restore_at)} 再打開` : "";
+    const extra =
+      x.action === "off" && x.restore_at
+        ? `，${x.restore_at < x.time ? "隔天" : ""} ${showT(x.restore_at)} 再打開`
+        : x.action === "on" && x.duration_s
+          ? `，${fmtSec(x.duration_s)}後關閉`
+          : "";
+    const [hh, mm, ss] = hms(x.time).split(":");
     return `
       <div class="sched ${x.enabled ? "" : "off"}" data-a="sched-edit" data-v="${esc(x.id)}" role="button" tabindex="0">
-        <div class="t ${showT(x.time).length > 5 ? "sec" : ""}">${esc(showT(x.time))}</div>
+        <div class="t">${hh}:${mm}<small>${ss === "00" ? "" : `:${ss}`}</small></div>
         <div class="d"><div class="x">${daysText(x.days)}${x.enabled ? "" : "・已暫停"}</div><div class="y">${this._schedDesc(x)}${extra}</div></div>
         <button class="sw ${x.enabled ? "on" : ""}" data-a="sched-toggle" data-v="${esc(x.id)}" role="switch" aria-checked="${x.enabled}" aria-label="啟用排程"></button>
       </div>`;
@@ -1296,6 +1323,7 @@ class PlugApp extends HTMLElement {
         })(),
       "sched-scene": (v) => redraw((d) => (d.scene = v))(),
       "sched-restore": () => redraw((d) => (d.restore_at = d.restore_at ? null : "07:00:00"))(),
+      "sched-duration": () => redraw((d) => (d.duration_s = d.duration_s ? null : 60))(),
       "sched-save": () => this._saveSched(),
       "sched-delete": (v, t) =>
         sure(t) &&
@@ -1325,15 +1353,21 @@ class PlugApp extends HTMLElement {
         if (t.value === "custom") return this._openSheet({ type: "watts", id: this._sheet.id });
         this._safe(() => api("PATCH", `/api/plugs/${this._sheet.id}`, { watts: t.value ? Number(t.value) : null }));
       },
-      "sched-time": (v, t) => {
-        if (t.value) {
-          this._sheet.draft[v] = hms(t.value).slice(0, 6) + hms(this._sheet.draft[v]).slice(6);
-          if (v === "time" || v === "restore_at") this._renderSheet();
-        }
-      },
-      "sched-sec": (v, t) => {
+      tp: (v, t) => {
         const d = this._sheet.draft;
-        d[v] = hms(d[v]).slice(0, 6) + t.value;
+        const [key, unit] = v.split(":");
+        const n = Number(t.value);
+        if (key === "duration_s") {
+          const cur = d.duration_s || 0;
+          const parts = { h: Math.floor(cur / 3600), m: Math.floor((cur % 3600) / 60), s: cur % 60, [unit]: n };
+          d.duration_s = parts.h * 3600 + parts.m * 60 + parts.s || null;
+          if (!d.duration_s) this._renderSheet();
+        } else {
+          const parts = hms(d[key]).split(":");
+          parts["hms".indexOf(unit)] = pad2(n);
+          d[key] = parts.join(":");
+          if (d.restore_at) this._renderSheet(); // 更新「隔天／當天」
+        }
       },
       "scene-name": (v, t) => (this._sheet.draft.name = t.value),
     };
@@ -1707,7 +1741,7 @@ class PlugApp extends HTMLElement {
     if (x) {
       draft = { ...x, days: [...x.days], plugs: [...x.plugs] };
     } else {
-      draft = { enabled: true, time: "23:00:00", days: [0, 1, 2, 3, 4, 5, 6], action: "off", scene: null, plugs: [], restore_at: null };
+      draft = { enabled: true, time: "23:00:00", days: [0, 1, 2, 3, 4, 5, 6], action: "off", scene: null, plugs: [], restore_at: null, duration_s: null };
       const plugs = this._plugs;
       if (template === "night") {
         draft.plugs = plugs.filter((p) => deviceIcon(p.name) === "mdi:lightbulb" && !p.keep_on).map((p) => p.id);
@@ -1716,7 +1750,7 @@ class PlugApp extends HTMLElement {
         const sc = this._scenes.find((s) => s.name === "出門") || this._scenes[0];
         Object.assign(draft, { time: "08:30:00", days: [0, 1, 2, 3, 4], action: "scene", scene: sc?.id || null });
       } else if (template === "water") {
-        Object.assign(draft, { time: "06:30:00", action: "on", plugs: plugs.filter((p) => /澆水|water/i.test(p.name)).map((p) => p.id) });
+        Object.assign(draft, { time: "06:30:00", action: "on", duration_s: 60, plugs: plugs.filter((p) => /澆水|water/i.test(p.name)).map((p) => p.id) });
       }
     }
     this._openSheet({ type: "sched", id, draft, wide: true });
@@ -1757,12 +1791,18 @@ class PlugApp extends HTMLElement {
             <div class="tx"><div class="l">之後再打開</div><div class="s">只打開被這個排程關掉的；本來就關著的不會被打開</div></div>
             <button class="sw ${d.restore_at ? "on" : ""}" data-a="sched-restore" role="switch" aria-checked="${!!d.restore_at}" aria-label="之後再打開"></button>
           </div>
-          ${d.restore_at ? `<div class="field" style="margin-top:10px"><input type="time" class="small" data-c="sched-time" data-v="restore_at" value="${esc(hms(d.restore_at).slice(0, 5))}" aria-label="再打開的時間">${secSelect("restore_at", hms(d.restore_at), "small")}<span class="desc">${d.restore_at <= d.time ? "隔天" : "當天"}這個時間打開</span></div>` : ""}`
-        : "";
+          ${d.restore_at ? `<div style="margin-top:10px">${clockPicker("restore_at", d.restore_at, true)}<p class="note">${d.restore_at <= d.time ? "隔天" : "當天"}這個時間打開</p></div>` : ""}`
+        : d.action === "on"
+          ? `<div class="set" style="padding:18px 0 0">
+            <div class="tx"><div class="l">開多久後自動關閉</div><div class="s">例如澆水開 50 秒；插座有設「最長開啟時間」的話，以比較短的為準</div></div>
+            <button class="sw ${d.duration_s ? "on" : ""}" data-a="sched-duration" role="switch" aria-checked="${!!d.duration_s}" aria-label="開多久後自動關閉"></button>
+          </div>
+          ${d.duration_s ? `<div style="margin-top:10px">${durPicker("duration_s", d.duration_s)}</div>` : ""}`
+          : "";
     return `
       ${this._sheetHead("mdi:calendar-clock", s.id ? "編輯排程" : "新增排程", "")}
       <div class="q">幾點</div>
-      <div class="timeline"><input type="time" data-c="sched-time" data-v="time" value="${esc(hms(d.time).slice(0, 5))}" aria-label="時間">${secSelect("time", hms(d.time))}</div>
+      ${clockPicker("time", d.time)}
       <div class="q">哪幾天 <small>${daysText(d.days)}</small></div>
       <div class="chips">${days}</div>
       <div class="chips" style="margin-top:8px">
@@ -1772,9 +1812,9 @@ class PlugApp extends HTMLElement {
       </div>
       <div class="q">要做什麼</div>
       <div class="seg full">${action}</div>
+      ${restore}
       <div class="q">${d.action === "scene" ? "哪個情境" : d.action === "on" ? "打開哪些插座" : "關閉哪些插座"}</div>
       ${what}
-      ${restore}
       <div class="err"></div>
       <div class="actions">
         ${s.id ? `<button class="btn danger" data-a="sched-delete">刪除排程</button>` : `<button class="btn" data-a="close">取消</button>`}
@@ -1784,8 +1824,6 @@ class PlugApp extends HTMLElement {
 
   _saveSched() {
     const d = this._sheet.draft;
-    // 時間欄位可能還沒觸發 change
-    for (const input of this._sheetHost.querySelectorAll('[data-c="sched-time"]')) if (input.value) d[input.dataset.v] = hms(input.value).slice(0, 6) + hms(d[input.dataset.v]).slice(6);
     if (!d.days.length) return this._sheetError("請至少選一天");
     if (d.action === "scene" && !d.scene) return this._sheetError("請選一個情境");
     if (d.action !== "scene" && !d.plugs.length) return this._sheetError("請至少選一個插座");
@@ -1798,6 +1836,7 @@ class PlugApp extends HTMLElement {
       scene: d.scene,
       plugs: d.plugs,
       restore_at: d.action === "off" ? d.restore_at : null,
+      duration_s: d.action === "on" ? d.duration_s || null : null,
     };
     this._safe(async () => {
       if (id) await api("PUT", `/api/schedules/${id}`, body);

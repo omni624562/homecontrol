@@ -17,7 +17,7 @@
 - **最長開啟時間（防呆）**：澆水、電暖器這類開太久會出事的插座，在「編輯 → 點名稱」設定最長開多久（可以設到秒，例如 1 分 30 秒；有常用選項也能自己輸入時／分／秒）。不管從 App、Google Home、排程、情境還是插座上的按鈕打開，時間到一定關，不能取消；「整間打開」不會打開它；關不掉時用 ntfy 發緊急通知並一直重試。名稱有「澆水」「灑水」的插座第一次出現時預設 10 分鐘。定時關閉每秒檢查，誤差約 1 秒
 - **全部關閉／整間關閉／整間打開**：按一次就執行，提示條上可以「復原」；執行情境也能復原。常開的插座不會被關。房間全部關著時，按鈕變成「整間打開」
 - **編輯**：插座頁右上角「編輯」：點名稱改名、設定常開；名稱下面的選單換房間；按住右邊的 ⠿ 拖拉調整插座、房間、情境的順序，插座可以直接拖到別的房間（鍵盤：在 ⠿ 上按 ↑ ↓）
-- **排程**：設定時間（到秒）、哪幾天（每天／平日／週末／自選），要「關閉插座」「打開插座」或「執行情境」。關閉時可以設定之後幾點再打開（只開被它關掉的）。舊版的夜間排程會自動轉成一筆排程
+- **排程**：設定時間（到秒）、哪幾天（每天／平日／週末／自選），要「關閉插座」「打開插座」或「執行情境」。關閉時可以設定之後幾點再打開（只開被它關掉的）；打開時可以設定開多久後自動關閉（例如澆水 50 秒，一筆排程就搞定）。時間用「時：分：秒」三個選單選。舊版的夜間排程會自動轉成一筆排程
 - **用電與電費**：有計量的插座用實際用電；沒有計量的填上瓦數就用「開著的時間 × 瓦數」估算。電費用台電累進電價（`plughub/tariff.py`），依家裡每月用電落在哪一級計算
 - **手機通知**（選用）：插座斷線超過 10 分鐘、功率過高 1 分鐘，用 [ntfy](https://ntfy.sh) 推播。手機裝 ntfy App、訂閱一個只有你知道的主題名稱，填到 App 的「設定 → 手機通知」
 - **加入主畫面**：iPhone 用 Safari 開 → 分享 →「加入主畫面」；Android 用 Chrome 開 → ⋮ →「加到主畫面」。之後就像一般 App 一樣全螢幕打開
@@ -95,7 +95,7 @@ Matterbridge 管理頁：插座 App「設定 → Google Home → Matterbridge �
 | POST／DELETE | `/api/plugs/{id}/timer` | `{"seconds": 90}`（或 `{"minutes": 10}`）打開、多久後自動關閉，不會超過最長開啟時間；DELETE 取消 |
 | POST／PUT／DELETE | `/api/scenes`、`/api/scenes/{id}` | 情境：`name`、`icon`、`actions`（插座 → `on`／`off`／`keep`）、`others` |
 | POST | `/api/scenes/{id}/run` | 執行情境，`/api/restore` 復原 |
-| POST／PUT／DELETE | `/api/schedules`、`/api/schedules/{id}` | 排程：`time`（`HH:MM:SS`）、`days`（0 = 星期一）、`action`（`on`／`off`／`scene`）、`plugs`、`scene`、`restore_at`、`enabled` |
+| POST／PUT／DELETE | `/api/schedules`、`/api/schedules/{id}` | 排程：`time`（`HH:MM:SS`）、`days`（0 = 星期一）、`action`（`on`／`off`／`scene`）、`plugs`、`scene`、`restore_at`、`duration_s`（打開後幾秒關閉）、`enabled` |
 | PUT | `/api/settings` | 電價、提醒門檻（`long_on_hours` 等）、ntfy 主題 |
 | POST | `/api/discover` | 立刻重新找插座 |
 | PUT | `/api/matter` | Google Home 串接外掛回報配對狀態（只接受樹莓派本機） |

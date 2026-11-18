@@ -39,6 +39,7 @@ DEFAULTS: dict[str, Any] = {
     "scenes": None,
     # 排程：[{"id", "enabled", "time": "HH:MM:SS", "days": [0-6，0 = 星期一],
     #         "action": "scene"/"on"/"off", "scene": 情境 ID, "plugs": [插座 ID...],
+    #         "duration_s": 打開後幾秒自動關閉 或 None,
     #         "restore_at": "HH:MM:SS" 或 None（關閉之後幾點再打開被它關掉的）}]
     # None = 還沒從舊版的夜間排程轉過來
     "schedules": None,
@@ -87,6 +88,7 @@ class Store:
         for sched in self.schedules:
             sched["time"] = _hms(sched.get("time")) or "23:00:00"
             sched["restore_at"] = _hms(sched.get("restore_at")) if sched.get("restore_at") else None
+            sched.setdefault("duration_s", None)
 
     def _migrate_schedule(self) -> None:
         """舊版只有一組夜間排程（勾選的插座晚上關、早上開），轉成新的排程清單。"""
@@ -170,7 +172,7 @@ class Store:
             if sched_id:
                 raise KeyError(sched_id)
             sched = {"id": uuid.uuid4().hex[:8], "enabled": True, "time": "23:00:00", "days": list(range(7)),
-                     "action": "off", "scene": None, "plugs": [], "restore_at": None}
+                     "action": "off", "scene": None, "plugs": [], "restore_at": None, "duration_s": None}
             self.data["schedules"] = [*self.schedules, sched]
         if "enabled" in body:
             sched["enabled"] = bool(body["enabled"])
@@ -186,6 +188,12 @@ class Store:
             sched["plugs"] = list(dict.fromkeys(str(p) for p in body["plugs"]))
         if "restore_at" in body:
             sched["restore_at"] = _hms(body["restore_at"]) if body["restore_at"] else None
+        if "duration_s" in body:  # 打開之後多久自動關閉（秒）
+            try:
+                dur = int(body["duration_s"] or 0)
+            except (TypeError, ValueError):
+                dur = 0
+            sched["duration_s"] = dur if 0 < dur <= 24 * 3600 else None
         self.save()
         return sched
 

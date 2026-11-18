@@ -584,6 +584,15 @@ class Hub:
         if not on and sched.get("restore_at"):
             self.store.data["remembered"][f"sched:{sched['id']}"] = done
             self.store.save()
+        if on and sched.get("duration_s"):
+            # 打開之後多久自動關閉（本來就開著的也算，從現在開始計時）
+            until = time.time() + sched["duration_s"]
+            for pid in sched["plugs"]:
+                if pid in self.plugs and self.plugs[pid].is_on:
+                    self.store.data["timers"][pid] = until
+                    self._cap_on_time(pid)
+            self.store.save()
+            await self.changed()
         _LOGGER.info("排程%s %d 個插座", "打開" if on else "關閉", len(done))
 
     # ---- 給前端的資料 ----
