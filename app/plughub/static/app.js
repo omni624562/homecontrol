@@ -114,33 +114,23 @@ const hms = (v) => {
   const [h = 0, m = 0, sec = 0] = String(v || "").split(":").map(Number);
   return [h, m, sec].map((n) => String(n || 0).padStart(2, "0")).join(":");
 };
-// 時間／長度選擇器：點數字，下方展開數字格子直接點選（時 → 分 → 秒 自動往下跳）
+// 時間／長度選擇器：滾輪（像手機鬧鐘）。手指上下滑、滑鼠滾輪、點數字、鍵盤 ↑ ↓ 都可以
 const pad2 = (n) => String(n).padStart(2, "0");
 const splitSec = (sec) => ({ h: Math.floor(sec / 3600), m: Math.floor((sec % 3600) / 60), s: sec % 60 });
-function tpGrid(key, unit, cur) {
-  const n = unit === "h" ? 24 : 60;
-  const cells = Array.from({ length: n }, (_, i) => `<button type="button" class="${i === cur ? "sel" : ""}" data-a="tp-pick" data-v="${key}:${unit}:${i}">${pad2(i)}</button>`).join("");
-  const title = { h: "選擇小時", m: "選擇分鐘", s: "選擇秒" }[unit];
-  return `<div class="tpgrid ${unit === "h" ? "h" : ""}" role="listbox" aria-label="${title}"><div class="tpgrid-t">${title}</div><div class="tpgrid-c">${cells}</div></div>`;
+const WHEEL_ROW = 40; // 每一格的高度（px）
+function wheelCol(key, unit, n, v, label, suffix = "") {
+  const items = Array.from({ length: n }, (_, i) => `<div class="wi" data-a="wi" data-v="${i}">${pad2(i)}</div>`).join("");
+  return `<div class="wseg"><div class="wcol" tabindex="0" role="spinbutton" aria-label="${label}" aria-valuemin="0" aria-valuemax="${n - 1}" aria-valuenow="${v}" data-wheel="${key}:${unit}" data-val="${v}">${items}</div>${suffix ? `<span class="wlab">${suffix}</span>` : ""}</div>`;
 }
-function tpSeg(key, unit, v, open, label, cls = "") {
-  const isOpen = open === `${key}:${unit}`;
-  return `<button type="button" class="tpn ${cls} ${isOpen ? "open" : ""}" data-a="tp-open" data-v="${key}:${unit}" aria-label="${label} ${pad2(v)}" aria-expanded="${isOpen}">${pad2(v)}</button>`;
-}
-function tpGridFor(key, open, vals) {
-  if (!open || !open.startsWith(`${key}:`)) return "";
-  const unit = open.split(":")[1];
-  return tpGrid(key, unit, vals[unit]);
-}
-// 幾點：07 : 00 : 50（秒比較淡）
-function clockPicker(key, t, open, small = false) {
+// 幾點：時 : 分 : 秒
+function clockPicker(key, t, rows = 5) {
   const [h, m, x] = hms(t).split(":").map(Number);
-  return `<div class="tp ${small ? "small" : ""}">${tpSeg(key, "h", h, open, "時")}<span class="colon">:</span>${tpSeg(key, "m", m, open, "分")}<span class="colon s">:</span>${tpSeg(key, "s", x, open, "秒", "s")}</div>${tpGridFor(key, open, { h, m, s: x })}`;
+  return `<div class="wheel r${rows}">${wheelCol(key, "h", 24, h, "時")}<span class="wsep">:</span>${wheelCol(key, "m", 60, m, "分")}<span class="wsep">:</span>${wheelCol(key, "s", 60, x, "秒")}</div>`;
 }
-// 多久：00 時 01 分 30 秒
-function durPicker(key, sec, open) {
+// 多久：時 分 秒
+function durPicker(key, sec, rows = 3) {
   const v = splitSec(sec || 0);
-  return `<div class="tp dur">${tpSeg(key, "h", v.h, open, "時")}<b>時</b>${tpSeg(key, "m", v.m, open, "分")}<b>分</b>${tpSeg(key, "s", v.s, open, "秒")}<b>秒</b></div>${tpGridFor(key, open, v)}`;
+  return `<div class="wheel dur r${rows}">${wheelCol(key, "h", 24, v.h, "小時", "時")}${wheelCol(key, "m", 60, v.m, "分鐘", "分")}${wheelCol(key, "s", 60, v.s, "秒", "秒")}</div>`;
 }
 const showT = (t) => (t && t.endsWith(":00") ? t.slice(0, 5) : t || "");
 const clockSec = (epoch) => new Date(epoch * 1000).toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
@@ -463,8 +453,9 @@ const STYLE = `
   .sheet {
     width: 100%; max-height: 92vh; overflow: auto; background: var(--card); border-radius: var(--r-xl) var(--r-xl) 0 0;
     padding: 0 20px calc(20px + env(safe-area-inset-bottom)); animation: up .26s var(--ease); overscroll-behavior: contain;
-    box-shadow: var(--shadow-lg); scrollbar-width: thin; scrollbar-color: var(--soft2) transparent;
+    box-shadow: var(--shadow-lg); scrollbar-width: none;
   }
+  .sheet::-webkit-scrollbar { display: none; }
   .grab { position: sticky; top: 0; z-index: 3; height: 18px; margin: 0 -20px; background: var(--card); display: flex; justify-content: center; align-items: center; }
   .grab::before { content: ""; width: 36px; height: 5px; border-radius: 3px; background: var(--soft2); }
   @media (min-width: 720px) {
@@ -544,31 +535,29 @@ const STYLE = `
   .group .chip:not(.sel) { background: var(--card); box-shadow: var(--shadow); }
   .group .chip:not(.sel):hover { background: var(--hover); }
 
-  /* ═════════ 時間選擇器 ═════════ */
-  .tp { display: flex; align-items: center; justify-content: center; gap: 2px; min-height: 72px; padding: 6px; border-radius: var(--r-lg); background: var(--soft); }
-  .tpn { font-size: 38px; font-weight: 600; letter-spacing: -.5px; font-variant-numeric: tabular-nums; line-height: 1; padding: 10px 10px; border-radius: 12px; color: var(--text); transition: background .15s, color .15s; }
-  .tpn.s { font-size: 26px; color: var(--muted); padding: 8px; }
-  .tpn.open { background: var(--accent); color: #fff; }
-  .tpn:not(.open):hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
-  .tp .colon { font-size: 30px; font-weight: 500; color: var(--faint); margin-top: -4px; }
-  .tp .colon.s { font-size: 22px; }
-  .tp.small { min-height: 56px; justify-content: flex-start; }
-  .tp.small .tpn { font-size: 24px; padding: 8px; }
-  .tp.small .tpn.s { font-size: 19px; }
-  .tp.small .colon { font-size: 22px; }
-  .tp.dur { min-height: 56px; justify-content: flex-start; gap: 0; }
-  .tp.dur .tpn { font-size: 24px; padding: 8px; }
-  .tp.dur b { font-size: 13.5px; font-weight: 500; color: var(--muted); margin: 0 10px 0 2px; }
-  .tpgrid { margin-top: 8px; padding: 10px; border-radius: var(--r-lg); background: var(--card); box-shadow: var(--shadow-md); animation: drop .16s var(--ease); }
-  .tpgrid-t { font-size: 12.5px; font-weight: 600; color: var(--muted); margin: 0 4px 8px; }
-  .tpgrid-c { display: grid; grid-template-columns: repeat(10, 1fr); gap: 4px; }
-  .tpgrid.h .tpgrid-c { grid-template-columns: repeat(6, 1fr); }
-  .tpgrid button { height: 36px; border-radius: var(--r-xs); font-size: 14.5px; font-weight: 500; font-variant-numeric: tabular-nums; color: var(--text2); transition: background .1s; }
-  .tpgrid.h button { height: 42px; font-size: 16px; }
-  .tpgrid button:hover { background: var(--soft); }
-  .tpgrid button.sel { background: var(--accent); color: #fff; font-weight: 600; }
-  @media (max-width: 400px) { .tpgrid-c { gap: 2px; } .tpgrid button { font-size: 13px; height: 34px; } }
-  @keyframes drop { from { opacity: 0; transform: translateY(-4px); } }
+  /* ═════════ 時間選擇器（滾輪） ═════════ */
+  .wheel { --row: 40px; --rows: 5; position: relative; display: flex; justify-content: center; align-items: stretch; height: calc(var(--rows) * var(--row)); border-radius: var(--r-lg); background: var(--soft); overflow: hidden; user-select: none; -webkit-user-select: none; }
+  .wheel.r3 { --rows: 3; }
+  .wheel::before { content: ""; position: absolute; left: 10px; right: 10px; top: 50%; height: var(--row); transform: translateY(-50%); border-radius: 10px; background: var(--card); box-shadow: var(--shadow); pointer-events: none; }
+  .wseg { position: relative; display: flex; align-items: center; }
+  .wcol {
+    position: relative; height: 100%; width: 68px; overflow-y: scroll; scroll-snap-type: y mandatory; overscroll-behavior: contain;
+    padding: calc((var(--rows) - 1) / 2 * var(--row)) 0; scrollbar-width: none; outline: none; cursor: ns-resize;
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, rgba(0,0,0,.35) 18%, #000 40%, #000 60%, rgba(0,0,0,.35) 82%, transparent 100%);
+    mask-image: linear-gradient(to bottom, transparent 0, rgba(0,0,0,.35) 18%, #000 40%, #000 60%, rgba(0,0,0,.35) 82%, transparent 100%);
+  }
+  .wheel.r3 .wcol { -webkit-mask-image: linear-gradient(to bottom, rgba(0,0,0,.25), #000 34%, #000 66%, rgba(0,0,0,.25)); mask-image: linear-gradient(to bottom, rgba(0,0,0,.25), #000 34%, #000 66%, rgba(0,0,0,.25)); }
+  .wcol::-webkit-scrollbar { display: none; }
+  .wcol:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); border-radius: 10px; }
+  .wi { height: var(--row); display: flex; align-items: center; justify-content: center; scroll-snap-align: center; font-size: 22px; font-weight: 500; font-variant-numeric: tabular-nums; color: var(--text); cursor: pointer; }
+  .wheel.r5 .wi { font-size: 24px; }
+  .wsep { position: relative; align-self: center; font-size: 22px; font-weight: 500; color: var(--faint); margin-top: -3px; }
+  .wheel.dur { gap: 4px; }
+  .wheel.dur .wcol { width: 52px; }
+  .wlab { position: relative; font-size: 14px; font-weight: 500; color: var(--muted); width: 26px; }
+  .group .wheel { background: var(--card); }
+  .group .wheel::before { background: var(--soft); box-shadow: none; }
+  @media (min-width: 720px) { .wcol { width: 76px; } }
 
   /* ═════════ 提示條 ═════════ */
   .toast {
@@ -610,6 +599,8 @@ class PlugApp extends HTMLElement {
     root.addEventListener("click", (e) => this._onClick(e));
     root.addEventListener("change", (e) => this._onChange(e));
     root.addEventListener("keydown", (e) => this._onKey(e));
+    // 滾輪停下來時讀取中間那一格（scroll 事件不會冒泡，用 capture 接）
+    root.addEventListener("scroll", (e) => e.target.classList?.contains("wcol") && this._wheelScroll(e.target), true);
     root.addEventListener("pointerdown", (e) => {
       const grip = e.target.closest?.("[data-drag]");
       if (grip) this._dragStart(e, grip);
@@ -1305,6 +1296,11 @@ class PlugApp extends HTMLElement {
   _onKey(e) {
     if (e.key === "Escape" && this._sheet) return this._closeSheet();
     const t = e.target;
+    if ((e.key === "ArrowUp" || e.key === "ArrowDown") && t.matches?.(".wcol")) {
+      e.preventDefault();
+      t.scrollBy({ top: e.key === "ArrowUp" ? -WHEEL_ROW : WHEEL_ROW, behavior: "smooth" });
+      return;
+    }
     if ((e.key === "ArrowUp" || e.key === "ArrowDown") && t.matches?.("[data-drag]")) {
       e.preventDefault();
       const { drag: kind, v } = t.dataset;
@@ -1413,34 +1409,21 @@ class PlugApp extends HTMLElement {
         if (!(n >= 1 && n <= max)) return this._sheetError(`請選 1 秒～${fmtSec(max)}`);
         this._setTimer(this._sheet.id, n);
       },
-      // 時間選擇器
-      "tp-open": (v) => {
-        this._sheet.tpOpen = this._sheet.tpOpen === v ? null : v;
-        this._renderSheet();
-      },
-      "tp-pick": (v) => {
-        const [key, unit, n] = v.split(":");
-        this._tpSet(key, unit, Number(n));
-        const next = { h: "m", m: "s" }[unit];
-        this._sheet.tpOpen = next ? `${key}:${next}` : null;
-        this._renderSheet();
-      },
+      // 滾輪：點數字就捲到那一格
+      wi: (v, t) => t.closest(".wcol")?.scrollTo({ top: Number(v) * WHEEL_ROW, behavior: "smooth" }),
       // 最長開啟時間
       "max-toggle": () => {
         const p = this._plug(this._sheet.id);
         this._sheet.maxDraft = null;
-        this._sheet.tpOpen = null;
         this._setMaxOn(p?.max_on_s ? null : 600);
       },
       "max-quick": (v) => {
         this._sheet.maxDraft = null;
-        this._sheet.tpOpen = null;
         this._setMaxOn(Number(v));
       },
       "max-save": () => {
         const n = this._sheet.maxDraft;
         if (!(n >= 1 && n <= 86400)) return this._sheetError("請選 1 秒～24 小時");
-        this._sheet.tpOpen = null;
         this._setMaxOn(n).then(() => {
           this._sheet && (this._sheet.maxDraft = null);
           this._renderSheet();
@@ -1578,6 +1561,39 @@ class PlugApp extends HTMLElement {
     }
   }
 
+  // 滾輪捲到目前的值（剛打開、或值被別的地方改了；使用者正在滑的不動）
+  _syncWheels() {
+    for (const col of this._sheetHost.querySelectorAll(".wcol")) {
+      const want = Number(col.dataset.val) * WHEEL_ROW;
+      if (col._busy) continue;
+      if (!col._init || Math.abs(col.scrollTop - want) > 2) {
+        col._init = true;
+        col._sync = true;
+        col.scrollTop = want;
+      }
+    }
+  }
+
+  _wheelScroll(col) {
+    if (col._sync) {
+      col._sync = false; // 程式自己捲的，不算
+      return;
+    }
+    col._busy = true;
+    clearTimeout(col._t);
+    col._t = setTimeout(() => {
+      col._busy = false;
+      const i = Math.max(0, Math.min(col.children.length - 1, Math.round(col.scrollTop / WHEEL_ROW)));
+      if (i === Number(col.dataset.val)) return;
+      const [key, unit] = col.dataset.wheel.split(":");
+      this._tpSet(key, unit, i);
+      col.dataset.val = i;
+      col.setAttribute("aria-valuenow", i);
+      navigator.vibrate?.(5);
+      this._renderSheet();
+    }, 130);
+  }
+
   // 時間選擇器改值：幾點（"HH:MM:SS"）或多久（秒）
   _tpSet(key, unit, n) {
     const s = this._sheet;
@@ -1710,6 +1726,7 @@ class PlugApp extends HTMLElement {
     if (sheet && this._sheetKey === key) {
       // 同一個面板：只更新有變的地方
       morph(sheet, `<div class="grab"></div>${html}`);
+      this._syncWheels();
       return;
     }
     this._sheetKey = key;
@@ -1717,6 +1734,7 @@ class PlugApp extends HTMLElement {
     this._sheetHost.querySelector("[data-backdrop]").addEventListener("click", (e) => {
       if (e.target.matches("[data-backdrop]")) this._closeSheet();
     });
+    this._syncWheels();
   }
 
   _sheetHead(icon, title, sub, iconStyle = "") {
@@ -1749,7 +1767,7 @@ class PlugApp extends HTMLElement {
       <div class="q">${on ? (p.timer ? "改成多久後關閉" : "多久後自動關閉") : "打開，多久後自動關閉"}</div>
       <div class="opts">${opts}</div>
       <div class="q">自訂時間</div>
-      ${durPicker("timer", s.timerDraft, s.tpOpen)}
+      ${durPicker("timer", s.timerDraft)}
       <div class="err"></div>
       <p class="note">時間到會自動關閉${this._s.settings.ntfy_topic ? "，手機也會收到通知" : ""}。中途想停，直接按開關關掉就好。</p>
       <div class="actions"><button class="btn primary" data-a="timer-custom">${on ? "" : "打開，"}${fmtSec(s.timerDraft)}後關閉</button></div>`;
@@ -1789,7 +1807,7 @@ class PlugApp extends HTMLElement {
       .join("");
     const dirty = s.maxDraft != null && s.maxDraft !== p.max_on_s;
     return `<div class="gi col">
-        ${durPicker("max_on", v, s.tpOpen)}
+        ${durPicker("max_on", v)}
         <div class="chips">${quick}</div>
         ${dirty ? `<button class="btn primary" data-a="max-save">儲存：最長 ${fmtSec(s.maxDraft)}</button>` : ""}
       </div>`;
@@ -1974,18 +1992,18 @@ class PlugApp extends HTMLElement {
             <div class="tx"><div class="l">之後再打開</div><div class="s">只打開被這個排程關掉的；本來就關著的不會被打開</div></div>
             <button class="sw ${d.restore_at ? "on" : ""}" data-a="sched-restore" role="switch" aria-checked="${!!d.restore_at}" aria-label="之後再打開"></button>
           </div>
-          ${d.restore_at ? `<div style="margin-top:10px">${clockPicker("restore_at", d.restore_at, s.tpOpen, true)}<p class="note">${d.restore_at <= d.time ? "隔天" : "當天"}這個時間打開</p></div>` : ""}`
+          ${d.restore_at ? `<div style="margin-top:10px">${clockPicker("restore_at", d.restore_at, 3)}<p class="note">${d.restore_at <= d.time ? "隔天" : "當天"}這個時間打開</p></div>` : ""}`
         : d.action === "on"
           ? `<div class="set" style="padding:18px 0 0">
             <div class="tx"><div class="l">開多久後自動關閉</div><div class="s">例如澆水開 50 秒；插座有設「最長開啟時間」的話，以比較短的為準</div></div>
             <button class="sw ${d.duration_s ? "on" : ""}" data-a="sched-duration" role="switch" aria-checked="${!!d.duration_s}" aria-label="開多久後自動關閉"></button>
           </div>
-          ${d.duration_s ? `<div style="margin-top:10px">${durPicker("duration_s", d.duration_s, s.tpOpen)}</div>` : ""}`
+          ${d.duration_s ? `<div style="margin-top:10px">${durPicker("duration_s", d.duration_s)}</div>` : ""}`
           : "";
     return `
       ${this._sheetHead("mdi:calendar-clock", s.id ? "編輯排程" : "新增排程", "")}
       <div class="q">幾點</div>
-      ${clockPicker("time", d.time, s.tpOpen)}
+      ${clockPicker("time", d.time)}
       <div class="q">哪幾天 <small>${daysText(d.days)}</small></div>
       <div class="chips">${days}</div>
       <div class="chips" style="margin-top:8px">
