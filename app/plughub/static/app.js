@@ -796,6 +796,14 @@ const STYLE = `
   .group .wheel::before { background: var(--soft); box-shadow: none; }
   @media (min-width: 720px) { .wcol { width: 76px; } }
 
+  /* ═════════ 確認對話框 ═════════ */
+  .cwrap { position: fixed; inset: 0; z-index: 60; background: rgba(15,23,42,.45); display: flex; align-items: center; justify-content: center; padding: 24px; animation: fade .15s; }
+  .cbox { width: min(400px, 100%); background: var(--card); border-radius: var(--r-xl); padding: 22px 22px 18px; box-shadow: var(--shadow-lg); animation: pop .18s var(--ease); }
+  .cbox .ct { font-size: 17px; font-weight: 650; line-height: 1.35; }
+  .cbox .cd { font-size: 14px; color: var(--muted); line-height: 1.55; margin-top: 8px; }
+  .cbox .cact { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 20px; }
+  .cbox .cact .btn { height: 44px; border-radius: var(--r-md); }
+
   /* ═════════ 提示條 ═════════ */
   .toast {
     position: fixed; left: 16px; right: 16px; bottom: calc(var(--tabbar) + 14px + env(safe-area-inset-bottom)); z-index: 50;
@@ -816,10 +824,11 @@ class PlugApp extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
-    this.shadowRoot.innerHTML = `<style>${STYLE}</style><div class="root"></div><div class="sheet-host"></div><div class="toast-host"></div>`;
+    this.shadowRoot.innerHTML = `<style>${STYLE}</style><div class="root"></div><div class="sheet-host"></div><div class="confirm-host"></div><div class="toast-host"></div>`;
     this._root = this.shadowRoot.querySelector(".root");
     this._sheetHost = this.shadowRoot.querySelector(".sheet-host");
     this._toastHost = this.shadowRoot.querySelector(".toast-host");
+    this._confirmHost = this.shadowRoot.querySelector(".confirm-host");
     this._s = null; // 伺服器給的狀態
     this._skew = 0; // 伺服器時間 - 本機時間（秒）
     this._connected = false;
@@ -1450,10 +1459,10 @@ class PlugApp extends HTMLElement {
       <div class="seg full">${act}</div>
       <p class="note">改的是插座裡的設定，Kasa App 也會看到一樣的內容。插座自己執行，不需要樹莓派，但也<b>不會</b>遵守鎖定、常開這些防呆設定。</p>
       <div class="group" style="margin-top:14px"><div class="gi"><div class="gt"><div class="gl">改由家庭中控管理</div><div class="gs">轉成家庭中控的排程：可以設到秒、套用防呆和最長開啟時間，樹莓派離線時一樣由插座接手</div></div>
-        <button class="btn sm" data-a="kasa-adopt" data-v="${esc(s.key)}" data-confirm="再按一次轉換">轉換</button></div></div>
+        <button class="btn sm" data-a="kasa-adopt" data-v="${esc(s.key)}" data-confirm="轉成家庭中控的排程？" data-confirm-text="會建立一條一樣的家庭中控排程，並刪掉插座裡原本這條（Kasa App 也會看不到它）。" data-confirm-ok="轉換" data-confirm-safe="1">轉換</button></div></div>
       </div></div>
       <div class="err"></div>
-      <div class="actions"><button class="btn danger" data-a="kasa-delete" data-confirm="確定刪除？再按一次">刪除</button><button class="btn primary" data-a="kasa-save">儲存</button></div>`;
+      <div class="actions"><button class="btn danger" data-a="kasa-delete" data-confirm="刪除這條插座內建排程？" data-confirm-text="插座裡的這條排程會被刪掉，Kasa App 也會看不到它，不能復原。">刪除</button><button class="btn primary" data-a="kasa-save">儲存</button></div>`;
   }
 
   // 每台插座（不是每個孔）的網路、韌體狀況，以及和大多數不一樣的地方
@@ -1517,7 +1526,7 @@ class PlugApp extends HTMLElement {
           <div class="set">
             <div class="tx"><div class="l">${esc(p.name)}・${hhmm(r.smin)}–${hhmm(r.emin)}</div>
               <div class="s">${daysText(kasaDays(r.wday))}・插座內建・Kasa App 設的${r.enable ? "" : "・已停用"}</div></div>
-            <button class="btn sm danger" data-a="kasa-away-delete" data-v="${key}" data-confirm="再按一次刪除">刪除</button>
+            <button class="btn sm danger" data-a="kasa-away-delete" data-v="${key}" data-confirm="刪除這條離家模式？" data-confirm-text="插座裡這條 Kasa App 設的離家模式會被刪掉，不能復原。">刪除</button>
             <button class="sw ${r.enable ? "on" : ""}" data-a="kasa-away-toggle" data-v="${key}" role="switch" aria-checked="${!!r.enable}" aria-label="啟用"></button>
           </div>`);
       }
@@ -1959,10 +1968,21 @@ class PlugApp extends HTMLElement {
 
   get _actions() {
     const sure = (t) => {
-      // 刪除要按兩次
-      if (t.dataset.sure) return true;
-      t.dataset.sure = "1";
-      t.textContent = t.dataset.confirm || "確定要刪除？再按一次";
+      // 會刪掉東西或有影響的動作：先跳確認對話框（按鈕本身不變），確定後再執行一次同一個動作
+      if (t.dataset.sure) {
+        delete t.dataset.sure;
+        return true;
+      }
+      this._confirm({
+        title: t.dataset.confirm || "確定要刪除？",
+        text: t.dataset.confirmText || "這個動作不能復原。",
+        ok: t.dataset.confirmOk || t.textContent.trim(),
+        danger: !t.dataset.confirmSafe,
+      }).then((yes) => {
+        if (!yes || !t.isConnected) return;
+        t.dataset.sure = "1";
+        t.click();
+      });
       return false;
     };
     const redraw = (fn) => () => {
@@ -2353,7 +2373,39 @@ class PlugApp extends HTMLElement {
         <li>家庭中控、Google Home、排程、插座內建的排程都不受影響</li>
         <li>想恢復的話，要用 Kasa App 重新設定插座</li>
       </ul>
-      <div class="actions"><button class="btn" data-a="close">先不要</button><button class="btn danger solid" data-a="cloud-unbind" data-confirm="確定斷開？再按一次">斷開所有插座</button></div>`;
+      <div class="actions"><button class="btn" data-a="close">先不要</button><button class="btn danger solid" data-a="cloud-unbind" data-confirm="斷開所有插座的 TP-Link 雲端？" data-confirm-text="之後 Kasa App 只能在家裡的 Wi-Fi 使用；要恢復得用 Kasa App 重新設定插座。家庭中控和 Google Home 不受影響。" data-confirm-ok="斷開">斷開所有插座</button></div>`;
+  }
+
+  // 確認對話框：回傳 Promise<boolean>
+  _confirm({ title, text, ok, danger = true }) {
+    return new Promise((resolve) => {
+      const host = this._confirmHost;
+      const done = (v) => {
+        host.innerHTML = "";
+        document.removeEventListener("keydown", onKey, true);
+        resolve(v);
+      };
+      const onKey = (e) => {
+        if (e.key === "Escape") {
+          e.stopPropagation();
+          done(false);
+        }
+      };
+      host.innerHTML = `
+        <div class="cwrap" data-cback>
+          <div class="cbox" role="alertdialog" aria-modal="true" aria-labelledby="ct" aria-describedby="cd">
+            <div class="ct" id="ct">${esc(title)}</div>
+            <div class="cd" id="cd">${esc(text)}</div>
+            <div class="cact"><button class="btn" data-c-no>取消</button><button class="btn ${danger ? "danger solid" : "primary"}" data-c-yes>${esc(ok)}</button></div>
+          </div>
+        </div>`;
+      host.querySelector("[data-c-no]").addEventListener("click", () => done(false));
+      host.querySelector("[data-c-yes]").addEventListener("click", () => done(true));
+      host.querySelector("[data-cback]").addEventListener("click", (e) => e.target.matches("[data-cback]") && done(false));
+      document.addEventListener("keydown", onKey, true);
+      // 用鍵盤／滑鼠的裝置才把焦點放到「取消」（手機上不顯示焦點框）
+      if (matchMedia("(hover: hover) and (pointer: fine)").matches) host.querySelector("[data-c-no]").focus({ focusVisible: false });
+    });
   }
 
   _toggle(id) {
@@ -2707,7 +2759,7 @@ class PlugApp extends HTMLElement {
         <div class="gi"><span class="gl">內建排程<small>${esc(nativeText)}</small></span>${n && !n.ok ? `<span class="gv warn">${ic("mdi:alert-circle-outline")}</span>` : n ? `<span class="gv ok">${ic("mdi:check-circle")}</span>` : ""}</div>
         ${(n?.kasa || []).length ? `<div class="gi"><span class="gl">Kasa App 設的排程<small>插座自己會執行；在「排程」頁可以修改</small></span><span class="gv kasa">${n.kasa.map((r) => `${r.sact ? "開" : "關"} ${this._ruleText(r)}${r.wday.every(Boolean) ? "" : ` ${r.wday.map((v, i) => (v ? "日一二三四五六"[i] : "")).join("")}`}${r.enable ? "" : "（停用）"}`).join("<br>")}</span></div>` : ""}
         <div class="gi"><span class="gl">TP-Link 雲端</span><span class="gv">${p.cloud ? "連線中" : p.cloud === false ? "未連線" : "—"}</span></div>
-        <div class="gi"><span class="gl">重新啟動插座<small>插座卡住時用；${shared ? "整條排插都會重開，" : ""}可能短暫斷電</small></span><button class="btn sm" data-a="reboot" data-confirm="再按一次重新啟動">重新啟動</button></div>
+        <div class="gi"><span class="gl">重新啟動插座<small>插座卡住時用；${shared ? "整條排插都會重開，" : ""}可能短暫斷電</small></span><button class="btn sm" data-a="reboot" data-confirm="重新啟動插座？" data-confirm-text="插座大約 30 秒後恢復，期間可能短暫斷電${shared ? "；整條排插的每個孔都會一起重開" : ""}。" data-confirm-ok="重新啟動">重新啟動</button></div>
       </div>`;
   }
 
@@ -2755,7 +2807,7 @@ class PlugApp extends HTMLElement {
       <p class="note">圖示會依名稱自動選，例如「客廳」是沙發、「廚房」是爐子。</p>
       <div class="err"></div>
       <div class="actions">
-        ${isNew ? `<button class="btn" data-a="close">取消</button>` : `<button class="btn danger" data-a="room-delete">刪除房間</button>`}
+        ${isNew ? `<button class="btn" data-a="close">取消</button>` : `<button class="btn danger" data-a="room-delete" data-confirm="刪除這個房間？" data-confirm-text="房間裡的裝置會移到「還沒分房間」，裝置本身不受影響。">刪除房間</button>`}
         <button class="btn primary" data-a="room-save">${isNew ? "建立" : "儲存"}</button>
       </div>`;
   }
@@ -2842,7 +2894,7 @@ class PlugApp extends HTMLElement {
       <div class="srooms">${rows}</div>
       <div class="err"></div>
       <div class="actions">
-        ${s.id ? `<button class="btn danger" data-a="scene-delete">刪除情境</button>` : `<button class="btn" data-a="close">取消</button>`}
+        ${s.id ? `<button class="btn danger" data-a="scene-delete" data-confirm="刪除這個情境？" data-confirm-text="用到這個情境的排程會先暫停，不能復原。">刪除情境</button>` : `<button class="btn" data-a="close">取消</button>`}
         <button class="btn primary" data-a="scene-save">儲存</button>
       </div>`;
   }
@@ -2949,7 +3001,7 @@ class PlugApp extends HTMLElement {
       </div></div>
       <div class="err"></div>
       <div class="actions">
-        ${s.id ? `<button class="btn danger" data-a="sched-delete">刪除排程</button>` : `<button class="btn" data-a="close">取消</button>`}
+        ${s.id ? `<button class="btn danger" data-a="sched-delete" data-confirm="刪除這條排程？" data-confirm-text="寫進插座的備援也會一起清掉，不能復原。">刪除排程</button>` : `<button class="btn" data-a="close">取消</button>`}
         <button class="btn primary" data-a="sched-save">儲存</button>
       </div>`;
   }
