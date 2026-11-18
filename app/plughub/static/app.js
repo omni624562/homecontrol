@@ -31,6 +31,50 @@ const NO_ROOM = "";
 
 // ───────────── 小工具 ─────────────
 
+// 只更新有變的地方（不整個重畫）：畫面不會閃、捲動位置／滑鼠停留／打開的選單都不受影響
+function morph(el, html) {
+  const tpl = document.createElement("template");
+  tpl.innerHTML = html;
+  morphChildren(el, tpl.content);
+}
+
+const nodeKey = (n) => (n.nodeType === 1 ? `${n.nodeName}|${n.getAttribute("data-id") ?? n.getAttribute("data-v") ?? ""}|${n.getAttribute("data-a") ?? n.getAttribute("data-c") ?? ""}` : n.nodeType);
+
+function morphChildren(from, to) {
+  const a = [...from.childNodes];
+  const b = [...to.childNodes];
+  b.forEach((y, i) => {
+    const x = a[i];
+    if (!x) from.appendChild(y);
+    else if (nodeKey(x) !== nodeKey(y)) from.replaceChild(y, x);
+    else morphNode(x, y);
+  });
+  for (let i = b.length; i < a.length; i++) a[i].remove();
+}
+
+function morphNode(x, y) {
+  if (x.nodeType !== 1) {
+    if (x.nodeValue !== y.nodeValue) x.nodeValue = y.nodeValue;
+    return;
+  }
+  for (const { name, value } of [...y.attributes]) if (x.getAttribute(name) !== value) x.setAttribute(name, value);
+  for (const { name } of [...x.attributes]) if (!y.hasAttribute(name)) x.removeAttribute(name);
+  const focused = x === x.getRootNode().activeElement;
+  if (x.tagName === "INPUT") {
+    const want = y.getAttribute("value") ?? "";
+    if (!focused && x.value !== want) x.value = want;
+    return;
+  }
+  if (x.tagName === "SELECT") {
+    if (focused) return; // 使用者正在選，不要動
+    const want = y.querySelector("option[selected]")?.value ?? y.querySelector("option")?.value;
+    morphChildren(x, y);
+    if (want !== undefined && x.value !== want) x.value = want;
+    return;
+  }
+  morphChildren(x, y);
+}
+
 const esc = (s) =>
   String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
@@ -638,10 +682,14 @@ class PlugApp extends HTMLElement {
       page = (pages[this._tab] || pages.plugs)();
     }
     const banner = this._s && !this._connected ? `<div class="banner">${ic("mdi:cloud-off-outline")}連不上插座伺服器，重新連線中…</div>` : "";
-    this._root.innerHTML = `
+    const html = `
       <nav class="side" aria-label="選單"><div class="logo">${ic("mdi:power-plug")}插座</div>${nav}${conn}</nav>
       <main class="content"><div class="page">${banner}${page}</div></main>
       <nav class="tabbar" aria-label="選單">${nav}</nav>`;
+    if (html === this._lastHtml) return; // 沒有變就不動畫面
+    this._lastHtml = html;
+    if (this._root.firstElementChild) morph(this._root, html);
+    else this._root.innerHTML = html;
   }
 
   // ── 插座 ──
@@ -879,6 +927,7 @@ class PlugApp extends HTMLElement {
     if (!d) return;
     this._drag = null;
     d.ghost.remove();
+    this._lastHtml = null; // 拖拉時動過畫面，放開後一定要重新比對
     d.item.classList.remove("dragging");
     this._root.classList.remove("is-dragging");
     const ids = (sel) => [...this._root.querySelectorAll(sel)].map((el) => el.dataset.id);
@@ -1527,6 +1576,7 @@ class PlugApp extends HTMLElement {
 
   _closeSheet() {
     this._sheet = null;
+    this._sheetKey = null;
     this._sheetHost.innerHTML = "";
     this._render();
   }
@@ -1542,9 +1592,15 @@ class PlugApp extends HTMLElement {
     const builders = { timer: this._timerSheet, plug: this._plugSheet, room: this._roomSheet, scene: this._sceneSheet, sched: this._schedSheet, watts: this._wattsSheet };
     const html = builders[s.type]?.call(this, s);
     if (html === null || html === undefined) return this._closeSheet();
-    const scroll = this._sheetHost.querySelector(".sheet")?.scrollTop || 0;
+    const key = `${s.type}|${s.id}|${s.wide ? 1 : 0}`;
+    const sheet = this._sheetHost.querySelector(".sheet");
+    if (sheet && this._sheetKey === key) {
+      // 同一個面板：只更新有變的地方
+      morph(sheet, `<div class="grab"></div>${html}`);
+      return;
+    }
+    this._sheetKey = key;
     this._sheetHost.innerHTML = `<div class="wrap" data-backdrop><div class="sheet ${s.wide ? "wide" : ""}" role="dialog" aria-modal="true"><div class="grab"></div>${html}</div></div>`;
-    this._sheetHost.querySelector(".sheet").scrollTop = scroll;
     this._sheetHost.querySelector("[data-backdrop]").addEventListener("click", (e) => {
       if (e.target.matches("[data-backdrop]")) this._closeSheet();
     });
