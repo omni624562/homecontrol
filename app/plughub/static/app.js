@@ -128,100 +128,24 @@ const hms = (v) => {
 // 時間／長度選擇器：滾輪（像手機鬧鐘）。手指上下滑、滑鼠滾輪、點數字、鍵盤 ↑ ↓ 都可以
 const pad2 = (n) => String(n).padStart(2, "0");
 
-// 天氣代碼（WMO）→ 文字、圖示（白天／晚上）
-function wx(code, day = 1) {
-  const c = +code;
-  const t =
-    c === 0 ? ["晴", day ? "mdi:weather-sunny" : "mdi:weather-night"]
-    : c <= 2 ? [c === 1 ? "大致晴朗" : "晴時多雲", day ? "mdi:weather-partly-cloudy" : "mdi:weather-night-partly-cloudy"]
-    : c === 3 ? ["陰天", "mdi:weather-cloudy"]
-    : c <= 48 ? ["有霧", "mdi:weather-fog"]
-    : c <= 55 ? ["毛毛雨", "mdi:weather-partly-rainy"]
-    : c <= 57 || c === 66 || c === 67 ? ["凍雨", "mdi:weather-rainy"]
-    : c <= 61 || c === 80 ? ["小雨", "mdi:weather-rainy"]
-    : c <= 63 || c === 81 ? ["下雨", "mdi:weather-rainy"]
-    : c <= 65 || c === 82 ? ["大雨", "mdi:weather-pouring"]
-    : c <= 77 || c === 85 || c === 86 ? ["下雪", "mdi:weather-snowy"]
-    : c >= 95 ? ["雷雨", "mdi:weather-lightning-rainy"]
-    : ["—", "mdi:weather-cloudy"];
-  return { text: t[0], icon: t[1] };
+// 天氣（中央氣象署的天氣代碼和文字）→ 圖示；晚上換月亮
+function wx(code, text = "", day = 1) {
+  const c = +code || 0;
+  const t = String(text || "");
+  const icon =
+    /雷/.test(t) || [15, 16, 17, 18, 21, 22, 33, 34, 35, 36, 41].includes(c) ? "mdi:weather-lightning-rainy"
+    : /雪/.test(t) || [23, 37, 42].includes(c) ? "mdi:weather-snowy"
+    : /大雨|豪雨/.test(t) ? "mdi:weather-pouring"
+    : /雨/.test(t) || (c >= 8 && c <= 14) || (c >= 19 && c <= 20) || (c >= 29 && c <= 32) ? (/多雲|晴/.test(t) && !/陰/.test(t) ? "mdi:weather-partly-rainy" : "mdi:weather-rainy")
+    : /霧|靄/.test(t) || (c >= 24 && c <= 28) ? "mdi:weather-fog"
+    : /陰/.test(t) || c === 7 || c === 6 ? "mdi:weather-cloudy"
+    : /多雲/.test(t) || (c >= 2 && c <= 5) ? (day ? "mdi:weather-partly-cloudy" : "mdi:weather-night-partly-cloudy")
+    : /晴/.test(t) || c === 1 ? (day ? "mdi:weather-sunny" : "mdi:weather-night")
+    : "mdi:weather-cloudy";
+  return { text: t || "—", icon };
 }
-// PM2.5（µg/m³）→ 環境部的等級
-const pmLevel = (v) => (v == null ? null : v <= 15.4 ? ["良好", "ok"] : v <= 35.4 ? ["普通", ""] : v <= 54.4 ? ["對敏感族群不健康", "warn"] : ["不健康", "bad"]);
-// 路由器上的裝置：從名字、廠商猜種類
-const KIND = {
-  phone: { icon: "mdi:cellphone", label: "手機" },
-  tablet: { icon: "mdi:cellphone", label: "平板" },
-  watch: { icon: "mdi:watch", label: "手錶" },
-  computer: { icon: "mdi:laptop", label: "電腦" },
-  tv: { icon: "mdi:television", label: "電視" },
-  speaker: { icon: "mdi:speaker", label: "音箱" },
-  network: { icon: "mdi:wifi", label: "網路設備" },
-  other: { icon: "mdi:help-circle-outline", label: "不明裝置" },
-};
-function devKind(c) {
-  const t = `${c.label || ""} ${c.name || ""} ${c.router_name || ""} ${c.vendor || ""}`.toLowerCase();
-  if (/watch/.test(t)) return "watch";
-  if (/\btab\b|tab-|ipad|pad\b/.test(t)) return "tablet";
-  if (/iphone|pixel|galaxy|phone|redmi|xiaomi|oppo|vivo|huawei|sm-[a-z]/.test(t)) return "phone";
-  if (/msft|windows|laptop|desktop|macbook|imac|hyperv|ubuntu|\bpc\b|raspberry/.test(t)) return "computer";
-  if (/\btv\b|nvidia|shield|chromecast|roku|bravia|apple tv/.test(t)) return "tv";
-  if (/google|nest|echo|alexa|homepod|speaker/.test(t)) return "speaker";
-  if (/\basus\b|rt-[a-z]{2}\d|router|tp-link deco|mesh|zyxel|synology|qnap|netgear/.test(t)) return "network";
-  if (/android|dhcpcd/.test(t)) return "phone";
-  return "other";
-}
-// 路由器給的名字看不懂（MAC、android-dhcp-12、MSFT 5.0…）
-const isRawName = (n) => !n || /^([0-9A-F]{2}:){5}[0-9A-F]{2}$/i.test(n) || /^(android-dhcp|dhcpcd|msft|espressif|unknown)/i.test(n);
-const netName = (c) => c.label || c.name;
-const fmtUsd = (u) => (u == null ? "—" : `US$${u < 1 ? u.toFixed(2) : u.toFixed(1)}（約 NT$${Math.round(u * 32)}）`);
-const fmtBytes = (b) => (b >= 1e9 ? `${fmt(b / 1e9, 1)} GB` : b >= 1e6 ? `${fmt(b / 1e6, 0)} MB` : `${fmt(Math.max(1, b / 1e3), 0)} KB`);
-// 訊號強度分三級：強 / 普通 / 弱（低於 -70 容易斷線）
-const sigQ = (v) => (v >= -55 ? "good" : v >= -70 ? "mid" : "weak");
-// 名字太長就截短：中文字算 1、英數算 0.55
-function shortName(name, max) {
-  let w = 0;
-  let out = "";
-  for (const ch of name) {
-    w += /[\u0000-\u024f]/.test(ch) ? 0.55 : 1;
-    if (w > max) return `${out.trimEnd()}…`;
-    out += ch;
-  }
-  return out;
-}
-const splitSec = (sec) => ({ h: Math.floor(sec / 3600), m: Math.floor((sec % 3600) / 60), s: sec % 60 });
-const WHEEL_ROW = 40; // 每一格的高度（px）
-function wheelCol(key, unit, n, v, label, suffix = "") {
-  const items = Array.from({ length: n }, (_, i) => `<div class="wi" data-a="wi" data-v="${i}">${pad2(i)}</div>`).join("");
-  return `<div class="wseg"><div class="wcol" tabindex="0" role="spinbutton" aria-label="${label}" aria-valuemin="0" aria-valuemax="${n - 1}" aria-valuenow="${v}" data-wheel="${key}:${unit}" data-val="${v}">${items}</div>${suffix ? `<span class="wlab">${suffix}</span>` : ""}</div>`;
-}
-// 幾點：時 : 分 : 秒
-function clockPicker(key, t, rows = 5) {
-  const [h, m, x] = hms(t).split(":").map(Number);
-  return `<div class="wheel r${rows}">${wheelCol(key, "h", 24, h, "時")}<span class="wsep">:</span>${wheelCol(key, "m", 60, m, "分")}<span class="wsep">:</span>${wheelCol(key, "s", 60, x, "秒")}</div>`;
-}
-// 多久：時 分 秒
-function durPicker(key, sec, rows = 3) {
-  const v = splitSec(sec || 0);
-  return `<div class="wheel dur r${rows}">${wheelCol(key, "h", 24, v.h, "小時", "時")}${wheelCol(key, "m", 60, v.m, "分鐘", "分")}${wheelCol(key, "s", 60, v.s, "秒", "秒")}</div>`;
-}
-// 日出日落：opt 1 = 日出、2 = 日落；val = 提早（負）／延後（正）幾分鐘
-const sunLabel = (opt, val) => `${opt === 1 ? "日出" : "日落"}${val ? `${val < 0 ? "前" : "後"} ${Math.abs(val)} 分` : ""}`;
-const sunIcon = (opt) => (opt === 1 ? "mdi:white-balance-sunny" : "mdi:weather-night");
-const hhmm = (m) => `${pad2(Math.floor(m / 60))}:${pad2(m % 60)}`;
-const hmsSec = (t) => {
-  const [h, m, x] = hms(t).split(":").map(Number);
-  return h * 3600 + m * 60 + x;
-};
-// 插座的 wday（星期日開始）↔ 我們的星期（0 = 星期一）
-const kasaDays = (wday) => wday.map((v, i) => (v ? (i + 6) % 7 : -1)).filter((d) => d >= 0).sort();
-const toKasaWday = (days) => [0, 1, 2, 3, 4, 5, 6].map((i) => (days.includes((i + 6) % 7) ? 1 : 0));
-// 訊號地圖的高度（公尺）
-const DEV_Z = 0.3;
-const AP_Z = 1.0;
-const BAND = [0.8, 1.6]; // 人的腰到胸
-const DEV_HEIGHTS = [[0.3, "牆上的插座孔"], [0.75, "桌上"], [1.2, "櫃子上"], [1.8, "高處"]];
-const AP_HEIGHTS = [[0.3, "地上"], [0.75, "桌上"], [1, "矮櫃上"], [1.8, "高櫃上"], [2.5, "天花板"]];
+// 空氣品質指標（AQI，環境部）→ 等級顏色
+const aqiCls = (v) => (v == null ? "" : v <= 50 ? "ok" : v <= 100 ? "" : "warn");
 
 // 長條圖：items = [{ v, tip, label, now }]；平均線不算還沒過完的最後一根
 function barPlot(items, unit) {
@@ -1602,11 +1526,12 @@ class PlugApp extends HTMLElement {
 
   // 首頁的天氣小按鈕：點開看預報
   _weatherChip(cls = "wchip") {
-    const w = this._s.calendar?.weather;
-    if (!w || w.temp == null) return "";
-    const x = wx(w.code, w.day);
-    const today = (w.daily || [])[0];
-    return `<button class="${cls}" data-a="weather" aria-label="天氣：${x.text} ${fmt(w.temp)} 度">${ic(x.icon)}${fmt(w.temp)}°<small>${x.text}${today?.pop >= 30 ? `・降雨 ${today.pop}%` : ""}</small></button>`;
+    const c = this._s.calendar || {};
+    const w = c.weather;
+    if (!w || c.weather_show === false || w.temp == null) return "";
+    const x = wx(w.code, w.obs_text || w.text, w.day);
+    const pop = w.hourly?.[0]?.pop;
+    return `<button class="${cls}" data-a="weather" aria-label="天氣：${esc(x.text)} ${fmt(w.temp, 1)} 度">${ic(x.icon)}${fmt(w.temp, 0)}°<small>${esc(w.text || x.text)}${pop >= 30 ? `・降雨 ${fmt(pop)}%` : ""}</small></button>`;
   }
 
   _statusPills() {
@@ -2264,13 +2189,17 @@ class PlugApp extends HTMLElement {
   // 下雨不執行：現在查到的雨量，和今天會不會跳過
   _rainLine() {
     const c = this._s.calendar || {};
-    const mm = c.rain_mm || {};
-    if (!c.weather_at) return `<div class="bstat">${ic("mdi:information-outline")}還沒查過天氣：儲存之後幾秒內會查一次，再打開這個排程就看得到</div>`;
+    const w = c.weather;
+    if (!w) return `<div class="bstat bad">${ic("mdi:alert-circle-outline")}還沒有氣象署授權碼：打開首頁的天氣面板貼上，才能判斷下雨</div>`;
+    if (!w.updated) return `<div class="bstat">${ic("mdi:information-outline")}還沒查過天氣：儲存之後幾秒內會查一次</div>`;
+    const r = w.rain;
+    const t = new Date(w.updated * 1000);
     const v = (x) => (x == null ? "—" : `${fmt(x, x < 10 ? 1 : 0)} mm`);
-    const t = new Date(c.weather_at * 1000);
-    return `<div class="bstat">${ic("mdi:water")}昨天下了 ${v(mm.yesterday)}・今天預報 ${v(mm.today)}・明天預報 ${v(mm.tomorrow)}</div>
-      <div class="bstat ${c.rain ? "" : "ok"}">${ic(c.rain ? "mdi:alert-circle-outline" : "mdi:check-circle")}${c.rain ? `今天會跳過：${esc(c.rain)}` : "今天照常執行（超過 3 mm 才算下雨）"}</div>
-      <div class="bstat">${ic("mdi:clock-outline")}${pad2(t.getHours())}:${pad2(t.getMinutes())} 查的，每 3 小時更新一次</div>`;
+    const p = (x) => (x == null ? "—" : `${fmt(x)}%`);
+    return `<div class="bstat">${ic("mdi:water")}${r ? `${esc(r.station)}雨量站：過去 24 小時 ${v(r.past24h)}・今天累積 ${v(r.today)}` : "附近沒有雨量站資料"}</div>
+      <div class="bstat">${ic("mdi:umbrella-outline")}氣象署預報白天降雨機率：今天 ${p(w.pop_today)}・明天 ${p(w.pop_tomorrow)}</div>
+      <div class="bstat ${c.rain ? "" : "ok"}">${ic(c.rain ? "mdi:alert-circle-outline" : "mdi:check-circle")}${c.rain ? `今天會跳過：${esc(c.rain)}` : `今天照常執行（過去 24 小時超過 ${w.rain_mm} mm，或白天降雨機率 ${w.rain_pop}% 以上才跳過）`}</div>
+      <div class="bstat">${ic("mdi:clock-outline")}${pad2(t.getHours())}:${pad2(t.getMinutes())} 更新</div>`;
   }
 
   _calendarLine() {
@@ -2569,55 +2498,71 @@ class PlugApp extends HTMLElement {
   }
 
   // Wi-Fi 感測（實驗）：每台插座 × 最近 60 分鐘的擾動熱力圖
-  // 天氣：現在、接下來 24 小時、4 天
-  _weatherSheet() {
+  // 天氣：中央氣象署測站實測＋鄉鎮預報，環境部空品測站
+  _weatherSheet(s) {
     const c = this._s.calendar || {};
     const w = c.weather;
-    const on = this._s.settings.weather !== false;
-    const head = this._sheetHead("mdi:weather-partly-cloudy", "天氣", "家裡附近（大約 10 公里內）");
-    const toggle = `<div class="group" style="margin-top:12px"><div class="gi"><div class="gt"><div class="gl">首頁顯示天氣</div><div class="gs">每 30 分鐘向 Open-Meteo 查一次，只送出大約的位置（經緯度到小數一位），不送其他資料</div></div>
+    const on = c.weather_show !== false;
+    const head = this._sheetHead("mdi:weather-partly-cloudy", "天氣", w?.place ? `${w.place}・中央氣象署` : "中央氣象署、環境部的開放資料");
+    const keyRow = (k, label, has, hint, ph) => `<div class="gi col"><div class="gt"><div class="gl">${label}${has ? `<span class="badge ok" style="margin-left:6px">已設定</span>` : ""}</div><div class="gs">${hint}</div></div>
+        <div class="inline" style="margin-top:8px"><input class="text" data-c="wkey-${k}" placeholder="${has ? "要換新的才填" : ph}" autocapitalize="off" autocomplete="off" spellcheck="false" aria-label="${label}">
+        <button class="btn" style="height:46px" data-a="wkey-save" data-v="${k}">儲存</button></div></div>`;
+    const keys = `<div class="group" style="margin-top:12px">
+      ${keyRow("cwa", "中央氣象署授權碼", !!w, "到 opendata.cwa.gov.tw 註冊、登入，右上角「取得授權碼」", "CWA- 開頭")}
+      ${keyRow("moenv", "環境部 API 金鑰（空氣品質）", !!w?.air_key, "到 data.moenv.gov.tw 註冊、登入，會員專區「API 金鑰」申請", "選填")}
+      <div class="gi"><div class="gt"><div class="gl">首頁顯示天氣</div><div class="gs">每 10 分鐘查一次附近的測站。最近的測站在樹莓派上算，家裡的位置不會送出去，氣象署只會知道查哪個測站和鄉鎮。授權碼只存在樹莓派上</div></div>
       <button class="sw ${on ? "on" : ""}" data-a="weather-toggle" role="switch" aria-checked="${on}" aria-label="首頁顯示天氣"></button></div></div>`;
-    if (!w) return `${head}<div class="empty">${on ? (c.weather_error ? `查不到天氣：${esc(c.weather_error)}` : "查詢中，等幾秒…") : "首頁天氣已關閉"}</div>${toggle}`;
-    const x = wx(w.code, w.day);
-    const pm = pmLevel(w.pm25);
+    if (!w) return `${head}<div class="callout">${ic("mdi:key-outline")}<div><b>還沒有氣象署授權碼</b><span>貼上下面的授權碼就會開始查</span></div></div>${keys}`;
+    if (w.temp == null) return `${head}<div class="empty">${w.error ? `查不到天氣：${esc(w.error)}` : "查詢中，等幾秒…"}</div>${keys}`;
+    const x = wx(w.code, w.obs_text || w.text, w.day);
     const today = (w.daily || [])[0] || {};
+    const obsAt = w.obs_at ? new Date(w.obs_at) : null;
+    const r = w.rain;
+    const a = w.air;
     const facts = [
-      ["mdi:thermometer", "體感", `${fmt(w.feels)}°`],
-      ["mdi:water-percent", "濕度", `${fmt(w.humidity)}%`],
-      ["mdi:umbrella-outline", "今天降雨", today.pop != null ? `${today.pop}%` : "—"],
-      ["mdi:weather-windy", "風速", `${fmt(w.wind)} km/h`],
+      ["mdi:thermometer", "體感", w.feels != null ? `${fmt(w.feels)}°` : "—"],
+      ["mdi:water-percent", "濕度", w.humidity != null ? `${fmt(w.humidity)}%` : "—"],
+      ["mdi:umbrella-outline", "降雨機率", w.hourly?.[0]?.pop != null ? `${fmt(w.hourly[0].pop)}%` : "—"],
+      ["mdi:water", "今天雨量", r ? `${fmt(r.today, r.today < 10 ? 1 : 0)} mm` : "—"],
+      ["mdi:weather-windy", "風速", w.wind != null ? `${fmt(w.wind, 1)} m/s` : "—"],
       ["mdi:white-balance-sunny", "紫外線", today.uv != null ? `${fmt(today.uv)}${today.uv >= 8 ? " 過量" : today.uv >= 6 ? " 高" : ""}` : "—"],
-      pm ? ["mdi:weather-fog", "PM2.5", `${fmt(w.pm25)}・${pm[0]}`, pm[1]] : null,
+      a ? ["mdi:weather-fog", "空氣品質 AQI", `${fmt(a.aqi)}・${esc(a.status || "")}`, aqiCls(a.aqi)] : null,
+      a?.pm25 != null ? ["mdi:weather-fog", "PM2.5", `${fmt(a.pm25)} µg/m³`] : null,
     ].filter(Boolean);
     const hours = (w.hourly || [])
       .map((h, i) => {
-        const hx = wx(h.code, h.day);
-        return `<div class="${i === 0 ? "now" : ""}" title="${esc(hx.text)}"><span>${i === 0 ? "現在" : h.t.slice(0, 2) + " 時"}</span>${ic(hx.icon)}<b>${fmt(h.temp)}°</b><span class="pop">${h.pop >= 20 ? `${h.pop}%` : ""}</span></div>`;
+        const hx = wx(h.code, h.text, h.day);
+        return `<div class="${i === 0 ? "now" : ""}" title="${esc(hx.text)}"><span>${i === 0 ? "現在" : h.t.slice(0, 2) + " 時"}</span>${ic(hx.icon)}<b>${fmt(h.temp)}°</b><span class="pop">${h.pop >= 20 ? `${fmt(h.pop)}%` : ""}</span></div>`;
       })
       .join("");
-    const days = w.daily || [];
+    const days = (w.daily || []).filter((d) => d.max != null && d.min != null);
     const lo = Math.min(...days.map((d) => d.min)), hi = Math.max(...days.map((d) => d.max));
     const span = Math.max(1, hi - lo);
     const dayName = (iso, i) => (i === 0 ? "今天" : i === 1 ? "明天" : `週${"日一二三四五六"[new Date(iso + "T12:00").getDay()]}`);
     const rows = days
       .map((d, i) => {
-        const dx = wx(d.code);
-        return `<div class="wday"><span class="d">${dayName(d.date, i)}</span>${ic(dx.icon)}<span class="tx">${dx.text}${d.rain >= 1 ? `・${fmt(d.rain, d.rain < 10 ? 1 : 0)} mm` : ""}</span>
-          <span class="pop">${d.pop != null && d.pop >= 10 ? `${ic("mdi:water")}${d.pop}%` : ""}</span><span class="lo">${fmt(d.min)}°</span>
+        const dx = wx(d.code, d.text);
+        return `<div class="wday"><span class="d">${dayName(d.date, i)}</span>${ic(dx.icon)}<span class="tx" title="${esc(dx.text)}">${esc(dx.text)}</span>
+          <span class="pop">${d.pop != null && d.pop >= 10 ? `${ic("mdi:water")}${fmt(d.pop)}%` : ""}</span><span class="lo">${fmt(d.min)}°</span>
           <span class="wbar"><i style="left:${(((d.min - lo) / span) * 100).toFixed(0)}%;right:${(((hi - d.max) / span) * 100).toFixed(0)}%"></i></span><span class="hi">${fmt(d.max)}°</span></div>`;
       })
       .join("");
-    const rainSched = (this._s.schedules || []).some((s) => s.skip_rain && s.enabled);
-    const t = c.weather_at ? new Date(c.weather_at * 1000) : null;
+    const rainSched = (this._s.schedules || []).some((x) => x.skip_rain && x.enabled);
+    const src = [
+      w.station ? `現在：${esc(w.station)}測站（${fmt(w.station_km, 1)} 公里）${obsAt ? ` ${pad2(obsAt.getHours())}:${pad2(obsAt.getMinutes())} 觀測` : ""}` : "",
+      r ? `雨量：${esc(r.station)}雨量站（${fmt(r.km, 1)} 公里）` : "",
+      w.place ? `預報：${esc(w.place)}鄉鎮預報` : "",
+      a ? `空氣：${esc(a.site)}測站（${fmt(a.km, 1)} 公里）` : w.air_key ? (w.air_error ? `空氣：查不到（${esc(w.air_error)}）` : "") : "",
+    ].filter(Boolean);
     return `
       ${head}
-      <div class="wnow">${ic(x.icon)}<div><div class="tp">${fmt(w.temp)}°</div><div class="tx">${x.text}・最高 ${fmt(today.max)}° 最低 ${fmt(today.min)}°</div></div></div>
+      <div class="wnow">${ic(x.icon)}<div><div class="tp">${fmt(w.temp, 1)}°</div><div class="tx">${esc(w.obs_text || w.text || "")}・今天 ${fmt(today.min)}°～${fmt(today.max)}°</div></div></div>
       <div class="wfacts">${facts.map(([icn, l, v, cls]) => `<div><div class="l">${ic(icn)}${l}</div><div class="v ${cls || ""}">${v}</div></div>`).join("")}</div>
-      <div class="card flat"><div class="ch"><div class="n">接下來 24 小時</div></div><div class="wbody"><div class="whours">${hours}</div></div></div>
-      <div class="card flat" style="margin-top:12px"><div class="ch"><div class="n">這幾天</div></div><div class="wbody"><div class="wdays">${rows}</div></div></div>
+      ${hours ? `<div class="card flat"><div class="ch"><div class="n">接下來 24 小時</div></div><div class="wbody"><div class="whours">${hours}</div></div></div>` : ""}
+      ${rows ? `<div class="card flat" style="margin-top:12px"><div class="ch"><div class="n">這一週</div></div><div class="wbody"><div class="wdays">${rows}</div></div></div>` : ""}
       ${rainSched ? `<div style="margin-top:12px;display:grid;gap:4px">${this._rainLine()}</div>` : ""}
-      <p class="desc" style="margin-top:10px">${t ? `${pad2(t.getHours())}:${pad2(t.getMinutes())} 更新・` : ""}資料來源：Open-Meteo（PM2.5 是模型估計，不是測站實測）</p>
-      ${toggle}`;
+      <p class="desc" style="margin-top:10px">資料來源：中央氣象署${a ? "、環境部" : ""}開放資料${w.error ? `・最近一次查詢失敗：${esc(w.error)}` : ""}<br>${src.join("<br>")}</p>
+      ${keys}`;
   }
 
   _senseSheet(s) {
@@ -3969,6 +3914,15 @@ class PlugApp extends HTMLElement {
           await api("PUT", "/api/settings", { presence: { home_dark_only: !this._s.settings.presence?.home_dark_only } });
         }),
       weather: () => this._openSheet({ type: "weather", wide: true, live: true }),
+      "wkey-save": (v) =>
+        this._safe(async () => {
+          const inp = this._sheetHost.querySelector(`[data-c="wkey-${v}"]`);
+          const val = (inp?.value || "").trim();
+          if (!val) return;
+          await api("PUT", "/api/weather/keys", { [v]: val });
+          inp.value = "";
+          this._showToast(v === "cwa" ? "已儲存氣象署授權碼，幾秒內會查一次" : "已儲存環境部金鑰");
+        }),
       "weather-toggle": () =>
         this._safe(async () => {
           await api("PUT", "/api/settings", { weather: this._s.settings.weather === false });
@@ -5214,7 +5168,7 @@ class PlugApp extends HTMLElement {
           <div class="gs">平日遇到國定假日、補假就跳過（假日表來自政府公告）；颱風假可以在排程頁按「今天放假」</div></div>
           <button class="sw ${d.skip_holiday ? "on" : ""}" data-a="sched-skip" data-v="skip_holiday" role="switch" aria-checked="${!!d.skip_holiday}" aria-label="國定假日不執行"></button></div>
         <div class="gi"><div class="gt"><div class="gl">下雨不執行</div>
-          <div class="gs">前一天下過雨、或預報當天會下雨（超過 3 mm）就跳過，適合澆水。會用大概的位置（約 10 公里）查天氣</div></div>
+          <div class="gs">最近的氣象署雨量站過去 24 小時下超過 3 mm，或氣象署預報白天降雨機率 70% 以上就跳過，適合澆水</div></div>
           <button class="sw ${d.skip_rain ? "on" : ""}" data-a="sched-skip" data-v="skip_rain" role="switch" aria-checked="${!!d.skip_rain}" aria-label="下雨不執行"></button></div>
         ${d.skip_rain ? `<div class="gi col">${this._rainLine()}</div>` : ""}
       </div>

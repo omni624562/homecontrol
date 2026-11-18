@@ -283,11 +283,11 @@ class Assistant:
 
         @beta_async_tool
         async def get_weather() -> str:
-            """家裡附近的天氣：現在的溫度、體感、濕度、天氣代碼（WMO）、PM2.5，接下來 24 小時（溫度、降雨機率），今天起 4 天（高低溫、雨量、降雨機率、紫外線），和「下雨不執行」今天會不會跳過。"""
+            """家裡附近的天氣（中央氣象署測站實測和鄉鎮預報、環境部空品測站）：現在的溫度、濕度、風速（m/s）、雨量站的今天累積和過去 24 小時雨量、AQI，接下來 24 小時（溫度、體感、降雨機率、天氣），一週（高低溫、降雨機率、紫外線），和「下雨不執行」今天會不會跳過。"""
             c = hub.snapshot()["calendar"]
             if not c.get("weather"):
                 return "沒有天氣資料（設定裡關掉了，或還沒查到）"
-            return json.dumps({"weather": c["weather"], "rain_skip_today": c.get("rain"), "rain_mm": c.get("rain_mm")}, ensure_ascii=False)
+            return json.dumps({"weather": c["weather"], "rain_skip_today": c.get("rain")}, ensure_ascii=False)
 
         @beta_async_tool
         async def get_energy() -> str:

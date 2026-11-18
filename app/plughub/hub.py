@@ -23,6 +23,7 @@ from . import habits, native, sun, tariff
 from .sensing import INTERVAL as SENSE_INTERVAL, SAVE_EVERY as SENSE_SAVE_EVERY, Sensing
 from .notify import Notifier
 from .daysoff import DaysOff
+from .weather import Weather
 from .router import Router
 from .store import Store
 
@@ -142,7 +143,8 @@ class Hub:
         # 網路用量：MAC → 上次讀到的累計位元組（主路由器的 Wi-Fi 裝置）；每天的用量存在 store["net_usage"]
         self._traffic_last: dict[str, int] = {}
         # 放假日、天氣（排程的「國定假日不執行」「下雨不執行」）
-        self.daysoff = DaysOff(store.dir)
+        self.weather = Weather(store.dir / "secrets.json")
+        self.daysoff = DaysOff(store.dir, self.weather)
         self._calendar_at = 0.0
         self._today = date.today()
         self.sched_skipped: dict[str, str] = {}  # 排程 ID → 今天為什麼沒執行
@@ -1471,8 +1473,8 @@ class Hub:
     def recheck_calendar(self) -> None:
         """排程改了：下一輪馬上查假日、天氣（還沒查過天氣的話）。"""
         self._calendar_at = 0.0
-        if not self.daysoff.rain:
-            self.daysoff.weather_at = 0.0
+        if not self.weather.periods:
+            self.weather.reset()
 
     async def _calendar_tick(self) -> None:
         today = date.today()
@@ -1486,11 +1488,11 @@ class Hub:
         self._calendar_at = time.time()
         need_weather = any(x.get("skip_rain") and x.get("enabled") for x in self.store.schedules)
         show = self.store.data["settings"].get("weather", True)
-        before = self.daysoff.weather_at
+        before = self.weather.updated
         if await self.daysoff.refresh(self.location(), need_weather, show):
             self.mark_native()
             await self.changed()
-        elif self.daysoff.weather_at != before:  # 只有天氣更新：畫面更新就好
+        elif self.weather.updated != before:  # 只有天氣更新：畫面更新就好
             await self.changed()
         self._check_weekly()
 
@@ -1666,11 +1668,8 @@ class Hub:
                 "day_off": self.store.data.get("day_off") == date.today().isoformat(),
                 "rain": self.daysoff.rainy(date.today()),
                 "holidays_ready": date.today().year in self.daysoff.years,
-                "weather_at": self.daysoff.weather_at or None,
-                "weather_error": self.daysoff.weather_error,
-                "weather": self.daysoff.weather if self.store.data["settings"].get("weather", True) else None,
-                "rain_mm": {k: self.daysoff.rain.get((date.today() + timedelta(days=d)).isoformat())
-                            for k, d in (("yesterday", -1), ("today", 0), ("tomorrow", 1))},
+                "weather": self.weather.report(),  # 沒有氣象署授權碼是 None
+                "weather_show": self.store.data["settings"].get("weather", True),
             },
             "sun": {"sunrise": self._sun_min(1, date.today()), "sunset": self._sun_min(2, date.today()), "located": self.location() is not None},
             "settings": settings,

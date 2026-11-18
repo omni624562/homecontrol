@@ -690,11 +690,11 @@ async def set_settings(body: dict = Body(...)) -> dict[str, Any]:
             pres["left_on"] = body["presence"]["left_on"]
         if "home_dark_only" in body["presence"]:  # 回家的情境只在天黑後執行
             pres["home_dark_only"] = bool(body["presence"]["home_dark_only"])
-    if "weather" in body:  # 首頁顯示天氣（每 30 分鐘向 Open-Meteo 查一次）
+    if "weather" in body:  # 首頁顯示天氣（每 10 分鐘向氣象署查一次）
         settings["weather"] = bool(body["weather"])
         if settings["weather"]:
             hub.recheck_calendar()
-            hub.daysoff.weather_at = 0.0
+            hub.weather.reset()
     if "weekly" in body:  # 每週日晚上的摘要推播
         settings["weekly"] = bool(body["weekly"])
     if "matter_scenes" in body:  # 情境也放到 Google Home（打開 = 執行）
@@ -722,6 +722,24 @@ async def day_off(body: dict = Body(...)) -> dict[str, Any]:
     store.save()
     hub.mark_native()
     return await _done()
+
+
+# ---- 天氣（氣象署、環境部的授權碼）----
+
+
+@app.put("/api/weather/keys")
+async def weather_keys(body: dict = Body(...)) -> dict[str, Any]:
+    """{"cwa": 氣象署授權碼, "moenv": 環境部 API 金鑰}（空字串 = 刪除）；不會回傳。"""
+    cwa = body.get("cwa")
+    moenv = body.get("moenv")
+    if cwa and not re.fullmatch(r"CWA-[A-Fa-f0-9\-]{20,60}", str(cwa).strip()):
+        raise HTTPException(400, "氣象署授權碼格式不對，應該是 CWA- 開頭")
+    if moenv and not re.fullmatch(r"[A-Za-z0-9\-]{16,80}", str(moenv).strip()):
+        raise HTTPException(400, "環境部 API 金鑰格式不對")
+    hub.weather.set_keys(None if cwa is None else str(cwa), None if moenv is None else str(moenv))
+    hub.recheck_calendar()
+    await hub.changed()
+    return {"cwa": bool(hub.weather.key()), "moenv": bool(hub.weather.air_key())}
 
 
 # ---- 問家裡（Claude）----
