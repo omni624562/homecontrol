@@ -146,6 +146,13 @@ const hmsSec = (t) => {
 // 插座的 wday（星期日開始）↔ 我們的星期（0 = 星期一）
 const kasaDays = (wday) => wday.map((v, i) => (v ? (i + 6) % 7 : -1)).filter((d) => d >= 0).sort();
 const toKasaWday = (days) => [0, 1, 2, 3, 4, 5, 6].map((i) => (days.includes((i + 6) % 7) ? 1 : 0));
+// 訊號地圖的高度（公尺）
+const DEV_Z = 0.3;
+const AP_Z = 1.0;
+const BAND = [0.8, 1.6]; // 人的腰到胸
+const DEV_HEIGHTS = [[0.3, "牆上的插座孔"], [0.75, "桌上"], [1.2, "櫃子上"], [1.8, "高處"]];
+const AP_HEIGHTS = [[0.3, "地上"], [0.75, "桌上"], [1, "矮櫃上"], [1.8, "高櫃上"], [2.5, "天花板"]];
+
 // 長條圖：items = [{ v, tip, label, now }]；平均線不算還沒過完的最後一根
 function barPlot(items, unit) {
   const max = Math.max(0.001, ...items.map((x) => x.v));
@@ -805,6 +812,14 @@ const STYLE = `
   .group .wheel::before { background: var(--soft); box-shadow: none; }
   @media (min-width: 720px) { .wcol { width: 76px; } }
 
+  /* ═════════ 排程建議 ═════════ */
+  .set.sugg { flex-wrap: wrap; row-gap: 10px; }
+  .set.sugg .tx { flex: 1 1 260px; }
+  .set.sugg .acts { display: flex; gap: 8px; margin-left: auto; }
+  .set.sugg .sun { display: inline-flex; align-items: center; gap: 2px; }
+  .set.sugg .sun .i { width: 15px; height: 15px; }
+  .netwarn.past { color: var(--muted); }
+
   /* ═════════ 訊號地圖 ═════════ */
   .link.back { display: inline-flex; align-items: center; gap: 0; padding: 0 0 4px; font-size: 14px; }
   .link.back .i { width: 18px; height: 18px; margin-left: -4px; }
@@ -838,6 +853,16 @@ const STYLE = `
   svg.map .ap .wd { fill: var(--card); }
   svg.map.editing .mk, svg.map.editing .ap { cursor: grab; }
   svg.map .mk.hot .dot { stroke-width: 4; }
+  svg.map .link { stroke: var(--text2); stroke-linecap: round; opacity: .55; }
+  svg.map .link.ok { opacity: .4; stroke-dasharray: 10 8; }
+  svg.map .link.poor { opacity: .25; stroke-dasharray: 3 9; }
+  svg.map .link.hot { stroke: var(--warn); opacity: var(--a); stroke-dasharray: none; }
+  .legend.lk { margin-left: 12px; gap: 6px; }
+  .legend.lk b { display: inline-block; width: 18px; height: 0; border-top: 2.5px solid var(--text2); opacity: .6; margin-left: 4px; }
+  .legend.lk b.poor { border-top-style: dotted; opacity: .4; }
+  .mapside .gsel { width: 100%; max-width: none; }
+  .mapside .field .unit { color: var(--muted); font-size: 14px; }
+  .mapside input.num { max-width: 110px; }
 
   /* ═════════ 確認對話框 ═════════ */
   .cwrap { position: fixed; inset: 0; z-index: 60; background: rgba(15,23,42,.45); display: flex; align-items: center; justify-content: center; padding: 24px; animation: fade .15s; }
@@ -952,6 +977,12 @@ class PlugApp extends HTMLElement {
   async _load() {
     try {
       this._setState(await api("GET", "/api/state"));
+      // 從主畫面長按圖示的捷徑打開：執行那個情境（只執行一次，網址馬上清掉）
+      const run = new URLSearchParams(location.search).get("run");
+      if (run) {
+        history.replaceState(null, "", location.pathname + location.hash);
+        if (this._scenes.some((x) => x.id === run)) this._runScene(run);
+      }
     } catch {
       this._connected = false;
       this._render();
@@ -1397,6 +1428,8 @@ class PlugApp extends HTMLElement {
           </div>`,
           )
           .join("");
+    // 手機上排程清單很長，建議放最上面才看得到
+    const narrow = innerWidth < 720;
     const empty = `
       <p class="desc" style="padding:0 16px 12px">還沒有排程。可以從這些開始：</p>
       <div class="templates">
@@ -1410,11 +1443,14 @@ class PlugApp extends HTMLElement {
         <div class="right"><button class="btn primary" data-a="sched-new">${ic("mdi:plus")}新增</button></div>
       </div>
       <div class="grid">
+        ${narrow ? this._habitCard() : ""}
         <section class="card">
           <div class="ch"><div class="ri">${ic("mdi:calendar-clock")}</div><div class="n">排程</div></div>
           ${rows || empty}
+          ${this._habitLearning()}
           ${rows ? `<p class="desc foot">${ic("mdi:shield-check-outline")}家庭中控的排程也會寫進插座，樹莓派離線時照樣執行。標「插座內建」的是用 Kasa App 設的，存在插座裡，在這裡一樣可以開關、修改、刪除。</p>` : ""}
         </section>
+        ${narrow ? "" : this._habitCard()}
         ${this._awayCard()}
         ${
           timers.length
@@ -1425,6 +1461,47 @@ class PlugApp extends HTMLElement {
             : ""
         }
       </div>`;
+  }
+
+  // 從手動開關的習慣建議排程
+  _habitList() {
+    return ((this._s.habits || {}).suggestions || []).filter((x) => this._plug(x.plug)).slice(0, 5);
+  }
+
+  _habitCard() {
+    const list = this._habitList();
+    if (!list.length) return "";
+    const sun = this._s.sun || {};
+    const rows = list
+      .map((x) => {
+        const p = this._plug(x.plug);
+        const opt = x.mode === "sunrise" ? 1 : x.mode === "sunset" ? 2 : 0;
+        const base = opt === 1 ? sun.sunrise : sun.sunset;
+        const when = opt ? `<span class="sun">${ic(sunIcon(opt))}${sunLabel(opt, x.offset_min)}</span>` : x.time;
+        const today = opt && base != null ? `（今天約 ${hhmm(base + x.offset_min)}）` : "";
+        const verb = x.action === "on" ? "打開" : "關閉";
+        return `
+          <div class="set sugg">
+            <div class="tx"><div class="l">${daysText(x.days)} ${when}${today} ${verb}${esc(p.name)}</div>
+              <div class="s">過去 ${x.of} 天裡有 ${x.hits} 天，你都差不多在這時候手動${verb}它</div></div>
+            <div class="acts"><button class="btn sm" data-a="habit-no" data-v="${esc(x.key)}">不用</button>
+            <button class="btn sm primary" data-a="habit-yes" data-v="${esc(x.key)}">做成排程</button></div>
+          </div>`;
+      })
+      .join("");
+    return `
+      <section class="card">
+        <div class="ch"><div class="ri">${ic("mdi:calendar-clock")}</div><div class="n">建議的排程</div><div class="end"><span class="badge wait">${list.length}</span></div></div>
+        ${rows}
+        <p class="desc foot">從你手動開關的紀錄找出來的（App、Google Home、插座上的按鈕都算）。按「不用」之後就不會再建議這一條。</p>
+      </section>`;
+  }
+
+  // 還在學：資料不夠時說明一下，讓人知道之後會有建議
+  _habitLearning() {
+    const h = this._s.habits || {};
+    if (this._habitList().length || (h.days || 0) >= 14) return "";
+    return `<p class="desc foot">${ic("mdi:calendar-clock")}正在記錄你手動開關的習慣${h.days ? `（已經 ${h.days} 天）` : ""}；某個插座常在差不多的時間被開關，大約一週後會出現「建議的排程」。</p>`;
   }
 
   // 家庭中控排程的標籤：順便顯示有沒有寫進插座當備援
@@ -1544,9 +1621,26 @@ class PlugApp extends HTMLElement {
         <div class="tx"><div class="l">網路與韌體檢查</div>
           <div class="s">${ok ? `${r.devices} 台插座都連在「${esc(r.main || "")}」，加密 WPA2，韌體${r.fwUnknown ? "無法檢查（已斷開 TP-Link 雲端）" : "都是最新"}` : `${r.issues.length} 個地方要注意`}</div>
           ${r.issues.map((i) => `<div class="netwarn">${ic("mdi:alert-circle-outline")}<span><b>${esc(i.label)}</b>：${esc(i.text)}</span></div>`).join("")}
+          ${this._netEventsHtml()}
         </div>
         ${ok ? `<span class="gv ok">${ic("mdi:check-circle")}</span>` : ""}
       </div>`;
+  }
+
+  // 整個 Wi-Fi 的插座同時斷線（最近 7 天）
+  _netEventsHtml() {
+    const now = this._now();
+    const evs = (this._s.net_events || []).filter((e) => !e.end || now - e.end < 7 * 86400).reverse();
+    return evs
+      .map((e) => {
+        const t = new Date(e.start * 1000);
+        const at = `${t.getMonth() + 1}/${t.getDate()} ${pad2(t.getHours())}:${pad2(t.getMinutes())}`;
+        const text = e.end
+          ? `${at} 斷了大約 ${Math.max(1, Math.round((e.end - e.start) / 60))} 分鐘，${e.devices} 台插座同時連不上，多半是路由器重開或當機`
+          : `從 ${at} 開始，${e.devices} 台插座同時連不上，可能是路由器的問題`;
+        return `<div class="netwarn ${e.end ? "past" : ""}">${ic(e.end ? "mdi:wifi" : "mdi:wifi-off")}<span><b>「${esc(e.ssid)}」</b>：${text}</span></div>`;
+      })
+      .join("");
   }
 
   _awayCard() {
@@ -1965,6 +2059,7 @@ class PlugApp extends HTMLElement {
     for (const d of devs.values()) {
       d.name = d.plugs.length > 1 ? `${d.plugs[0].name} 等 ${d.plugs.length} 個` : d.plugs[0].name;
       d.full = d.plugs.map((p) => p.name).join("、");
+      d.ssid = d.plugs.find((p) => p.net?.ssid)?.net.ssid || null;
     }
     return [...devs.values()];
   }
@@ -2034,8 +2129,8 @@ class PlugApp extends HTMLElement {
       const { w, h, aps } = this._fp;
       const R = Math.round;
       const rooms = this._fp.rooms.map((r) => ({ ...r, x: R(r.x), y: R(r.y), w: R(r.w), h: R(r.h) }));
-      const items = Object.fromEntries(Object.entries(this._fp.items).map(([k, v]) => [k, { x: R(v.x), y: R(v.y) }]));
-      api("PUT", "/api/floorplan", { w, h, rooms, items, aps }).catch((err) => this._showToast(`地圖沒有存到：${err.message}`));
+      const items = Object.fromEntries(Object.entries(this._fp.items).map(([k, v]) => [k, { x: R(v.x), y: R(v.y), z: v.z ?? null }]));
+      api("PUT", "/api/floorplan", { w, h, meters: this._fp.meters || 12, rooms, items, aps }).catch((err) => this._showToast(`地圖沒有存到：${err.message}`));
     }, 400);
   }
 
@@ -2123,6 +2218,36 @@ class PlugApp extends HTMLElement {
     this._render();
   }
 
+  // 每台插座到它連的 Wi-Fi 基地台的連線：路徑有多長經過人的腰到胸（0.8～1.6 公尺），越長越適合偵測走動
+  _mapLinks(devs) {
+    const fp = this._fp;
+    const mpp = (fp.meters || 12) / fp.w; // 每單位幾公尺
+    const aps = fp.aps.filter((a) => a.ssid && fp.items[`ap:${a.id}`]);
+    const links = [];
+    for (const d of devs) {
+      const it = fp.items[d.key];
+      if (!it || !d.ssid) continue;
+      const cands = aps.filter((a) => a.ssid === d.ssid);
+      if (!cands.length) continue;
+      const dist = (a) => Math.hypot(fp.items[`ap:${a.id}`].x - it.x, fp.items[`ap:${a.id}`].y - it.y);
+      const ap = cands.reduce((b, a) => (dist(a) < dist(b) ? a : b));
+      const at = fp.items[`ap:${ap.id}`];
+      const L = dist(ap) * mpp;
+      const zp = it.z ?? DEV_Z;
+      const za = ap.z ?? AP_Z;
+      let f;
+      if (Math.abs(za - zp) < 0.01) f = zp >= BAND[0] && zp <= BAND[1] ? 1 : 0;
+      else {
+        const t1 = (BAND[0] - zp) / (za - zp);
+        const t2 = (BAND[1] - zp) / (za - zp);
+        f = Math.max(0, Math.min(1, Math.max(t1, t2)) - Math.max(0, Math.min(t1, t2)));
+      }
+      const band = f * L;
+      links.push({ dev: d, ap, x1: it.x, y1: it.y, x2: at.x, y2: at.y, L, band, q: band >= 2 ? "good" : band >= 0.8 ? "ok" : "poor", guess: cands.length > 1 });
+    }
+    return links;
+  }
+
   _mapPage() {
     this._mapLoad();
     const fp = this._fp;
@@ -2164,6 +2289,18 @@ class PlugApp extends HTMLElement {
       .join("");
     const sigText = (v) => (v == null ? "—" : `${v}`);
     const weak = (v) => v != null && v < -70;
+    const links = this._mapLinks(devs);
+    const showLinks = edit || layer === "motion";
+    const linesSvg = showLinks
+      ? links
+          .map((l) => {
+            const m = motion[l.dev.key];
+            const hot = layer === "motion" && !edit && m != null && m > 0.15;
+            return `<line class="link ${l.q} ${hot ? "hot" : ""}" x1="${l.x1}" y1="${l.y1}" x2="${l.x2}" y2="${l.y2}" style="stroke-width:${((hot ? 3 + Math.min(m, 3) * 1.5 : 2.5) * k).toFixed(1)}px${hot ? `;--a:${Math.min(1, 0.35 + m / 3).toFixed(2)}` : ""}"/>`;
+          })
+          .join("")
+      : "";
+    const qText = { good: "適合偵測走動", ok: "勉強可以偵測走動", poor: "不太適合偵測走動" };
     const markers = placed
       .map((d) => {
         const it = fp.items[d.key];
@@ -2192,13 +2329,13 @@ class PlugApp extends HTMLElement {
         ${img}
         <g class="roomsbg">${fp.rooms.map((r) => `<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="10"/>`).join("")}</g>
         ${heat ? `<g clip-path="url(#rooms)">${heat}</g>` : ""}
-        ${rooms}${aps}${markers}
+        ${rooms}<g class="links">${linesSvg}</g>${aps}${markers}
       </svg>`;
     const dflt = layer === "signal" ? "滑過裝置看訊號強度" : sense?.enabled === false ? "Wi-Fi 感測已暫停（設定 → Wi-Fi 感測）" : "橘色光圈越大，那附近越可能有人在走動・每 10 秒更新";
     const legend =
       layer === "signal"
         ? `<span class="legend">訊號弱<i style="--a:.15"></i><i style="--a:.4"></i><i style="--a:.7"></i><i style="--a:1"></i>訊號好</span>`
-        : `<span class="legend warm">安靜<i style="--a:.15"></i><i style="--a:.4"></i><i style="--a:.7"></i><i style="--a:1"></i>擾動大</span>`;
+        : `<span class="legend warm">安靜<i style="--a:.15"></i><i style="--a:.4"></i><i style="--a:.7"></i><i style="--a:1"></i>擾動大</span>${links.length ? `<span class="legend lk"><b class="good"></b>適合偵測的線<b class="poor"></b>不太適合</span>` : ""}`;
     const tools = edit
       ? `<div class="maptools">
           <button class="btn sm" data-a="map-room-add">${ic("mdi:plus")}房間</button>
@@ -2215,7 +2352,12 @@ class PlugApp extends HTMLElement {
     let side = "";
     if (edit) {
       const sel = this._mapSel;
-      let selHtml = `<p class="desc">點房間或裝置可以選取；拖曳移動，房間拉右下角的小方塊改大小。</p>`;
+      const zSel = (val, opts) =>
+        `<select class="gsel" data-c="map-z" aria-label="高度">${opts.map(([v, l]) => `<option value="${v}" ${Math.abs(v - val) < 0.01 ? "selected" : ""}>${l}（${v} 公尺）</option>`).join("")}${opts.some(([v]) => Math.abs(v - val) < 0.01) ? "" : `<option selected value="${val}">${val} 公尺</option>`}</select>`;
+      const ssids = [...new Set(devs.map((d) => d.ssid).filter(Boolean))];
+      let selHtml = `<p class="desc">點房間、裝置或 Wi-Fi 基地台可以選取；拖曳移動，房間拉右下角的小方塊改大小。</p>
+        <div class="q">地圖的實際寬度 <small>用來算距離</small></div>
+        <div class="field"><input class="text num" type="number" min="2" max="100" step="0.5" inputmode="decimal" data-c="map-meters" value="${fp.meters || 12}" aria-label="實際寬度"><span class="unit">公尺</span></div>`;
       if (sel?.kind === "room") {
         const r = fp.rooms.find((x) => x.id === sel.id);
         if (r)
@@ -2223,10 +2365,24 @@ class PlugApp extends HTMLElement {
       } else if (sel?.kind === "ap") {
         const a = fp.aps.find((x) => x.id === sel.id);
         if (a)
-          selHtml = `<div class="q">Wi-Fi 基地台名稱</div><div class="field"><input class="text" data-c="map-name" value="${esc(a.name)}" maxlength="30" aria-label="名稱"><button class="btn danger" data-a="map-ap-del" data-v="${esc(a.id)}" data-confirm="移除這個 Wi-Fi 基地台？" data-confirm-text="只從地圖移除。" data-confirm-ok="移除">移除</button></div>`;
+          selHtml = `<div class="q">Wi-Fi 基地台名稱</div><div class="field"><input class="text" data-c="map-name" value="${esc(a.name)}" maxlength="30" aria-label="名稱"><button class="btn danger" data-a="map-ap-del" data-v="${esc(a.id)}" data-confirm="移除這個 Wi-Fi 基地台？" data-confirm-text="只從地圖移除。" data-confirm-ok="移除">移除</button></div>
+            <div class="q">它發出的 Wi-Fi <small>連這個 Wi-Fi 的插座會畫一條線連到它</small></div>
+            <select class="gsel" data-c="map-ap-ssid" aria-label="Wi-Fi 名稱"><option value="">還沒選</option>${ssids.map((x) => `<option ${a.ssid === x ? "selected" : ""}>${esc(x)}</option>`).join("")}</select>
+            <div class="q">放的高度 <small>放高一點，訊號線才會穿過人的身體</small></div>
+            ${zSel(a.z ?? AP_Z, AP_HEIGHTS)}
+            <p class="desc" style="margin-top:8px">${links.filter((l) => l.ap.id === a.id).length} 台插座連到這裡</p>`;
       } else if (sel?.kind === "dev") {
         const d = devs.find((x) => x.key === sel.id);
-        if (d) selHtml = `<div class="q">${esc(d.full)}</div><p class="desc">訊號 ${sigText(d.rssi)} dBm</p><button class="btn sm" data-a="map-unplace" data-v="${esc(d.key)}">從地圖拿下來</button>`;
+        const l = links.find((x) => x.dev.key === sel.id);
+        const linkTxt = l
+          ? `連到「${esc(l.ap.name)}」${l.guess ? "（同名的 Wi-Fi 有好幾台，先猜最近的）" : ""}，相距約 ${fmt(l.L, 1)} 公尺，其中約 ${fmt(l.band, 1)} 公尺經過人的腰到胸的高度：<b>${qText[l.q]}</b>`
+          : d?.ssid
+            ? `連「${esc(d.ssid)}」，在地圖上加一台 Wi-Fi 基地台、選這個 Wi-Fi，就會畫出連線`
+            : "";
+        if (d)
+          selHtml = `<div class="q">${esc(d.full)}</div><p class="desc">訊號 ${sigText(d.rssi)} dBm${linkTxt ? `・${linkTxt}` : ""}</p>
+            <div class="q">插在多高</div>${zSel(fp.items[d.key].z ?? DEV_Z, DEV_HEIGHTS)}
+            <button class="btn sm" data-a="map-unplace" data-v="${esc(d.key)}" style="margin-top:12px">從地圖拿下來</button>`;
       }
       const tray = devs.filter((d) => !fp.items[d.key]);
       side = `
@@ -2243,7 +2399,15 @@ class PlugApp extends HTMLElement {
           <div class="pad">
             ${weakDevs.length ? weakDevs.map((d) => `<div class="netwarn">${ic("mdi:alert-circle-outline")}<span><b>${esc(d.full)}</b>：訊號 ${d.rssi} dBm，偏弱，容易斷線。可以考慮把 Wi-Fi 基地台移近一點。</span></div>`).join("") : `<p class="desc">${ic("mdi:check-circle")} 所有裝置的訊號都在 -70 dBm 以上。</p>`}
             ${off.length ? `<div class="netwarn">${ic("mdi:wifi-off")}<span>${off.length} 台離線：${esc(off.map((d) => d.name).join("、"))}</span></div>` : ""}
-            ${fp.aps.length ? "" : `<p class="desc" style="margin-top:10px">按右上角「編輯」可以把你的 Wi-Fi 基地台也擺上去，比較容易看出哪裡離基地台太遠。</p>`}
+            ${
+              layer === "motion"
+                ? links.length
+                  ? `<p class="desc" style="margin-top:10px"><b>${links.filter((l) => l.q === "good").length} 條線適合偵測走動</b>${links.some((l) => l.q === "good") ? `：${esc(links.filter((l) => l.q === "good").map((l) => l.dev.name).join("、"))}` : ""}。實線穿過人的腰到胸的高度，有人走過去訊號會明顯跳動；虛線大多貼著地面或太短。</p>`
+                  : `<p class="desc" style="margin-top:10px">在「編輯」裡加上 Wi-Fi 基地台、選它發出的 Wi-Fi 和放的高度，就會畫出每台插座到基地台的訊號線，看得出哪幾條適合偵測走動。</p>`
+                : fp.aps.length
+                  ? ""
+                  : `<p class="desc" style="margin-top:10px">按右上角「編輯」可以把你的 Wi-Fi 基地台也擺上去，比較容易看出哪裡離基地台太遠。</p>`
+            }
             <p class="desc" style="margin-top:10px">顏色是用各裝置的訊號強度推算出來的，只是大概的樣子：沒有裝置的地方是猜的。</p>
           </div>
         </section>`;
@@ -2474,6 +2638,14 @@ class PlugApp extends HTMLElement {
       "scene-edit": (v) => this._openSceneEditor(v),
       "scene-new": () => this._openSceneEditor(null),
       "sched-new": () => this._openSchedEditor(null),
+      "habit-yes": (v) => {
+        const x = this._habitList().find((h) => h.key === v);
+        if (x) this._openSchedEditor(null, null, x);
+      },
+      "habit-no": (v) =>
+        this._safe(async () => {
+          await api("POST", "/api/habits/dismiss", { key: v });
+        }),
       "sched-edit": (v) => this._openSchedEditor(v),
       "sched-template": (v) => this._openSchedEditor(null, v),
       "sched-toggle": (v, t) => {
@@ -2823,6 +2995,31 @@ class PlugApp extends HTMLElement {
         const list = sel.kind === "room" ? this._fp.rooms : this._fp.aps;
         const x = list.find((r) => r.id === sel.id);
         if (x) x.name = t.value.trim().slice(0, 20) || x.name;
+        this._mapSave();
+        this._render();
+      },
+      "map-meters": (v, t) => {
+        const n = Number(t.value);
+        if (!(n >= 2 && n <= 100)) return;
+        this._fp.meters = n;
+        this._mapSave();
+        this._render();
+      },
+      "map-ap-ssid": (v, t) => {
+        const a = this._fp.aps.find((x) => x.id === this._mapSel?.id);
+        if (!a) return;
+        a.ssid = t.value || null;
+        this._mapSave();
+        this._render();
+      },
+      "map-z": (v, t) => {
+        const sel = this._mapSel;
+        const z = Number(t.value);
+        if (!sel) return;
+        if (sel.kind === "ap") {
+          const a = this._fp.aps.find((x) => x.id === sel.id);
+          if (a) a.z = z;
+        } else if (sel.kind === "dev" && this._fp.items[sel.id]) this._fp.items[sel.id].z = z;
         this._mapSave();
         this._render();
       },
@@ -3468,7 +3665,7 @@ class PlugApp extends HTMLElement {
 
   // ── 排程編輯 ──
 
-  _openSchedEditor(id, template) {
+  _openSchedEditor(id, template, sugg) {
     const x = id ? (this._s.schedules || []).find((s) => s.id === id) : null;
     let draft;
     if (x) {
@@ -3484,6 +3681,12 @@ class PlugApp extends HTMLElement {
         Object.assign(draft, { time: "08:30:00", days: [0, 1, 2, 3, 4], action: "scene", scene: sc?.id || null });
       } else if (template === "water") {
         Object.assign(draft, { time: "06:30:00", action: "on", duration_s: 60, plugs: plugs.filter((p) => /澆水|water/i.test(p.name)).map((p) => p.id) });
+      }
+      if (sugg) {
+        Object.assign(draft, {
+          time: `${sugg.time}:00`, days: [...sugg.days], action: sugg.action, plugs: [sugg.plug],
+          time_mode: sugg.mode, offset_min: sugg.offset_min,
+        });
       }
     }
     this._openSheet({ type: "sched", id, draft, wide: true });

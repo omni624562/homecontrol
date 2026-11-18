@@ -112,7 +112,7 @@ export class PlughubPlatform extends MatterbridgeDynamicPlatform {
     try {
       await this.api(`/api/plugs/${encodeURIComponent(plugId)}/power`, {
         method: 'POST',
-        body: JSON.stringify({ on }),
+        body: JSON.stringify({ on, source: 'matter' }),
       });
     } catch (err) {
       this.log.error(`開關失敗：${err.message}`);

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import calendar
+import contextvars
 import logging
 import time
 from dataclasses import dataclass, field
@@ -18,12 +19,16 @@ from typing import Any, Callable
 
 from kasa import Device, Discover, Module
 
-from . import native, sun, tariff
+from . import habits, native, sun, tariff
 from .sensing import INTERVAL as SENSE_INTERVAL, SAVE_EVERY as SENSE_SAVE_EVERY, Sensing
 from .notify import Notifier
 from .store import Store
 
 _LOGGER = logging.getLogger(__name__)
+
+# 這次開關是誰做的（記在開關紀錄裡）：API 進來的會設成 app／matter，其他（排程、情境、定時）是 auto
+SOURCE: contextvars.ContextVar[str] = contextvars.ContextVar("source", default="auto")
+NET_OUTAGE_SECONDS = 90  # 同一個 Wi-Fi 的插座全部斷線多久才算路由器出問題
 
 POLL_SECONDS = 5
 # 名稱有這些字的插座，第一次看到時自動設「最長開啟 10 分鐘」（之後可以在 App 改）
@@ -116,6 +121,11 @@ class Hub:
         self._lease_busy = False
         self._timer_failed: set[str] = set()  # 定時關閉失敗、已經通知過的插座
         self._offline_notified: set[str] = set()
+        self._state_known: set[str] = set()  # 讀過開關狀態的插座（第一次讀到的不算「被按了」）
+        self._outage: dict[str, dict[str, Any]] = {}  # SSID → 正在斷線的紀錄
+        self.habits: list[dict[str, Any]] = []
+        self.habit_days = 0
+        self._habits_at = 0.0
         self._overload_notified: set[str] = set()
         self._last_flush = time.monotonic()
         self._discovering = False
@@ -272,7 +282,11 @@ class Hub:
         for pid in entry.plugs:
             plug = self.plugs[pid]
             source = device.children[plug.child_index] if plug.child_index is not None else device
-            self._set_is_on(plug, bool(source.is_on))
+            now_on = bool(source.is_on)
+            if pid in self._state_known and plug.online and now_on != plug.is_on:
+                self._log_switch(plug, now_on, "button")
+            self._state_known.add(pid)
+            self._set_is_on(plug, now_on)
             # 「開了多久」用插座自己記錄的（樹莓派重開也不會歸零）
             try:
                 since = getattr(source, "on_since", None)
@@ -342,13 +356,85 @@ class Hub:
             and not self.store.meta(plug.id).keep_on
         )
 
+    def _log_switch(self, plug: Plug, on: bool, source: str) -> None:
+        try:
+            self.store.energy.log_switch(time.time(), plug.id, on, source)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("開關紀錄沒有寫入：%s", err)
+
+    # ---- 排程建議 ----
+
+    def refresh_habits(self) -> None:
+        self._habits_at = time.time()
+        first = self.store.energy.first_switch()
+        events = self.store.energy.switches(time.time() - (habits.LOOKBACK + 1) * 86400)
+        dismissed = set(self.store.data["settings"].get("habit_dismissed", []))
+        sugg = habits.suggest(events, self._covered, self._sun_min,
+                              date.fromtimestamp(first) if first else None, date.today())
+        self.habits = [s for s in sugg if s["key"] not in dismissed and s["plug"] in self.plugs]
+        self.habit_days = (date.today() - date.fromtimestamp(first)).days if first else 0
+
+    def _covered(self, pid: str, on: bool, minute: int, days: list[int]) -> bool:
+        """已經有排程（家庭中控的、或插座裡 Kasa App 設的）在差不多的時間做這件事。"""
+        today = date.today()
+        for x in self.store.schedules:
+            if not x.get("enabled"):
+                continue
+            if x["action"] == "scene":
+                sc = self.store.scene(x.get("scene") or "")
+                act = (sc or {}).get("actions", {}).get(pid)
+                if act != ("on" if on else "off"):
+                    continue
+            elif x["action"] != ("on" if on else "off") or pid not in x.get("plugs", []):
+                continue
+            t = self.sched_time(x, today)
+            if t and abs(int(t[:2]) * 60 + int(t[3:5]) - minute) <= 30 and set(x["days"]) & set(days):
+                return True
+        for r in (self.native.get(pid) or {}).get("kasa", []):
+            if r.get("enable") and bool(r.get("sact")) == on and abs(int(r.get("smin", -999)) - minute) <= 30:
+                return True
+        return False
+
     # ---- 通知 ----
+
+    def _check_net(self, now: float) -> None:
+        """同一個 Wi-Fi 的插座（至少 2 台）全部斷線 = 多半是路由器或 Wi-Fi 的問題，記下來並通知一次。"""
+        by_ssid: dict[str, list[DeviceEntry]] = {}
+        for key, entry in self.devices.items():
+            ssid = self.dev_info.get(key, {}).get("ssid")
+            if ssid:
+                by_ssid.setdefault(ssid, []).append(entry)
+        for ssid, entries in by_ssid.items():
+            if len(entries) < 2:
+                continue
+            plugs = [self.plugs[e.plugs[0]] for e in entries if e.plugs]
+            down = all(not p.online for p in plugs)
+            cur = self._outage.get(ssid)
+            if down:
+                start = min((p.offline_since or now) for p in plugs)
+                if cur is None and now - start >= NET_OUTAGE_SECONDS:
+                    self._outage[ssid] = {"ssid": ssid, "start": start, "end": None, "devices": len(plugs)}
+                    self.notifier.send("Wi-Fi 可能斷了", f"連「{ssid}」的 {len(plugs)} 台插座同時斷線，可能是路由器的問題", "high")
+            elif cur is not None:
+                cur["end"] = now
+                events = self.store.data["net_events"]
+                events.append(cur)
+                del events[:-30]
+                self._dirty = True
+                del self._outage[ssid]
+                self.notifier.send("Wi-Fi 恢復了", f"「{ssid}」的插座又連得上了，斷了大約 {max(1, round((now - cur['start']) / 60))} 分鐘")
 
     def _check_alerts(self) -> None:
         now = time.time()
         settings = self.store.data["settings"]
+        self._check_net(now)
+        down_ssids = set(self._outage)
         for plug in self.plugs.values():
             name = self.name(plug)
+            # 整個 Wi-Fi 斷了就不再一台一台通知
+            if not plug.online and self.dev_info.get(plug.device_key, {}).get("ssid") in down_ssids:
+                self._offline_notified.add(plug.id)
+                continue
             # 斷線超過 10 分鐘
             if not plug.online and plug.offline_since and now - plug.offline_since > OFFLINE_NOTIFY_MINUTES * 60:
                 if plug.id not in self._offline_notified:
@@ -377,6 +463,8 @@ class Hub:
         entry = self.devices[plug.device_key]
         target = entry.device.children[plug.child_index] if plug.child_index is not None else entry.device
         await asyncio.wait_for(target.turn_on() if on else target.turn_off(), DEVICE_TIMEOUT)
+        if plug.is_on != on:
+            self._log_switch(plug, on, SOURCE.get())
         self._set_is_on(plug, on)
         try:
             await asyncio.wait_for(entry.device.update(), DEVICE_TIMEOUT)
@@ -534,6 +622,11 @@ class Hub:
         await self._lease()
         if time.time() - self._usage_at >= 1800:
             await self.refresh_usage()
+        if time.time() - self._habits_at >= 600:
+            try:
+                self.refresh_habits()
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning("排程建議算不出來：%s", err)
 
     async def refresh_usage(self) -> None:
         self._usage_at = time.time()
@@ -1184,6 +1277,8 @@ class Hub:
             "sun": {"sunrise": self._sun_min(1, date.today()), "sunset": self._sun_min(2, date.today()), "located": self.location() is not None},
             "settings": settings,
             "can_restore": bool(self.store.data["remembered"].get("undo")),
+            "habits": {"suggestions": self.habits, "days": getattr(self, "habit_days", 0)},
+            "net_events": self.store.data["net_events"][-10:] + list(self._outage.values()),
             "matter": self.matter_status(),
         }
 

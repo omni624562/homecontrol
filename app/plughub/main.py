@@ -47,7 +47,7 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from .hub import Hub, Locked
+from .hub import SOURCE, Hub, Locked
 from .notify import Notifier
 from .store import Store, _hms
 
@@ -114,6 +114,7 @@ async def events(request: Request) -> StreamingResponse:
 @app.post("/api/plugs/{plug_id}/power")
 async def set_power(plug_id: str, body: dict = Body(...)) -> dict[str, Any]:
     _plug(plug_id)
+    SOURCE.set("matter" if body.get("source") == "matter" else "app")
     try:
         await hub.set_power(plug_id, bool(body.get("on")), force=bool(body.get("force")))
     except Locked as err:
@@ -338,6 +339,7 @@ async def run_scene(scene_id: str) -> dict[str, Any]:
 async def add_schedule(body: dict = Body(...)) -> dict[str, Any]:
     sched = store.save_schedule(None, body)
     hub.mark_native()
+    hub.refresh_habits()  # 剛照建議建的排程，建議馬上消失
     await hub.changed()
     return sched
 
@@ -384,7 +386,10 @@ async def get_floorplan() -> dict[str, Any]:
 
 @app.put("/api/floorplan")
 async def put_floorplan(body: dict = Body(...)) -> dict[str, Any]:
-    """{"w","h","rooms":[{id,name,x,y,w,h}],"items":{key:{x,y}},"aps":[{id,name}]}"""
+    """{"w","h","meters","rooms":[{id,name,x,y,w,h}],"items":{key:{x,y,z}},"aps":[{id,name,ssid,z}]}
+
+    meters = 地圖寬度是幾公尺（算距離用）；z = 離地高度（公尺），None = 用預設值。
+    """
     fp = store.data["floorplan"]
     w = _num(body.get("w", fp["w"]), 200, 4000)
     h = _num(body.get("h", fp["h"]), 200, 4000)
@@ -394,10 +399,16 @@ async def put_floorplan(body: dict = Body(...)) -> dict[str, Any]:
              "x": _num(r.get("x"), 0, w), "y": _num(r.get("y"), 0, h), "w": _num(r.get("w"), 20, w), "h": _num(r.get("h"), 20, h)}
             for r in body["rooms"][:40]
         ] if body["rooms"] is not None else None
+    z = lambda v: None if v is None else _num(v, 0, 5)  # noqa: E731
     if "items" in body:
-        fp["items"] = {str(k)[:80]: {"x": _num(v.get("x"), 0, w), "y": _num(v.get("y"), 0, h)} for k, v in (body["items"] or {}).items()}
+        fp["items"] = {str(k)[:80]: {"x": _num(v.get("x"), 0, w), "y": _num(v.get("y"), 0, h), "z": z(v.get("z"))}
+                       for k, v in list((body["items"] or {}).items())[:100]}
     if "aps" in body:
-        fp["aps"] = [{"id": str(a.get("id"))[:20], "name": str(a.get("name", ""))[:30]} for a in (body["aps"] or [])[:10]]
+        fp["aps"] = [{"id": str(a.get("id"))[:20], "name": str(a.get("name", ""))[:30],
+                      "ssid": str(a["ssid"])[:32] if a.get("ssid") else None, "z": z(a.get("z"))}
+                     for a in (body["aps"] or [])[:10]]
+    if "meters" in body:
+        fp["meters"] = _num(body["meters"], 2, 100)
     fp["w"], fp["h"] = w, h
     store.save()
     return fp
@@ -446,6 +457,32 @@ async def floorplan_image() -> Response:
     if mime not in {m for _, m in IMAGE_MAGIC}:
         raise HTTPException(404, "沒有平面圖")
     return FileResponse(FLOORPLAN_IMAGE, media_type=mime, headers=IMAGE_HEADERS)
+
+
+@app.post("/api/habits/dismiss")
+async def dismiss_habit(body: dict = Body(...)) -> dict[str, Any]:
+    """排程建議按「不用」：之後不再建議。"""
+    key = str(body.get("key", ""))[:120]
+    lst = store.data["settings"].setdefault("habit_dismissed", [])
+    if key and key not in lst:
+        lst.append(key)
+        del lst[:-200]
+        store.save()
+    hub.habits = [s for s in hub.habits if s["key"] != key]
+    await hub.changed()
+    return {"ok": True}
+
+
+@app.get("/manifest.webmanifest")
+async def manifest() -> Response:
+    """加入主畫面用；長按圖示會出現前 4 個情境的捷徑（Android、電腦版 Chrome）。"""
+    data = json.loads((STATIC / "manifest.webmanifest").read_text("utf-8"))
+    data["shortcuts"] = [
+        {"name": sc["name"], "short_name": sc["name"], "url": f"/?run={sc['id']}",
+         "icons": [{"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png"}]}
+        for sc in store.scenes[:4]
+    ]
+    return Response(json.dumps(data, ensure_ascii=False), media_type="application/manifest+json", headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/api/sensing")

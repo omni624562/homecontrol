@@ -31,7 +31,10 @@ DEFAULTS: dict[str, Any] = {
         # 離家模式：這段時間裡，選的插座由插座自己隨機開關（假裝有人在家）
         "away": {"enabled": False, "start": "18:00", "end": "23:00", "plugs": []},
         "sensing": True,  # Wi-Fi 感測（實驗）：每 2 秒讀插座的訊號強度
+        "habit_dismissed": [],  # 按了「不用」的排程建議
     },
+    # 整個 Wi-Fi 網路的插座同時斷線（多半是路由器的問題）：[{"ssid","start","end","devices"}]，最近 30 筆
+    "net_events": [],
     # 關閉時記住關了哪些，之後可以還原：
     #   {"night": [插座 ID...]}（被關掉的）或 {"undo": {插座 ID: 原本開著嗎}}
     "remembered": {},
@@ -49,7 +52,7 @@ DEFAULTS: dict[str, Any] = {
     # 訊號地圖：rooms = [{"id","name","x","y","w","h"}]（座標 0～w／0～h）、
     # items = {裝置 MAC 或 "ap:編號": {"x","y"}}、aps = [{"id","name"}]（Wi-Fi 基地台）、
     # image = 平面圖底圖的版本（None = 沒有）
-    "floorplan": {"w": 1000, "h": 700, "rooms": None, "items": {}, "aps": [], "image": None},
+    "floorplan": {"w": 1000, "h": 700, "meters": 12, "rooms": None, "items": {}, "aps": [], "image": None},
 }
 
 
@@ -278,6 +281,23 @@ class EnergyLog:
         )
         self.db.commit()
         self._pending: dict[tuple[str, str], float] = {}
+        # 開關紀錄（找習慣用）：source = app／matter（Google Home）／button（插座上的按鈕或 Kasa App）／auto（排程、情境、定時）
+        self.db.execute("CREATE TABLE IF NOT EXISTS switch (ts REAL, plug TEXT, is_on INTEGER, source TEXT)")
+        self.db.execute("CREATE INDEX IF NOT EXISTS switch_ts ON switch (ts)")
+        self.db.commit()
+
+    def log_switch(self, ts: float, plug: str, on: bool, source: str) -> None:
+        self.db.execute("INSERT INTO switch VALUES (?, ?, ?, ?)", (ts, plug, int(on), source))
+        self.db.execute("DELETE FROM switch WHERE ts < ?", (ts - 60 * 86400,))  # 只留 60 天
+        self.db.commit()
+
+    def switches(self, since: float) -> list[tuple[float, str, bool, str]]:
+        rows = self.db.execute("SELECT ts, plug, is_on, source FROM switch WHERE ts >= ? ORDER BY ts", (since,)).fetchall()
+        return [(float(t), p, bool(o), s) for t, p, o, s in rows]
+
+    def first_switch(self) -> float | None:
+        row = self.db.execute("SELECT MIN(ts) FROM switch").fetchone()
+        return float(row[0]) if row and row[0] is not None else None
 
     def add(self, day: str, plug: str, kwh: float) -> None:
         if kwh > 0:
