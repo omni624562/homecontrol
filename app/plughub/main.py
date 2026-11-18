@@ -3,13 +3,13 @@
 GET  /api/state             目前全部的狀態
 GET  /api/events            狀態一有變動就推送（Server-Sent Events）
 POST /api/plugs/{id}/power  {"on": true/false}
-PATCH /api/plugs/{id}       {"name", "room", "keep_on", "night", "watts", "max_on"}
+PATCH /api/plugs/{id}       {"name", "room", "keep_on", "night", "watts", "max_on_s"}
 POST /api/off               {"room", "standby_only"} 關閉並記住，可以 /api/restore 復原
 POST /api/on                {"room"} 打開整個房間，可以 /api/restore 復原
 POST /api/restore
 POST /api/rooms             {"name"}；PATCH/DELETE /api/rooms/{id}
 POST /api/order             {"plugs": [...], "rooms": [...], "scenes": [...]}
-POST /api/plugs/{id}/timer  {"minutes": 10} 打開、幾分鐘後自動關閉；DELETE 取消
+POST /api/plugs/{id}/timer  {"seconds": 90}（或 {"minutes": 10}）打開、多久後自動關閉；DELETE 取消
 POST /api/scenes            {"name", "icon", "actions", "others"}；PUT/DELETE /api/scenes/{id}
 POST /api/scenes/{id}/run   執行情境（可以 /api/restore 復原）
 POST /api/schedules         新增排程；PUT/DELETE /api/schedules/{id}
@@ -116,13 +116,13 @@ async def set_power(plug_id: str, body: dict = Body(...)) -> dict[str, Any]:
 async def set_timer(plug_id: str, body: dict = Body(...)) -> dict[str, Any]:
     _plug(plug_id)
     try:
-        minutes = float(body.get("minutes"))
-    except (TypeError, ValueError):
-        raise HTTPException(400, "請輸入分鐘數") from None
-    if not 1 <= minutes <= 24 * 60:
-        raise HTTPException(400, "定時要在 1 分鐘到 24 小時之間")
+        seconds = float(body["seconds"]) if "seconds" in body else float(body.get("minutes")) * 60
+    except (TypeError, ValueError, KeyError):
+        raise HTTPException(400, "請輸入時間") from None
+    if not 1 <= seconds <= 24 * 3600:
+        raise HTTPException(400, "定時要在 1 秒到 24 小時之間")
     try:
-        await hub.set_timer(plug_id, minutes)
+        await hub.set_timer(plug_id, seconds)
     except Exception as err:  # noqa: BLE001
         raise HTTPException(502, f"插座沒有回應：{err}") from err
     return {"ok": True}
@@ -150,25 +150,25 @@ async def update_plug(plug_id: str, body: dict = Body(...)) -> dict[str, Any]:
     for key in ("keep_on", "night"):
         if key in body:
             setattr(meta, key, bool(body[key]))
-    if "max_on" in body:
-        value = body["max_on"]
+    if "max_on_s" in body:
+        value = body["max_on_s"]
         if value in (None, "", 0):
-            meta.max_on = None
+            meta.max_on_s = None
         else:
             try:
-                value = float(value)
+                value = round(float(value))
             except (TypeError, ValueError):
-                raise HTTPException(400, "最長開啟時間要是分鐘數") from None
-            if not 1 <= value <= 24 * 60:
-                raise HTTPException(400, "最長開啟時間要在 1 分鐘到 24 小時之間")
-            meta.max_on = value
+                raise HTTPException(400, "最長開啟時間要是秒數") from None
+            if not 1 <= value <= 24 * 3600:
+                raise HTTPException(400, "最長開啟時間要在 1 秒到 24 小時之間")
+            meta.max_on_s = value
             hub.store.data["timers"].pop(plug_id, None)  # 重新依新的上限算
     # 「常開」和「最長開啟時間」互相矛盾，後設定的為準
     if body.get("keep_on"):
-        meta.max_on = None
-    elif meta.max_on:
+        meta.max_on_s = None
+    elif meta.max_on_s:
         meta.keep_on = False
-    if meta.max_on and hub.plugs[plug_id].is_on:
+    if meta.max_on_s and hub.plugs[plug_id].is_on:
         hub._cap_on_time(plug_id)
     if "watts" in body:
         watts = body["watts"]

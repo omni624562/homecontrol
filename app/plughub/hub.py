@@ -26,7 +26,16 @@ _LOGGER = logging.getLogger(__name__)
 POLL_SECONDS = 5
 # 名稱有這些字的插座，第一次看到時自動設「最長開啟 10 分鐘」（之後可以在 App 改）
 WATER_WORDS = ("澆水", "灑水", "water", "sprinkler", "抽水", "水泵")
-DEFAULT_MAX_ON = 10
+DEFAULT_MAX_ON = 600  # 秒
+
+
+def fmt_secs(sec: float) -> str:
+    """600 → 「10 分鐘」、90 → 「1 分 30 秒」、45 → 「45 秒」。"""
+    sec = int(round(sec))
+    h, m, s = sec // 3600, sec % 3600 // 60, sec % 60
+    parts = [f"{h} 小時" if h else "", f"{m} 分" if m else "", f"{s} 秒" if s else ""]
+    text = " ".join(x for x in parts if x) or "0 秒"
+    return text + "鐘" if text.endswith("分") and not h else text
 SCHEDULE_GRACE = 10  # 排程最多晚幾秒還會補執行
 DISCOVER_SECONDS = 60
 DEVICE_TIMEOUT = 4
@@ -73,6 +82,7 @@ class Hub:
         self._tasks: list[asyncio.Task] = []
         self._schedule_done: dict[str, str] = {}  # 排程 ID（或「ID:restore」）→ 最後執行的「日期 時間」
         self._bg: set[asyncio.Task] = set()
+        self._timers_busy = False
         self._timer_failed: set[str] = set()  # 定時關閉失敗、已經通知過的插座
         self._offline_notified: set[str] = set()
         self._overload_notified: set[str] = set()
@@ -199,7 +209,6 @@ class Hub:
         for pid, plug in self.plugs.items():
             if plug.is_on:
                 self._cap_on_time(pid)
-        await self._run_timers()
         if self._dirty:
             self._dirty = False
             self.store.save()
@@ -348,7 +357,7 @@ class Hub:
         targets = [
             plug.id for plug in self.plugs.values()
             if plug.online and not plug.is_on and self.store.meta(plug.id).room == room
-            and not self.store.meta(plug.id).max_on  # 澆水這類不會被「整間打開」打開
+            and not self.store.meta(plug.id).max_on_s  # 澆水這類不會被「整間打開」打開
         ]
         results = await asyncio.gather(*(self.set_power(pid, True) for pid in targets), return_exceptions=True)
         done = [pid for pid, r in zip(targets, results) if not isinstance(r, Exception)]
@@ -371,10 +380,10 @@ class Hub:
 
     # ---- 定時關閉 ----
 
-    async def set_timer(self, plug_id: str, minutes: float) -> None:
+    async def set_timer(self, plug_id: str, seconds: float) -> None:
         if not self.plugs[plug_id].is_on:
             await self.set_power(plug_id, True)
-        self.store.data["timers"][plug_id] = time.time() + minutes * 60
+        self.store.data["timers"][plug_id] = time.time() + seconds
         self._cap_on_time(plug_id)  # 不能超過最長開啟時間
         self.store.save()
         await self.changed()
@@ -396,20 +405,31 @@ class Hub:
             self._dirty = True
             meta = self.store.meta(pid)
             name = self.name(plug).lower()
-            if meta.max_on is None and not meta.keep_on and any(w in name for w in WATER_WORDS):
-                meta.max_on = DEFAULT_MAX_ON
-                _LOGGER.info("%s 預設最長開啟 %d 分鐘", self.name(plug), DEFAULT_MAX_ON)
+            if meta.max_on_s is None and not meta.keep_on and any(w in name for w in WATER_WORDS):
+                meta.max_on_s = DEFAULT_MAX_ON
+                _LOGGER.info("%s 預設最長開啟 %s", self.name(plug), fmt_secs(DEFAULT_MAX_ON))
 
     def _cap_on_time(self, plug_id: str) -> None:
         """有設最長開啟時間的插座：確保有定時，而且不會晚於「打開的時間 + 最長時間」。"""
-        limit_min = self.store.meta(plug_id).max_on
-        if not limit_min:
+        limit_s = self.store.meta(plug_id).max_on_s
+        if not limit_s:
             return
         timers = self.store.data["timers"]
-        limit = self.store.data["on_since"].get(plug_id, time.time()) + limit_min * 60
+        limit = self.store.data["on_since"].get(plug_id, time.time()) + limit_s
         if timers.get(plug_id) is None or timers[plug_id] > limit:
             timers[plug_id] = limit
             self._dirty = True
+
+    async def _run_timers_once(self) -> None:
+        self._timers_busy = True
+        try:
+            await self._run_timers()
+            if self._dirty:
+                self.store.save()
+                self._dirty = False
+                await self.changed()
+        finally:
+            self._timers_busy = False
 
     async def _run_timers(self) -> None:
         now = time.time()
@@ -417,7 +437,7 @@ class Hub:
             if at > now or pid not in self.plugs:
                 continue
             plug = self.plugs[pid]
-            guarded = bool(self.store.meta(pid).max_on)
+            guarded = bool(self.store.meta(pid).max_on_s)
             try:
                 await self.set_power(pid, False)
             except Exception:  # noqa: BLE001
@@ -440,7 +460,7 @@ class Hub:
             if late:
                 self.notifier.send("已經關閉", f"{self.name(plug)} 恢復回應，已經關閉", "high")
             elif guarded:
-                self.notifier.send("自動關閉", f"{self.name(plug)} 開了 {self.store.meta(pid).max_on:g} 分鐘，已經關閉")
+                self.notifier.send("自動關閉", f"{self.name(plug)} 開了 {fmt_secs(self.store.meta(pid).max_on_s)}，已經關閉")
             else:
                 self.notifier.send("定時關閉", f"{self.name(plug)} 時間到，已經關閉")
 
@@ -506,6 +526,9 @@ class Hub:
                 raise
             except Exception:  # noqa: BLE001
                 _LOGGER.exception("排程失敗")
+            # 定時關閉也每秒檢查（澆水可以設到秒）；上一輪還在關就不重複
+            if not self._timers_busy:
+                self._spawn(self._run_timers_once())
 
     def _due(self, key: str, hms: str, now: datetime) -> bool:
         """排程時間已到（容許晚 SCHEDULE_GRACE 秒，避免卡住時錯過），而且今天這個時間還沒執行過。"""
@@ -610,7 +633,7 @@ class Hub:
                 "watts": meta.watts,
                 "mode": self.mode(plug),
                 "keep_on": meta.keep_on,
-                "max_on": meta.max_on,
+                "max_on_s": meta.max_on_s,
                 "night": meta.night,
                 "standby": self.is_standby(plug),
                 "on_since": self.store.data["on_since"].get(plug.id) if plug.is_on else None,

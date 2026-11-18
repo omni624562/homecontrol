@@ -54,10 +54,12 @@ class PlugMeta:
     watts: float | None = None  # 沒有計量的插座，用這個瓦數估算用電
     # 最長開啟時間（分鐘）：澆水、電暖器這類開太久會出事的。不管從哪裡打開
     # （App、Google Home、排程、情境、插座上的按鈕），時間到一定關掉，不能取消。
-    max_on: float | None = None
+    max_on_s: float | None = None  # 秒
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "PlugMeta":
+        if data.get("max_on") and "max_on_s" not in data:  # 舊版用分鐘
+            data = {**data, "max_on_s": float(data["max_on"]) * 60}
         known = {k: data[k] for k in cls.__dataclass_fields__ if k in data}
         return cls(**known)
 

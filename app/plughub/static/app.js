@@ -10,7 +10,9 @@ import { ICONS } from "./icons.js";
 
 const TOAST_MS = 6000;
 const DAYS = ["一", "二", "三", "四", "五", "六", "日"]; // 0 = 星期一（跟伺服器一樣）
-const TIMER_OPTIONS = [5, 10, 30, 60, 120];
+const TIMER_OPTIONS = [300, 600, 1800, 3600, 7200]; // 秒
+const SHORT_OPTIONS = [30, 60, 120, 180, 300, 600, 900, 1800, 3600]; // 有最長時間（澆水）用的
+const MAX_ON_OPTIONS = [30, 60, 120, 180, 300, 600, 900, 1800, 3600, 7200]; // 秒
 const WATT_PRESETS = [
   ["燈", 10],
   ["風扇", 40],
@@ -40,6 +42,19 @@ const fmt = (v, digits = 0) =>
 const fmtWatts = (w) => (w === null || w === undefined ? "—" : w >= 1000 ? `${fmt(w / 1000, 2)} kW` : `${fmt(w, w < 10 ? 1 : 0)} W`);
 
 // 秒數 → 「2 小時 10 分」
+// 精確的時間長度：600 →「10 分鐘」、90 →「1 分 30 秒」、45 →「45 秒」
+function fmtSec(sec) {
+  sec = Math.max(0, Math.round(sec));
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const x = sec % 60;
+  const text = [h && `${h} 小時`, m && `${m} 分`, x && `${x} 秒`].filter(Boolean).join(" ") || "0 秒";
+  return !h && !x && m ? `${m} 分鐘` : text;
+}
+
+// 倒數：10 分鐘內顯示到秒
+const fmtLeft = (sec) => (sec < 600 ? fmtSec(sec) : fmtDur(sec));
+
 function fmtDur(sec) {
   sec = Math.max(0, Math.round(sec));
   if (sec < 60) return "不到 1 分鐘";
@@ -63,6 +78,7 @@ const secSelect = (key, t, cls = "") =>
     return `<option value="${v}" ${t.slice(6) === v ? "selected" : ""}>${v} 秒</option>`;
   }).join("")}</select>`;
 const showT = (t) => (t && t.endsWith(":00") ? t.slice(0, 5) : t || "");
+const clockSec = (epoch) => new Date(epoch * 1000).toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 const clock = (epoch) => new Date(epoch * 1000).toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", hour12: false });
 
 function daysText(days) {
@@ -382,6 +398,10 @@ const STYLE = `
   .actions .btn { flex: 1; height: 50px; border-radius: 16px; font-size: 16px; }
   .field { display: flex; align-items: center; gap: 10px; }
   input[type="time"] { height: 56px; border: 0; border-radius: 14px; background: var(--soft); padding: 0 14px; font-size: 26px; font-weight: 800; color-scheme: light dark; }
+  .dur { display: flex; gap: 8px; align-items: center; }
+  .durcell { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; font-weight: 700; color: var(--muted); }
+  .durcell input { width: 100%; min-width: 0; text-align: center; height: 46px; }
+  .dur .btn { flex: none; height: 46px; }
   .timeline { display: flex; gap: 8px; align-items: center; }
   .timeline input[type="time"] { flex: 1; min-width: 0; }
   select.sec { height: 56px; border: 0; border-radius: 14px; background: var(--soft); padding: 0 10px; font-size: 18px; font-weight: 800; color: inherit; color-scheme: light dark; flex: none; }
@@ -443,6 +463,16 @@ class PlugApp extends HTMLElement {
     });
     // 「開了多久」「還有幾分鐘」每 30 秒更新一次
     setInterval(() => this._update(), 30000);
+    // 10 分鐘內的倒數每秒更新（澆水可以設到秒）
+    setInterval(() => {
+      if (this._drag || !this._s) return;
+      const now = this._now();
+      if (!this._s.plugs.some((p) => p.timer && p.timer - now < 600 && p.timer - now > -5)) return;
+      const active = this.shadowRoot.activeElement;
+      const typing = active && /INPUT|SELECT|TEXTAREA/.test(active.tagName);
+      if (!(typing && this._root.contains(active))) this._render();
+      if (this._sheet?.type === "timer" && !(typing && this._sheetHost.contains(active))) this._renderSheet();
+    }, 1000);
     this._load();
   }
 
@@ -653,10 +683,10 @@ class PlugApp extends HTMLElement {
     }
     const on = this._isOn(p);
     const now = this._now();
-    let sub = p.max_on ? `關著・最長開 ${fmtDur(p.max_on * 60)}` : "關著";
+    let sub = p.max_on_s ? `關著・最長開 ${fmtSec(p.max_on_s)}` : "關著";
     let cls = "";
     if (on && p.timer) {
-      sub = `開著・${fmtDur(p.timer - now)}後自動關閉`;
+      sub = `開著・${fmtLeft(p.timer - now)}後自動關閉`;
       cls = "timer";
     } else if (on) {
       const since = p.on_since ? now - p.on_since : null;
@@ -702,7 +732,7 @@ class PlugApp extends HTMLElement {
                 <div class="row" data-k="plug" data-id="${esc(p.id)}">
                   <div class="di">${ic(deviceIcon(p.name))}</div>
                   <div class="nm">
-                    <button class="a" data-a="plug-edit" data-v="${esc(p.id)}"><span>${esc(p.name)}</span><span class="pen">${ic("mdi:pencil")}</span>${p.keep_on ? '<span class="badge">常開</span>' : ""}${p.max_on ? `<span class="badge timer">最長 ${fmtDur(p.max_on * 60)}</span>` : ""}</button>
+                    <button class="a" data-a="plug-edit" data-v="${esc(p.id)}"><span>${esc(p.name)}</span><span class="pen">${ic("mdi:pencil")}</span>${p.keep_on ? '<span class="badge">常開</span>' : ""}${p.max_on_s ? `<span class="badge timer">最長 ${fmtSec(p.max_on_s)}</span>` : ""}</button>
                     <select class="pick" data-c="plug-room" data-v="${esc(p.id)}" aria-label="${esc(p.name)} 的房間">${opts}</select>
                   </div>
                   ${this._grip("plug", p.id, p.name)}
@@ -1198,10 +1228,16 @@ class PlugApp extends HTMLElement {
       close: () => this._closeSheet(),
       "timer-set": (v) => this._setTimer(this._sheet.id, Number(v)),
       "timer-custom": () => {
-        const n = Number(this._sheetHost.querySelector("[data-timer-min]")?.value);
-        const max = this._plug(this._sheet.id)?.max_on || 1440;
-        if (!(n >= 1 && n <= max)) return this._sheetError(`請輸入 1～${max} 分鐘`);
+        const n = this._durValue("timer");
+        const max = this._plug(this._sheet.id)?.max_on_s || 86400;
+        if (!(n >= 1 && n <= max)) return this._sheetError(`請輸入 1 秒～${fmtSec(max)}`);
         this._setTimer(this._sheet.id, n);
+      },
+      "max-set": (v) => this._setMaxOn(Number(v) || null),
+      "max-custom": () => {
+        const n = this._durValue("max");
+        if (!(n >= 1 && n <= 86400)) return this._sheetError("請輸入 1 秒～24 小時");
+        this._setMaxOn(n);
       },
       "timer-stop": () =>
         this._safe(async () => {
@@ -1281,11 +1317,10 @@ class PlugApp extends HTMLElement {
       number: (v, t) => this._setSetting(v, parseFloat(t.value)),
       ntfy: (v, t) => this._safe(() => api("PUT", "/api/settings", { ntfy_topic: t.value })),
       "sheet-room": (v, t) => this._safe(() => api("PATCH", `/api/plugs/${this._sheet.id}`, { room: t.value || null })),
-      "sheet-max-on": (v, t) =>
-        this._safe(async () => {
-          await api("PATCH", `/api/plugs/${this._sheet.id}`, { max_on: Number(t.value) || null });
-          this._showToast(Number(t.value) ? `已設定最長開 ${fmtDur(Number(t.value) * 60)}` : "已取消最長開啟時間");
-        }),
+      dur: (v, t) => {
+        const [key, unit] = v.split(":");
+        ((this._sheet.dur ||= {})[key] ||= {})[unit] = t.value;
+      },
       "sheet-watts": (v, t) => {
         if (t.value === "custom") return this._openSheet({ type: "watts", id: this._sheet.id });
         this._safe(() => api("PATCH", `/api/plugs/${this._sheet.id}`, { watts: t.value ? Number(t.value) : null }));
@@ -1349,12 +1384,36 @@ class PlugApp extends HTMLElement {
     }
   }
 
-  async _setTimer(id, minutes) {
+  // 自訂時間的「分」「秒」兩格（離開欄位就記下來，畫面每秒重畫也不會不見）
+  _durInputs(key, max) {
+    const d = (this._sheet.dur ||= {})[key] || {};
+    const cell = (unit, label, lim) =>
+      `<label class="durcell"><input class="text" type="number" inputmode="numeric" min="0" max="${lim}" data-c="dur" data-v="${key}:${unit}" data-enter="${key}-custom" value="${esc(d[unit] ?? "")}" placeholder="0" aria-label="${label}"><span>${label}</span></label>`;
+    return `<div class="dur">${max >= 3600 ? cell("h", "時", 24) : ""}${cell("m", "分", 59 + (max < 3600 ? 1440 : 0))}${cell("s", "秒", 59)}<button class="btn primary" data-a="${key}-custom">設定</button></div>`;
+  }
+
+  _durValue(key) {
+    const vals = {};
+    for (const el of this._sheetHost.querySelectorAll(`[data-c="dur"][data-v^="${key}:"]`)) vals[el.dataset.v.split(":")[1]] = Number(el.value) || 0;
+    return (vals.h || 0) * 3600 + (vals.m || 0) * 60 + (vals.s || 0);
+  }
+
+  async _setMaxOn(seconds) {
+    try {
+      await api("PATCH", `/api/plugs/${this._sheet.id}`, { max_on_s: seconds });
+      if (this._sheet.dur) delete this._sheet.dur.max;
+      this._showToast(seconds ? `已設定最長開 ${fmtSec(seconds)}` : "已取消最長開啟時間");
+    } catch (err) {
+      this._sheetError(`沒有成功：${err.message}`);
+    }
+  }
+
+  async _setTimer(id, seconds) {
     const p = this._plug(id);
     try {
-      await api("POST", `/api/plugs/${id}/timer`, { minutes });
+      await api("POST", `/api/plugs/${id}/timer`, { seconds });
       this._closeSheet();
-      this._showToast(`${p?.name} 會在 ${fmtDur(minutes * 60)}後自動關閉`);
+      this._showToast(`${p?.name} 會在 ${fmtSec(Math.min(seconds, p?.max_on_s || seconds))}後自動關閉`);
     } catch (err) {
       this._sheetError(`沒有成功：${err.message}`);
     }
@@ -1470,22 +1529,23 @@ class PlugApp extends HTMLElement {
     const now = this._now();
     const active =
       p.timer && on
-        ? `<div class="hint" style="margin:14px 0 10px;background:var(--timer-soft);color:var(--timer)">還有 ${fmtDur(p.timer - now)}，${clock(p.timer)} 自動關閉。</div>
-           ${p.max_on ? "" : `<button class="btn big" data-a="timer-stop">取消定時（保持開著）</button>`}`
+        ? `<div class="hint" style="margin:14px 0 10px;background:var(--timer-soft);color:var(--timer)">還有 ${fmtLeft(p.timer - now)}，${clockSec(p.timer)} 自動關閉。</div>
+           ${p.max_on_s ? "" : `<button class="btn big" data-a="timer-stop">取消定時（保持開著）</button>`}`
         : "";
-    const max = p.max_on || 1440;
-    const guard = p.max_on
-      ? `<div class="hint" style="margin:14px 0 0">${ic("mdi:shield-check-outline")} 防呆：這個插座最長只能開 ${fmtDur(p.max_on * 60)}，時間到一定會關（可以在「編輯」裡改）。</div>`
+    const max = p.max_on_s || 86400;
+    const guard = p.max_on_s
+      ? `<div class="hint" style="margin:14px 0 0;display:flex;gap:8px;align-items:flex-start">${ic("mdi:shield-check-outline")}<span>防呆：這個插座最長只能開 ${fmtSec(p.max_on_s)}，時間到一定會關（可以在「編輯」裡改）。</span></div>`
       : "";
-    const opts = TIMER_OPTIONS.filter((m) => m <= max).map((m) => `<button class="opt timer" data-a="timer-set" data-v="${m}">${m < 60 ? `${m} 分鐘` : `${m / 60} 小時`}</button>`).join("");
+    // 有最長時間的（澆水）給短的選項，最後一個是「最長」
+    const choices = p.max_on_s ? [...new Set([...SHORT_OPTIONS.filter((x) => x < max), max])].slice(-5) : TIMER_OPTIONS;
+    const opts = choices.map((x) => `<button class="opt timer" data-a="timer-set" data-v="${x}">${fmtSec(x)}</button>`).join("");
     return `
       ${this._sheetHead(deviceIcon(p.name), p.name, `${room}・現在${on ? "開著" : "關著"}`, "background:var(--timer-soft);color:var(--timer)")}
       ${active}${guard}
       <div class="q">${on ? (p.timer ? "改成多久後關閉？" : "多久後自動關閉？") : "打開，多久後自動關閉？"}</div>
-      <div class="opts">${opts}
-        <div class="opt" style="padding:6px"><input class="text" data-timer-min data-enter="timer-custom" type="number" inputmode="numeric" min="1" max="${max}" placeholder="自訂分鐘" style="height:44px;text-align:center;background:var(--card)" aria-label="自訂分鐘"></div>
-      </div>
-      <button class="btn big" style="margin-top:10px" data-a="timer-custom">用自訂的分鐘數</button>
+      <div class="opts">${opts}</div>
+      <div class="q">自訂 <small>可以設到秒</small></div>
+      ${this._durInputs("timer", max)}
       <div class="err"></div>
       <p class="note">時間到會自動關閉${this._s.settings.ntfy_topic ? "，手機也會收到通知" : ""}。中途想停，直接按開關關掉就好。</p>`;
   }
@@ -1507,12 +1567,13 @@ class PlugApp extends HTMLElement {
         <button class="sw ${p.keep_on ? "on" : ""}" data-a="keep-on" role="switch" aria-checked="${p.keep_on}" aria-label="常開"></button>
       </div>
       <div class="q">最長開啟時間 <small>防呆</small></div>
-      <select class="text" data-c="sheet-max-on" aria-label="最長開啟時間">
-        ${[[0, "不限制"], [5], [10], [15], [30], [60], [120], [240]]
-          .map(([m, label]) => `<option value="${m}" ${(p.max_on || 0) === m ? "selected" : ""}>${label || fmtDur(m * 60)}</option>`)
-          .join("")}
-        ${p.max_on && ![5, 10, 15, 30, 60, 120, 240].includes(p.max_on) ? `<option value="${p.max_on}" selected>${fmtDur(p.max_on * 60)}</option>` : ""}
-      </select>
+      <div class="chips">
+        <button class="chip ${p.max_on_s ? "" : "sel"}" data-a="max-set" data-v="0">不限制</button>
+        ${MAX_ON_OPTIONS.map((x) => `<button class="chip ${p.max_on_s === x ? "sel" : ""}" data-a="max-set" data-v="${x}">${fmtSec(x)}</button>`).join("")}
+        ${p.max_on_s && !MAX_ON_OPTIONS.includes(p.max_on_s) ? `<button class="chip sel" data-a="max-set" data-v="${p.max_on_s}">${fmtSec(p.max_on_s)}</button>` : ""}
+      </div>
+      <div class="desc" style="margin:12px 0 6px">或自己設定（例如 1 分 30 秒）：</div>
+      ${this._durInputs("max", 86400)}
       <p class="note">像澆水、電暖器這類開太久會出事的：不管從 App、Google Home、排程、情境或插座上的按鈕打開，時間到一定關掉，不能取消；「整間打開」也不會打開它。關不掉時手機會收到緊急通知。</p>
       <div class="err"></div>`;
   }
