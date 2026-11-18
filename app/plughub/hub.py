@@ -1436,6 +1436,12 @@ class Hub:
         today = date.today()
         return {(today + timedelta(days=i)).weekday() for i in range(7) if self.skip_reason(sched, today + timedelta(days=i))}
 
+    def recheck_calendar(self) -> None:
+        """排程改了：下一輪馬上查假日、天氣（還沒查過天氣的話）。"""
+        self._calendar_at = 0.0
+        if not self.daysoff.rain:
+            self.daysoff.weather_at = 0.0
+
     async def _calendar_tick(self) -> None:
         today = date.today()
         if today != self._today:  # 過了午夜：跳過的日子變了，重寫插座裡的規則
@@ -1626,6 +1632,8 @@ class Hub:
                 "holidays_ready": date.today().year in self.daysoff.years,
                 "weather_at": self.daysoff.weather_at or None,
                 "weather_error": self.daysoff.weather_error,
+                "rain_mm": {k: self.daysoff.rain.get((date.today() + timedelta(days=d)).isoformat())
+                            for k, d in (("yesterday", -1), ("today", 0), ("tomorrow", 1))},
             },
             "sun": {"sunrise": self._sun_min(1, date.today()), "sunset": self._sun_min(2, date.today()), "located": self.location() is not None},
             "settings": settings,

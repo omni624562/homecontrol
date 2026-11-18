@@ -2159,6 +2159,18 @@ class PlugApp extends HTMLElement {
   }
 
   // 今天是國定假日／手動放假／下雨：排程清單上方一行說明
+  // 下雨不執行：現在查到的雨量，和今天會不會跳過
+  _rainLine() {
+    const c = this._s.calendar || {};
+    const mm = c.rain_mm || {};
+    if (!c.weather_at) return `<div class="bstat">${ic("mdi:information-outline")}還沒查過天氣：儲存之後幾秒內會查一次，再打開這個排程就看得到</div>`;
+    const v = (x) => (x == null ? "—" : `${fmt(x, x < 10 ? 1 : 0)} mm`);
+    const t = new Date(c.weather_at * 1000);
+    return `<div class="bstat">${ic("mdi:water")}昨天下了 ${v(mm.yesterday)}・今天預報 ${v(mm.today)}・明天預報 ${v(mm.tomorrow)}</div>
+      <div class="bstat ${c.rain ? "" : "ok"}">${ic(c.rain ? "mdi:alert-circle-outline" : "mdi:check-circle")}${c.rain ? `今天會跳過：${esc(c.rain)}` : "今天照常執行（超過 3 mm 才算下雨）"}</div>
+      <div class="bstat">${ic("mdi:clock-outline")}${pad2(t.getHours())}:${pad2(t.getMinutes())} 查的，每 3 小時更新一次</div>`;
+  }
+
   _calendarLine() {
     const c = this._s.calendar || {};
     const scheds = this._s.schedules || [];
@@ -4828,6 +4840,7 @@ class PlugApp extends HTMLElement {
         <div class="gi"><div class="gt"><div class="gl">下雨不執行</div>
           <div class="gs">前一天下過雨、或預報當天會下雨（超過 3 mm）就跳過，適合澆水。會用大概的位置（約 10 公里）查天氣</div></div>
           <button class="sw ${d.skip_rain ? "on" : ""}" data-a="sched-skip" data-v="skip_rain" role="switch" aria-checked="${!!d.skip_rain}" aria-label="下雨不執行"></button></div>
+        ${d.skip_rain ? `<div class="gi col">${this._rainLine()}</div>` : ""}
       </div>
       <div class="q">備援</div>
       <div class="group">

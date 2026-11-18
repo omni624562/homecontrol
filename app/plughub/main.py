@@ -342,6 +342,7 @@ async def run_scene(scene_id: str) -> dict[str, Any]:
 async def add_schedule(body: dict = Body(...)) -> dict[str, Any]:
     sched = store.save_schedule(None, body)
     hub.mark_native()
+    hub.recheck_calendar()  # 剛打開「下雨不執行」：馬上查天氣
     hub.refresh_habits()  # 剛照建議建的排程，建議馬上消失
     await hub.changed()
     return sched
@@ -354,6 +355,7 @@ async def update_schedule(sched_id: str, body: dict = Body(...)) -> dict[str, An
     except KeyError:
         raise HTTPException(404, "沒有這個排程") from None
     hub.mark_native()
+    hub.recheck_calendar()
     await hub.changed()
     return sched
 
