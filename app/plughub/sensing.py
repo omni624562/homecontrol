@@ -82,6 +82,18 @@ class Sensing:
 
         await asyncio.gather(*(one(k, d) for k, d in devices.items()))
 
+    def add(self, key: str, rssi: int, now: float) -> None:
+        """從別的地方來的讀數（例如路由器量到的手機、電視的訊號強度）。"""
+        if rssi <= INVALID or rssi >= 0:
+            return
+        self.samples.setdefault(key, self._buf()).append((now, rssi))
+        self._update_motion(key, now)
+
+    def forget(self, key: str) -> None:
+        """拿掉不再讀的裝置（例如從地圖拿下來的）。"""
+        for store in (self.samples, self.motion, self._raw):
+            store.pop(key, None)
+
     def _update_motion(self, key: str, now: float) -> None:
         buf = self.samples[key]
         recent = [v for t, v in buf if now - t <= WINDOW]

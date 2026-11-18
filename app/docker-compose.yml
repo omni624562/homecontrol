@@ -11,6 +11,8 @@ services:
       - TZ=Asia/Taipei
     volumes:
       - ./data:/data
+      # 登入路由器的金鑰（只讀路由器的連線裝置清單）；沒有這個檔案就不讀路由器
+      - ${HOME}/.ssh/homehub_router:/keys/router:ro
     restart: unless-stopped
 
   # Google Home 串接（Matter）：把插座變成 Matter 插座，Google Home 在家裡直接控制

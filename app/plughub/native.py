@@ -371,6 +371,12 @@ async def network(device: Any) -> dict[str, Any]:
     return {"ssid": info.get("ssid"), "key_type": info.get("key_type")}
 
 
+async def cloud_bound(device: Any) -> bool:
+    """插座有沒有綁著 TP-Link 帳號（不讀帳號名稱）。"""
+    info = await query(device, {}, "cnCloud", "get_info")
+    return bool(info.get("binded"))
+
+
 async def firmware_updates(device: Any) -> list[dict[str, Any]]:
     """向 TP-Link 雲端查有沒有新韌體（插座要連著雲端才查得到）。"""
     body = await query(device, {}, "cnCloud", "get_intl_fw_list")

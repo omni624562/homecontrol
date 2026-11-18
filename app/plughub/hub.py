@@ -22,6 +22,7 @@ from kasa import Device, Discover, Module
 from . import habits, native, sun, tariff
 from .sensing import INTERVAL as SENSE_INTERVAL, SAVE_EVERY as SENSE_SAVE_EVERY, Sensing
 from .notify import Notifier
+from .router import Router
 from .store import Store
 
 _LOGGER = logging.getLogger(__name__)
@@ -130,6 +131,20 @@ class Hub:
         self._last_flush = time.monotonic()
         self._discovering = False
         self._dirty = False  # store 有沒寫回的變動
+        # 路由器：連線裝置、新裝置通知、誰在家
+        self.router = Router(lambda: self.store.data["settings"].get("router") or {},
+                             str(store.dir / "router_known_hosts"), self._on_router)
+        self._router_sig: Any = None
+        self._router_since = 0.0  # 這次連上路由器的時間（剛連上時資料不完整，先不判斷「出門」）
+        self._router_fed: dict[str, float] = {}  # MAC → 上次餵給 Wi-Fi 感測的讀數時間
+        self._presence: dict[str, dict[str, Any]] = store.data.setdefault("presence_state", {})
+        # 舊資料：第一次讀路由器時記下的裝置還沒標「seed」
+        known = store.data["net_devices"]
+        if known and not any("seed" in v for v in known.values()):
+            first = min(v.get("first", 0) for v in known.values())
+            for v in known.values():
+                if abs(v.get("first", 0) - first) < 5:
+                    v["seed"] = True
 
     # ---- 生命週期 ----
 
@@ -142,6 +157,7 @@ class Hub:
             asyncio.create_task(self._schedule_loop()),
             asyncio.create_task(self._loop(self._native_tick, 5)),
             asyncio.create_task(self._loop(self._sense_tick, SENSE_INTERVAL)),
+            asyncio.create_task(self.router.run()),
         ]
 
     async def stop(self) -> None:
@@ -858,6 +874,10 @@ class Hub:
             info.update(await native.network(dev))
         except Exception as err:  # noqa: BLE001
             _LOGGER.debug("讀 Wi-Fi 資訊失敗：%s", err)
+        try:
+            info["cloud_bound"] = await native.cloud_bound(dev)
+        except Exception:  # noqa: BLE001
+            pass
         if time.time() - info.get("fw_checked", 0) >= 12 * 3600:
             try:
                 info["fw_updates"] = await native.firmware_updates(dev)
@@ -905,9 +925,168 @@ class Hub:
     def sensing_report(self, minutes: int = 60) -> dict[str, Any]:
         """每台插座（排插算一台）一列：用它的孔的名稱表示。"""
         names = {k: "、".join(self.name(self.plugs[p]) for p in e.plugs) for k, e in self.devices.items()}
+        for mac, d in self.store.data["net_devices"].items():
+            if d.get("map") and mac not in names:
+                names[mac] = d.get("label") or self.router.name_of(mac)
         rep = self.sensing.report(names, minutes)
+        rep["devices"] = [d for d in rep["devices"] if d["key"] in names]
+        rep["net"] = self.net_report()
         rep["enabled"] = bool(self.store.data["settings"].get("sensing", True))
         return rep
+
+    # ---- 路由器：連線裝置、新裝置通知、誰在家 ----
+
+    def _on_router(self, kind: str) -> None:
+        now = time.time()
+        if kind == "status" or not self.router.ok:
+            self._router_since = 0.0
+            self._spawn(self.changed())
+            return
+        if not self._router_since:
+            self._router_since = now
+        self._router_sense(now)
+        changed = self._router_new_devices(now)
+        changed = self._router_presence(now) or changed
+        sig = (self.router.ok, frozenset(m for m in self.router.clients if self.router.online(m)))
+        if changed or sig != self._router_sig:
+            self._router_sig = sig
+            self._spawn(self.changed())
+
+    def _router_sense(self, now: float) -> None:
+        """放到訊號地圖的裝置（電視、電腦…）：路由器量到的訊號強度也拿來偵測動靜。"""
+        if not self.store.data["settings"].get("sensing", True):
+            return
+        for mac, d in self.store.data["net_devices"].items():
+            if not d.get("map") or mac in self.devices:
+                continue
+            c = self.router.clients.get(mac)
+            if not c or c.get("rssi") is None:
+                continue
+            at = max(c.get("live", 0), c.get("list", 0))
+            if at > self._router_fed.get(mac, 0):
+                self._router_fed[mac] = at
+                self.sensing.add(mac, c["rssi"], at)
+
+    def _router_new_devices(self, now: float) -> bool:
+        r = self.router
+        known = self.store.data["net_devices"]
+        if not r.names:  # 還沒讀到名稱清單
+            return False
+        online = [m for m in r.clients if r.online(m)]
+        if not self.store.data.get("net_seeded"):
+            # 第一次：已經在的、路由器以前看過的，都當作認得的
+            for m in set(online) | set(r.names):
+                known.setdefault(m, {"first": now, "seed": True})
+            self.store.data["net_seeded"] = True
+            self._dirty = True
+            return True
+        new = [m for m in online if m not in known]
+        for m in new:
+            known[m] = {"first": now}
+            if self.store.data["settings"].get("new_device_alert", True) and m not in self.devices:
+                c = r.clients[m]
+                vendor = r.names.get(m, {}).get("vendor")
+                where = f"「{c['ssid']}」" if c.get("ssid") else ("有線網路" if c.get("wired") else "Wi-Fi")
+                self.notifier.send("有新裝置連上網路", f"{r.name_of(m)}{f'（{vendor}）' if vendor else ''}連上了{where}。不認得的話，可以到路由器的管理頁封鎖它。")
+        if new:
+            if len(known) > 800:  # 太多就丟掉最舊、不在地圖上也不是誰的手機的
+                mine = {m for p in self.store.data["people"] for m in p["macs"]}
+                old = sorted((v.get("first", 0), m) for m, v in known.items() if not v.get("map") and not v.get("label") and m not in mine)
+                for _, m in old[: len(known) - 800]:
+                    del known[m]
+            self._dirty = True
+        return bool(new)
+
+    def _router_presence(self, now: float) -> bool:
+        """誰在家：家人的手機有沒有連著 Wi-Fi。離線超過幾分鐘才算出門（手機睡著時偶爾會斷一下）。"""
+        people = self.store.data["people"]
+        if not people:
+            return False
+        cfg = self.store.data["settings"].get("presence") or {}
+        grace = max(1, float(cfg.get("grace_min") or 10)) * 60
+        settled = now - self._router_since >= grace  # 剛連上路由器：只判斷回家，不判斷出門
+        before = any(self._presence.get(p["id"], {}).get("home") for p in people)
+        changed = False
+        arrived = []
+        for p in people:
+            last = max((self.router.clients.get(m, {}).get("seen", 0) for m in p["macs"]), default=0)
+            home = bool(last and now - last < grace)
+            st = self._presence.get(p["id"])
+            if st is None:
+                self._presence[p["id"]] = {"home": home, "since": now}
+                changed = True
+            elif st["home"] != home and (home or settled):
+                st.update(home=home, since=now if home else last)
+                changed = True
+                if home:
+                    arrived.append(p["name"])
+        for pid in [k for k in self._presence if k not in {p["id"] for p in people}]:
+            del self._presence[pid]
+        if not changed:
+            return False
+        self._dirty = True
+        after = any(self._presence[p["id"]]["home"] for p in people)
+        if before and not after:
+            self._presence_scene(cfg.get("away_scene"), "大家都出門了")
+        elif after and not before and arrived:
+            self._presence_scene(cfg.get("home_scene"), f"{'、'.join(arrived)}回家了")
+        return True
+
+    def _presence_scene(self, scene_id: str | None, why: str) -> None:
+        scene = self.store.scene(scene_id) if scene_id else None
+        if scene is None:
+            return
+
+        async def go() -> None:
+            SOURCE.set("auto")
+            done = await self.run_scene(scene["id"])
+            self.notifier.send(why, f"已經執行「{scene['name']}」" + (f"，動了 {len(done)} 個插座" if done else "（插座本來就是這樣）"))
+            await self.changed()
+
+        self._spawn(go())
+
+    def net_report(self) -> dict[str, Any]:
+        r = self.router
+        known = self.store.data["net_devices"]
+        owner = {m: p["name"] for p in self.store.data["people"] for m in p["macs"]}
+        plug_names = {k: "、".join(self.name(self.plugs[p]) for p in e.plugs) for k, e in self.devices.items()}
+        models = {n["mac"]: n for n in r.nodes}
+        now = time.time()
+        clients = []
+        for mac in set(r.clients) | {m for m, v in known.items() if v.get("map") or v.get("label")} | set(owner):
+            c = r.clients.get(mac, {})
+            k = known.get(mac, {})
+            names = r.names.get(mac, {})
+            node = models.get(c.get("node") or "")
+            clients.append({
+                "mac": mac,
+                "name": k.get("label") or plug_names.get(mac) or r.name_of(mac),
+                "router_name": names.get("custom") or names.get("name"),
+                "label": k.get("label"),
+                "vendor": names.get("vendor"),
+                "node": c.get("node"),
+                "node_model": node["model"] if node else None,
+                "node_main": node["main"] if node else None,
+                "band": c.get("band"),
+                "ssid": c.get("ssid"),
+                "rssi": c.get("rssi"),
+                "wired": c.get("wired", False),
+                "online": r.online(mac),
+                "seen": c.get("seen"),
+                "first": None if k.get("seed") else k.get("first"),
+                "map": bool(k.get("map")),
+                "person": owner.get(mac),
+                "plug": plug_names.get(mac),
+            })
+        clients.sort(key=lambda c: (not c["online"], c["plug"] is not None, c["name"].lower()))
+        return {
+            "configured": r.configured, "ok": r.ok, "error": r.error,
+            "updated": r.updated, "now": now,
+            "nodes": r.nodes, "clients": clients,
+        }
+
+    def people_report(self) -> list[dict[str, Any]]:
+        return [{**p, **self._presence.get(p["id"], {"home": None, "since": None})} for p in self.store.data["people"]]
 
     def _target(self, plug_id: str) -> tuple[Any, dict[str, Any]]:
         plug = self.plugs[plug_id]
@@ -1008,15 +1187,19 @@ class Hub:
 
     async def cloud_unbind_all(self) -> dict[str, int]:
         ok = failed = 0
-        for entry in self.devices.values():
+        for key, entry in self.devices.items():
             if not native.supported(entry.device):
                 continue
             try:
                 await native.cloud_unbind(entry.device)
                 ok += 1
             except Exception as err:  # noqa: BLE001
-                _LOGGER.warning("斷開雲端失敗：%s", err)
-                failed += 1
+                if "not bind" not in str(err):  # 本來就沒綁 = 已經斷開了
+                    _LOGGER.warning("斷開雲端失敗：%s", err)
+                    failed += 1
+                    continue
+                ok += 1
+            self.dev_info.setdefault(key, {})["cloud_bound"] = False
         return {"ok": ok, "failed": failed}
 
     async def _run_timers_once(self) -> None:
@@ -1280,6 +1463,9 @@ class Hub:
             "habits": {"suggestions": self.habits, "days": getattr(self, "habit_days", 0)},
             "net_events": self.store.data["net_events"][-10:] + list(self._outage.values()),
             "matter": self.matter_status(),
+            "router": {"configured": self.router.configured, "ok": self.router.ok, "error": self.router.error,
+                       "nodes": self.router.nodes},
+            "people": self.people_report(),
         }
 
     def matter_status(self) -> dict[str, Any] | None:

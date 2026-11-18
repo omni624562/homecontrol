@@ -819,6 +819,11 @@ const STYLE = `
   .set.sugg .sun { display: inline-flex; align-items: center; gap: 2px; }
   .set.sugg .sun .i { width: 15px; height: 15px; }
   .netwarn.past { color: var(--muted); }
+  .netdev .l { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+  .netdev .tag, .set .tag { display: inline-flex; align-items: center; gap: 3px; font-size: 11.5px; font-weight: 500; color: var(--muted); background: var(--soft); border-radius: 6px; padding: 2px 7px 2px 5px; }
+  .set .tag .i { width: 13px; height: 13px; }
+  .set .tag.new { background: var(--accent-soft); color: var(--accent-text); padding: 2px 7px; }
+  .ch .n small { font-weight: 500; color: var(--muted); font-size: 12.5px; margin-left: 6px; }
 
   /* ═════════ 訊號地圖 ═════════ */
   .link.back { display: inline-flex; align-items: center; gap: 0; padding: 0 0 4px; font-size: 14px; }
@@ -960,7 +965,7 @@ class PlugApp extends HTMLElement {
 
   _tabFromHash() {
     const h = location.hash.slice(1);
-    return TABS.some(([k]) => k === h) || h === "map" ? h : null;
+    return TABS.some(([k]) => k === h) || h === "map" || h === "net" ? h : null;
   }
 
   _go(tab, replace = true) {
@@ -1092,7 +1097,7 @@ class PlugApp extends HTMLElement {
   _render() {
     const nav = TABS.map(
       ([key, label, icon]) =>
-        `<button class="tab ${(this._tab === "map" ? "settings" : this._tab) === key ? "sel" : ""}" data-a="tab" data-v="${key}" ${(this._tab === "map" ? "settings" : this._tab) === key ? 'aria-current="page"' : ""}>${ic(icon)}<span>${label}</span></button>`,
+        `<button class="tab ${(["map", "net"].includes(this._tab) ? "settings" : this._tab) === key ? "sel" : ""}" data-a="tab" data-v="${key}" ${(["map", "net"].includes(this._tab) ? "settings" : this._tab) === key ? 'aria-current="page"' : ""}>${ic(icon)}<span>${label}</span></button>`,
     ).join("");
     const conn = `<div class="conn"><span class="led ${this._connected ? "" : "bad"}"></span>${this._connected ? "已連線" : "連線中斷"}</div>`;
     let page;
@@ -1105,6 +1110,7 @@ class PlugApp extends HTMLElement {
         energy: () => this._energyPage(),
         settings: () => this._settingsPage(),
         map: () => this._mapPage(),
+        net: () => this._netPage(),
       };
       page = (pages[this._tab] || pages.plugs)();
     }
@@ -2014,6 +2020,211 @@ class PlugApp extends HTMLElement {
         <b>限制：</b>插座只回報訊號強度（一個數字），只能偵測走動，偵測不到靜止的人；路由器、其他 Wi-Fi、微波爐也會造成擾動。要可靠地偵測有沒有人，建議用毫米波雷達感測器。</p>`;
   }
 
+  // ───────────── 網路裝置（讀路由器）─────────────
+
+  _routerLine() {
+    const r = this._s.router || {};
+    if (!r.configured) return "還沒連到路由器";
+    if (!r.ok) return `連不上路由器${r.error ? `：${r.error}` : ""}`;
+    const people = this._s.people || [];
+    const home = people.filter((x) => x.home).length;
+    return `${r.nodes.map((n) => n.model).join(" + ")}${people.length ? `・${home ? `${home} 人在家` : "大家都出門了"}` : "・看誰在家、陌生裝置通知"}`;
+  }
+
+  _netLoad() {
+    if (this._netTimer) return;
+    const load = () => {
+      if (this._tab !== "net") {
+        clearInterval(this._netTimer);
+        this._netTimer = null;
+        return;
+      }
+      this._netRefresh();
+    };
+    load();
+    this._netTimer = setInterval(load, 10000);
+  }
+
+  _netRefresh() {
+    return api("GET", "/api/net")
+      .then((d) => {
+        this._net = d;
+        this._render();
+        if (this._sheet?.type === "netdev" || this._sheet?.type === "person") this._renderSheet();
+      })
+      .catch(() => {});
+  }
+
+  _netClient(mac) {
+    return (this._net?.clients || []).find((c) => c.mac === mac);
+  }
+
+  // 「5G・castle・-57 dBm」
+  _netWhere(c) {
+    const hidden = (x) => !x || /^[0-9A-F]{32}$/.test(x);
+    const parts = [];
+    if (c.wired) parts.push("有線");
+    else if (c.band) parts.push(`${c.band}${hidden(c.ssid) ? "" : `・${c.ssid}`}`);
+    if (!c.wired && c.rssi != null && c.online) parts.push(`${c.rssi} dBm`);
+    return parts.join("・");
+  }
+
+  _netAgo(t) {
+    if (!t) return "";
+    const d = new Date(t * 1000);
+    const now = new Date(this._now() * 1000);
+    const same = d.toDateString() === now.toDateString();
+    return `${same ? "" : `${d.getMonth() + 1}/${d.getDate()} `}${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  }
+
+  _netPage() {
+    this._netLoad();
+    const r = this._s.router || {};
+    const n = this._net;
+    const head = `
+      <div class="ph"><div><button class="link back" data-a="net-back">${ic("mdi:chevron-left")}設定</button><h1>網路裝置</h1>
+        <div class="sub">${esc(this._routerLine())}</div></div></div>`;
+    if (!r.configured)
+      return `${head}<div class="card"><div class="empty">還沒設定要讀哪一台路由器。</div></div>`;
+    if (!n) return `${head}<div class="card"><div class="empty">讀取中…</div></div>`;
+    const set = this._s.settings;
+    const people = this._s.people || [];
+    const pres = set.presence || {};
+    const scenes = this._scenes;
+    const sceneSel = (key) =>
+      `<select class="gsel" data-c="pres" data-v="${key}" aria-label="情境"><option value="">不做事</option>${scenes.map((x) => `<option value="${esc(x.id)}" ${pres[key] === x.id ? "selected" : ""}>執行「${esc(x.name)}」</option>`).join("")}</select>`;
+    const peopleRows = people
+      .map((x) => {
+        const devs = x.macs.map((m) => this._netClient(m)?.name || m).join("、");
+        const when = x.since ? `${this._netAgo(x.since)} ${x.home ? "回來" : "出門"}・` : "";
+        return `<button class="set tapset" data-a="person-edit" data-v="${esc(x.id)}">
+            <div class="tx"><div class="l">${esc(x.name)}</div><div class="s">${esc(when)}${esc(devs || "還沒選手機")}</div></div>
+            <span class="badge ${x.home ? "ok" : ""}">${x.home == null ? "—" : x.home ? "在家" : "出門"}</span>
+          </button>`;
+      })
+      .join("");
+    const peopleCard = `
+      <section class="card">
+        <div class="ch"><div class="ri">${ic("mdi:home-outline")}</div><div class="n">誰在家</div><div class="end"><button class="btn sm" data-a="person-new">${ic("mdi:plus")}新增</button></div></div>
+        ${peopleRows || `<p class="desc">新增家人、選他的手機，就能看誰在家，最後一個人出門時自動執行「出門」。</p>`}
+        ${
+          people.length
+            ? `<div class="set"><div class="tx"><div class="l">大家都出門時</div><div class="s">最後一個人的手機離開家裡的 Wi-Fi</div></div>${sceneSel("away_scene")}</div>
+          <div class="set"><div class="tx"><div class="l">有人回家時</div><div class="s">大家都出門之後，第一個人回來</div></div>${sceneSel("home_scene")}</div>
+          <div class="set"><div class="tx"><div class="l">離線多久才算出門</div><div class="s">手機睡著時偶爾會斷線一下，太短會誤判</div></div>
+            <select class="gsel" data-c="pres" data-v="grace_min" aria-label="分鐘">${[5, 10, 15, 20, 30].map((m) => `<option value="${m}" ${+pres.grace_min === m ? "selected" : ""}>${m} 分鐘</option>`).join("")}</select></div>`
+            : ""
+        }
+        <p class="desc foot">${ic("mdi:shield-check-outline")}只看手機有沒有連著家裡的 Wi-Fi，紀錄只留在樹莓派上；請先讓家人知道。手機如果對這個 Wi-Fi 用「隨機／私人 MAC 位址」而且會一直換，就認不出來，要改成固定。</p>
+      </section>`;
+    const alertCard = `
+      <section class="card">
+        <div class="group"><div class="gi"><div class="gt"><div class="gl">新裝置通知</div><div class="gs">沒看過的裝置連上家裡的網路就推播通知（要先在「提醒與通知」填 ntfy）</div></div>
+          <button class="sw ${set.new_device_alert !== false ? "on" : ""}" data-a="newdev-toggle" role="switch" aria-checked="${set.new_device_alert !== false}" aria-label="新裝置通知"></button></div></div>
+      </section>`;
+    const day = 86400;
+    const row = (c) => {
+      const tags = [
+        c.person ? `<span class="tag">${ic("mdi:account")}${esc(c.person)}</span>` : "",
+        c.plug ? `<span class="tag">${ic("mdi:power-plug")}插座</span>` : "",
+        c.map ? `<span class="tag">${ic("mdi:wifi")}在地圖上</span>` : "",
+        c.first && n.now - c.first < day ? `<span class="tag new">新</span>` : "",
+      ].join("");
+      const sub = [c.vendor && c.vendor !== c.name ? c.vendor : "", this._netWhere(c), c.online ? "" : c.seen ? `最後看到 ${this._netAgo(c.seen)}` : ""].filter(Boolean).join("・");
+      return `<button class="set tapset netdev" data-a="netdev-open" data-v="${esc(c.mac)}">
+          <div class="tx"><div class="l">${esc(c.name)}${tags}</div><div class="s">${esc(sub)}</div></div>${ic("mdi:chevron-right")}</button>`;
+    };
+    const online = n.clients.filter((c) => c.online);
+    const groups = n.nodes
+      .slice()
+      .sort((a, b) => b.main - a.main)
+      .map((node) => {
+        const all = online.filter((c) => c.node === node.mac);
+        const list = all.filter((c) => !c.plug);
+        const plugs = all.length - list.length;
+        return all.length
+          ? `<section class="card"><div class="ch"><div class="ri">${ic("mdi:wifi")}</div><div class="n">${esc(node.model)}<small>${node.main ? "主路由器" : "節點"}</small></div><div class="end"><span class="badge">${all.length}</span></div></div>${list.map(row).join("")}
+            ${plugs ? `<p class="desc foot">${ic("mdi:power-plug")}另外還有 ${plugs} 台插座連在這裡</p>` : ""}</section>`
+          : "";
+      })
+      .join("");
+    const offline = n.clients.filter((c) => !c.online && (c.person || c.map || c.label));
+    const offCard = offline.length
+      ? `<section class="card"><div class="ch"><div class="ri">${ic("mdi:wifi-off")}</div><div class="n">現在沒連線</div></div>${offline.map(row).join("")}</section>`
+      : "";
+    const err = !n.ok ? `<div class="netwarn">${ic("mdi:alert-circle-outline")}<span>連不上路由器${n.error ? `：${esc(n.error)}` : ""}。下面是最後讀到的資料。</span></div>` : "";
+    return `${head}${err}
+      <div class="grid">
+        ${peopleCard}
+        ${alertCard}
+        ${groups}
+        ${offCard}
+      </div>
+      <p class="note">每 4～20 秒從路由器讀一次（SSH 金鑰登入，只讀，不改路由器的設定）。點裝置可以取名字、指定是誰的手機、放到訊號地圖。</p>`;
+  }
+
+  _netdevSheet(s) {
+    const c = this._netClient(s.id);
+    if (!c) return null;
+    const d = (s.draft ||= { label: c.label || "", map: c.map });
+    const people = this._s.people || [];
+    const canMap = !c.plug && !c.wired;
+    const node = (this._net.nodes || []).find((x) => x.mac === c.node);
+    const info = [
+      ["MAC", c.mac],
+      ["廠商", c.vendor || "—"],
+      ["路由器上的名字", c.router_name || "—"],
+      ["連在", c.online ? `${node ? `${node.model}（${node.main ? "主路由器" : "節點"}）` : "—"}${this._netWhere(c) ? `・${this._netWhere(c)}` : ""}` : `沒連線${c.seen ? `・最後看到 ${this._netAgo(c.seen)}` : ""}`],
+      ["第一次看到", c.first ? this._netAgo(c.first) : "—"],
+    ];
+    return `
+      ${this._sheetHead(c.person ? "mdi:cellphone" : c.plug ? "mdi:power-plug" : "mdi:wifi", c.name, c.plug ? `插座：${c.plug}` : c.vendor || "")}
+      <div class="q">名字</div>
+      <input class="text" data-netdev-label data-enter="netdev-save" value="${esc(d.label)}" maxlength="30" placeholder="${esc(c.router_name || "例如：客廳電視、爸爸的手機")}" aria-label="名字">
+      ${
+        people.length && !c.plug
+          ? `<div class="q">這是誰的手機 <small>用來判斷誰在家</small></div>
+        <div class="chips">${people.map((x) => { const on = x.macs.includes(c.mac); return `<button class="chip ${on ? "sel" : ""}" data-a="netdev-person" data-v="${esc(x.id)}" aria-pressed="${on}">${on ? ic("mdi:check") : ""}${esc(x.name)}</button>`; }).join("")}</div>`
+          : ""
+      }
+      ${
+        canMap
+          ? `<div class="group" style="margin-top:14px"><div class="gi"><div class="gt"><div class="gl">放到訊號地圖</div><div class="gs">用路由器量到的它的訊號偵測附近的動靜。適合不會移動的裝置：電視、電腦、智慧音箱；手機會被帶著走，不適合。</div></div>
+        <button class="sw ${d.map ? "on" : ""}" data-a="netdev-map" role="switch" aria-checked="${d.map}" aria-label="放到訊號地圖"></button></div></div>`
+          : ""
+      }
+      <div class="group" style="margin-top:14px">${info.map(([l, v]) => `<div class="gi"><span class="gl">${l}</span><span class="gv">${esc(v)}</span></div>`).join("")}</div>
+      <div class="err"></div>
+      <div class="actions"><button class="btn" data-a="close">取消</button><button class="btn primary" data-a="netdev-save">儲存</button></div>`;
+  }
+
+  _personSheet(s) {
+    const isNew = !s.id;
+    const person = isNew ? null : (this._s.people || []).find((x) => x.id === s.id);
+    if (!isNew && !person) return null;
+    const d = (s.draft ||= { name: person?.name || "", macs: [...(person?.macs || [])] });
+    // 可以選的：現在連著 Wi-Fi、不是插座的裝置，加上已經選的
+    const cands = (this._net?.clients || []).filter((c) => d.macs.includes(c.mac) || (c.online && !c.plug && !c.wired));
+    const chips = cands
+      .map((c) => {
+        const on = d.macs.includes(c.mac);
+        const other = !on && c.person && c.person !== person?.name ? `（${c.person}）` : "";
+        return `<button class="chip ${on ? "sel" : ""}" data-a="person-mac" data-v="${esc(c.mac)}" aria-pressed="${on}">${on ? ic("mdi:check") : ""}${esc(c.name)}${esc(other)}</button>`;
+      })
+      .join("");
+    return `
+      ${this._sheetHead("mdi:account", isNew ? "新增家人" : person.name, isNew ? "" : person.home ? "在家" : "出門")}
+      <div class="q">名字</div>
+      <input class="text" data-person-name data-enter="person-save" ${isNew ? "data-autofocus" : ""} value="${esc(d.name)}" maxlength="20" placeholder="例如：爸爸" aria-label="名字">
+      <div class="q">他的手機 <small>選一到兩支；不知道是哪一支，可以先把手機的 Wi-Fi 關掉再打開，看哪一個消失又出現</small></div>
+      <div class="chips">${chips || `<p class="desc">${this._net ? "現在沒有連著 Wi-Fi 的裝置" : "讀取中…"}</p>`}</div>
+      <div class="err"></div>
+      <div class="actions">
+        ${isNew ? `<button class="btn" data-a="close">取消</button>` : `<button class="btn danger" data-a="person-delete" data-confirm="刪除「${esc(person.name)}」？" data-confirm-text="只是不再判斷他在不在家，手機本身不受影響。">刪除</button>`}
+        <button class="btn primary" data-a="person-save">${isNew ? "新增" : "儲存"}</button>
+      </div>`;
+  }
+
   // ───────────── 訊號地圖 ─────────────
 
   _mapLoad() {
@@ -2056,10 +2267,18 @@ class PlugApp extends HTMLElement {
       d.plugs.push(p);
       d.online = d.online || p.online;
     }
+    const net = this._mapSense?.net;
+    const cl = Object.fromEntries((net?.clients || []).map((c) => [c.mac, c]));
     for (const d of devs.values()) {
       d.name = d.plugs.length > 1 ? `${d.plugs[0].name} 等 ${d.plugs.length} 個` : d.plugs[0].name;
       d.full = d.plugs.map((p) => p.name).join("、");
       d.ssid = d.plugs.find((p) => p.net?.ssid)?.net.ssid || null;
+      d.node = cl[d.key]?.online ? cl[d.key].node : null;
+    }
+    // 從路由器加到地圖的裝置（電視、電腦…）：訊號強度是路由器量到的
+    for (const c of net?.clients || []) {
+      if (!c.map || c.plug || devs.has(c.mac)) continue;
+      devs.set(c.mac, { key: c.mac, plugs: [], name: c.name, full: c.name, rssi: c.online ? c.rssi : null, online: c.online, room: null, ssid: c.ssid, node: c.online ? c.node : null, router: true });
     }
     return [...devs.values()];
   }
@@ -2222,12 +2441,14 @@ class PlugApp extends HTMLElement {
   _mapLinks(devs) {
     const fp = this._fp;
     const mpp = (fp.meters || 12) / fp.w; // 每單位幾公尺
-    const aps = fp.aps.filter((a) => a.ssid && fp.items[`ap:${a.id}`]);
+    const aps = fp.aps.filter((a) => (a.ssid || a.node) && fp.items[`ap:${a.id}`]);
     const links = [];
     for (const d of devs) {
       const it = fp.items[d.key];
-      if (!it || !d.ssid) continue;
-      const cands = aps.filter((a) => a.ssid === d.ssid);
+      if (!it || (!d.ssid && !d.node)) continue;
+      // 路由器說它連在哪一台就用那一台；沒有的話用 Wi-Fi 名稱猜
+      let cands = d.node ? aps.filter((a) => a.node === d.node) : [];
+      if (!cands.length && d.ssid) cands = aps.filter((a) => !a.node && a.ssid === d.ssid);
       if (!cands.length) continue;
       const dist = (a) => Math.hypot(fp.items[`ap:${a.id}`].x - it.x, fp.items[`ap:${a.id}`].y - it.y);
       const ap = cands.reduce((b, a) => (dist(a) < dist(b) ? a : b));
@@ -2355,6 +2576,7 @@ class PlugApp extends HTMLElement {
       const zSel = (val, opts) =>
         `<select class="gsel" data-c="map-z" aria-label="高度">${opts.map(([v, l]) => `<option value="${v}" ${Math.abs(v - val) < 0.01 ? "selected" : ""}>${l}（${v} 公尺）</option>`).join("")}${opts.some(([v]) => Math.abs(v - val) < 0.01) ? "" : `<option selected value="${val}">${val} 公尺</option>`}</select>`;
       const ssids = [...new Set(devs.map((d) => d.ssid).filter(Boolean))];
+      const nodes = this._mapSense?.net?.nodes || [];
       let selHtml = `<p class="desc">點房間、裝置或 Wi-Fi 基地台可以選取；拖曳移動，房間拉右下角的小方塊改大小。</p>
         <div class="q">地圖的實際寬度 <small>用來算距離</small></div>
         <div class="field"><input class="text num" type="number" min="2" max="100" step="0.5" inputmode="decimal" data-c="map-meters" value="${fp.meters || 12}" aria-label="實際寬度"><span class="unit">公尺</span></div>`;
@@ -2366,8 +2588,13 @@ class PlugApp extends HTMLElement {
         const a = fp.aps.find((x) => x.id === sel.id);
         if (a)
           selHtml = `<div class="q">Wi-Fi 基地台名稱</div><div class="field"><input class="text" data-c="map-name" value="${esc(a.name)}" maxlength="30" aria-label="名稱"><button class="btn danger" data-a="map-ap-del" data-v="${esc(a.id)}" data-confirm="移除這個 Wi-Fi 基地台？" data-confirm-text="只從地圖移除。" data-confirm-ok="移除">移除</button></div>
-            <div class="q">它發出的 Wi-Fi <small>連這個 Wi-Fi 的插座會畫一條線連到它</small></div>
-            <select class="gsel" data-c="map-ap-ssid" aria-label="Wi-Fi 名稱"><option value="">還沒選</option>${ssids.map((x) => `<option ${a.ssid === x ? "selected" : ""}>${esc(x)}</option>`).join("")}</select>
+            ${
+              nodes.length
+                ? `<div class="q">這是哪一台 <small>從路由器讀到的；連在這台的裝置會自動畫線</small></div>
+            <select class="gsel" data-c="map-ap-node" aria-label="哪一台"><option value="">還沒選</option>${nodes.map((n) => `<option value="${esc(n.mac)}" ${a.node === n.mac ? "selected" : ""}>${esc(n.model)}（${n.main ? "主路由器" : "節點"}）</option>`).join("")}</select>`
+                : `<div class="q">它發出的 Wi-Fi <small>連這個 Wi-Fi 的插座會畫一條線連到它</small></div>
+            <select class="gsel" data-c="map-ap-ssid" aria-label="Wi-Fi 名稱"><option value="">還沒選</option>${ssids.map((x) => `<option ${a.ssid === x ? "selected" : ""}>${esc(x)}</option>`).join("")}</select>`
+            }
             <div class="q">放的高度 <small>放高一點，訊號線才會穿過人的身體</small></div>
             ${zSel(a.z ?? AP_Z, AP_HEIGHTS)}
             <p class="desc" style="margin-top:8px">${links.filter((l) => l.ap.id === a.id).length} 台插座連到這裡</p>`;
@@ -2376,12 +2603,14 @@ class PlugApp extends HTMLElement {
         const l = links.find((x) => x.dev.key === sel.id);
         const linkTxt = l
           ? `連到「${esc(l.ap.name)}」${l.guess ? "（同名的 Wi-Fi 有好幾台，先猜最近的）" : ""}，相距約 ${fmt(l.L, 1)} 公尺，其中約 ${fmt(l.band, 1)} 公尺經過人的腰到胸的高度：<b>${qText[l.q]}</b>`
-          : d?.ssid
-            ? `連「${esc(d.ssid)}」，在地圖上加一台 Wi-Fi 基地台、選這個 Wi-Fi，就會畫出連線`
-            : "";
+          : d?.node
+            ? `連在 ${esc((this._mapSense?.net?.nodes || []).find((n) => n.mac === d.node)?.model || "")}，在地圖上加一台 Wi-Fi 基地台、選這一台，就會畫出連線`
+            : d?.ssid
+              ? `連「${esc(d.ssid)}」，在地圖上加一台 Wi-Fi 基地台、選這個 Wi-Fi，就會畫出連線`
+              : "";
         if (d)
           selHtml = `<div class="q">${esc(d.full)}</div><p class="desc">訊號 ${sigText(d.rssi)} dBm${linkTxt ? `・${linkTxt}` : ""}</p>
-            <div class="q">插在多高</div>${zSel(fp.items[d.key].z ?? DEV_Z, DEV_HEIGHTS)}
+            <div class="q">${d.router ? "放在多高" : "插在多高"}</div>${zSel(fp.items[d.key].z ?? DEV_Z, DEV_HEIGHTS)}
             <button class="btn sm" data-a="map-unplace" data-v="${esc(d.key)}" style="margin-top:12px">從地圖拿下來</button>`;
       }
       const tray = devs.filter((d) => !fp.items[d.key]);
@@ -2403,7 +2632,7 @@ class PlugApp extends HTMLElement {
               layer === "motion"
                 ? links.length
                   ? `<p class="desc" style="margin-top:10px"><b>${links.filter((l) => l.q === "good").length} 條線適合偵測走動</b>${links.some((l) => l.q === "good") ? `：${esc(links.filter((l) => l.q === "good").map((l) => l.dev.name).join("、"))}` : ""}。實線穿過人的腰到胸的高度，有人走過去訊號會明顯跳動；虛線大多貼著地面或太短。</p>`
-                  : `<p class="desc" style="margin-top:10px">在「編輯」裡加上 Wi-Fi 基地台、選它發出的 Wi-Fi 和放的高度，就會畫出每台插座到基地台的訊號線，看得出哪幾條適合偵測走動。</p>`
+                  : `<p class="desc" style="margin-top:10px">在「編輯」裡加上 Wi-Fi 基地台、選它是哪一台和放的高度，就會畫出每台裝置到基地台的訊號線，看得出哪幾條適合偵測走動。電視、電腦也能當感測器：到「設定 → 網路裝置」點它、打開「放到訊號地圖」。</p>`
                 : fp.aps.length
                   ? ""
                   : `<p class="desc" style="margin-top:10px">按右上角「編輯」可以把你的 Wi-Fi 基地台也擺上去，比較容易看出哪裡離基地台太遠。</p>`
@@ -2467,12 +2696,16 @@ class PlugApp extends HTMLElement {
             <div class="tx"><div class="l">訊號地圖</div><div class="s">在平面圖上看每個裝置的 Wi-Fi 訊號、哪裡有動靜</div></div>
             ${ic("mdi:chevron-right")}
           </button>
+          <button class="set tapset" data-a="net-open">
+            <div class="tx"><div class="l">網路裝置與在家的人</div><div class="s">${esc(this._routerLine())}</div></div>
+            ${ic("mdi:chevron-right")}
+          </button>
           <button class="set tapset" data-a="sense-open">
             <div class="tx"><div class="l">Wi-Fi 感測 <span class="badge wait">實驗</span></div><div class="s">用插座的訊號擾動，猜哪裡有人在走動</div></div>
             ${ic("mdi:chevron-right")}
           </button>
           <button class="set tapset" data-a="cloud-open">
-            <div class="tx"><div class="l">TP-Link 雲端</div><div class="s">${this._plugs.filter((p) => p.cloud).length} 個插座連著雲端・家庭中控和 Google Home 都不需要它</div></div>
+            <div class="tx"><div class="l">TP-Link 雲端</div><div class="s">${this._cloudBound().length ? `${this._cloudBound().length} 個插座綁著 TP-Link 帳號` : "已和 TP-Link 帳號解除綁定"}・家庭中控和 Google Home 都不需要它</div></div>
             ${ic("mdi:chevron-right")}
           </button>
           <div class="set">
@@ -2706,6 +2939,74 @@ class PlugApp extends HTMLElement {
         this._go("map", false);
         history.pushState(null, "", "#map");
       },
+      "net-open": () => {
+        this._go("net", false);
+        history.pushState(null, "", "#net");
+      },
+      "net-back": () => {
+        this._go("settings", false);
+        history.pushState(null, "", "#settings");
+      },
+      "netdev-open": (v) => this._openSheet({ type: "netdev", id: v }),
+      "netdev-map": () => {
+        const d = this._sheet.draft;
+        d.label = this._sheetHost.querySelector("[data-netdev-label]")?.value ?? d.label;
+        d.map = !d.map;
+        this._renderSheet();
+      },
+      "netdev-save": () => {
+        const s = this._sheet;
+        const label = this._sheetHost.querySelector("[data-netdev-label]").value.trim();
+        const body = { label: label || null };
+        const c = this._netClient(s.id);
+        if (c && !c.plug && !c.wired) body.map = !!s.draft.map;
+        this._safe(async () => {
+          this._net = await api("PATCH", `/api/net/devices/${encodeURIComponent(s.id)}`, body);
+          this._closeSheet();
+          if (body.map && !c.map) this._showToast("已加到訊號地圖：到地圖的「編輯」把它擺到實際的位置");
+        });
+      },
+      "netdev-person": (v) => {
+        const x = (this._s.people || []).find((p) => p.id === v);
+        const mac = this._sheet.id;
+        if (!x) return;
+        const macs = x.macs.includes(mac) ? x.macs.filter((m) => m !== mac) : [...x.macs, mac];
+        this._safe(async () => {
+          await api("PUT", `/api/people/${v}`, { name: x.name, macs });
+          x.macs = macs;
+          await this._netRefresh();
+        });
+      },
+      "newdev-toggle": () =>
+        this._safe(async () => {
+          await api("PUT", "/api/settings", { new_device_alert: this._s.settings.new_device_alert === false });
+        }),
+      "person-new": () => this._openSheet({ type: "person", id: null }),
+      "person-edit": (v) => this._openSheet({ type: "person", id: v }),
+      "person-mac": (v) => {
+        const d = this._sheet.draft;
+        d.name = this._sheetHost.querySelector("[data-person-name]")?.value ?? d.name;
+        d.macs = d.macs.includes(v) ? d.macs.filter((m) => m !== v) : [...d.macs, v];
+        this._renderSheet();
+      },
+      "person-save": () => {
+        const s = this._sheet;
+        const name = this._sheetHost.querySelector("[data-person-name]").value.trim();
+        if (!name) return this._sheetError("請輸入名字");
+        this._safe(async () => {
+          if (s.id) await api("PUT", `/api/people/${s.id}`, { name, macs: s.draft.macs });
+          else await api("POST", "/api/people", { name, macs: s.draft.macs });
+          this._closeSheet();
+          this._netRefresh();
+        });
+      },
+      "person-delete": (v, t) =>
+        sure(t) &&
+        this._safe(async () => {
+          await api("DELETE", `/api/people/${this._sheet.id}`);
+          this._closeSheet();
+          this._netRefresh();
+        }),
       "map-back": () => {
         this._mapEdit = false;
         this._go("settings", false);
@@ -2871,6 +3172,7 @@ class PlugApp extends HTMLElement {
       "cloud-unbind": (v, t) =>
         sure(t) &&
         this._safe(async () => {
+          this._showToast("斷開中…");
           const res = await api("POST", "/api/cloud/unbind", { confirm: "斷開" });
           this._closeSheet();
           this._showToast(res.failed ? `斷開 ${res.ok} 台，${res.failed} 台沒有回應` : `已斷開 ${res.ok} 台插座的 TP-Link 雲端`);
@@ -3005,6 +3307,20 @@ class PlugApp extends HTMLElement {
         this._mapSave();
         this._render();
       },
+      pres: (v, t) =>
+        this._safe(async () => {
+          const val = v === "grace_min" ? +t.value : t.value || null;
+          await api("PUT", "/api/settings", { presence: { [v]: val } });
+        }),
+      "map-ap-node": (v, t) => {
+        const a = this._fp.aps.find((x) => x.id === this._mapSel?.id);
+        if (!a) return;
+        a.node = t.value || null;
+        const n = (this._mapSense?.net?.nodes || []).find((x) => x.mac === a.node);
+        if (n && /^Wi-Fi 基地台 \d+$/.test(a.name)) a.name = n.model;
+        this._mapSave();
+        this._render();
+      },
       "map-ap-ssid": (v, t) => {
         const a = this._fp.aps.find((x) => x.id === this._mapSel?.id);
         if (!a) return;
@@ -3111,11 +3427,29 @@ class PlugApp extends HTMLElement {
     });
   }
 
+  // 還綁著 TP-Link 帳號的插座（排插算一台）；還沒讀到的當作綁著
+  _cloudBound() {
+    const devs = new Map();
+    for (const p of this._plugs) if (p.online) devs.set(p.device, p);
+    return [...devs.values()].filter((p) => p.net?.cloud_bound !== false);
+  }
+
   _cloudSheet() {
-    const plugs = this._plugs.filter((p) => p.online);
-    const on = plugs.filter((p) => p.cloud).length;
+    const devs = new Set(this._plugs.filter((p) => p.online).map((p) => p.device)).size;
+    const on = this._cloudBound().length;
+    if (!on)
+      return `
+      ${this._sheetHead("mdi:cloud-off-outline", "TP-Link 雲端", `${devs} 台插座都已解除綁定`)}
+      <p class="lead">所有插座都已經和你的 TP-Link 帳號<b>解除綁定</b>。</p>
+      <ul class="bul">
+        <li>家庭中控、Google Home、排程、插座內建的排程照常運作</li>
+        <li>Kasa App 只能在家裡同一個 Wi-Fi 下控制，在外面不行</li>
+        <li>插座還是會連到 TP-Link 的伺服器（主要是查韌體更新），但已經不屬於任何帳號</li>
+        <li>想恢復的話，要用 Kasa App 重新設定插座</li>
+      </ul>
+      <div class="actions"><button class="btn primary" data-a="close">好</button></div>`;
     return `
-      ${this._sheetHead("mdi:cloud-outline", "TP-Link 雲端", `${on}／${plugs.length} 個插座連著雲端`)}
+      ${this._sheetHead("mdi:cloud-outline", "TP-Link 雲端", `${on}／${devs} 台插座綁著 TP-Link 帳號`)}
       <p class="lead">家庭中控和 Google Home（Matter）都在家裡直接控制插座，<b>不需要</b> TP-Link 雲端。斷開後：</p>
       <ul class="bul">
         <li>插座不再和 TP-Link 的伺服器連線，隱私比較好</li>
@@ -3372,7 +3706,7 @@ class PlugApp extends HTMLElement {
   _renderSheet() {
     const s = this._sheet;
     if (!s) return;
-    const builders = { sense: this._senseSheet, edev: this._edevSheet, kasa: this._kasaSheet, confirm: this._confirmSheet, away: this._awaySheet, cloud: this._cloudSheet, device: this._deviceSheet, timer: this._deviceSheet, plug: this._deviceSheet, room: this._roomSheet, scene: this._sceneSheet, sched: this._schedSheet, watts: this._wattsSheet };
+    const builders = { sense: this._senseSheet, edev: this._edevSheet, kasa: this._kasaSheet, confirm: this._confirmSheet, away: this._awaySheet, cloud: this._cloudSheet, netdev: this._netdevSheet, person: this._personSheet, device: this._deviceSheet, timer: this._deviceSheet, plug: this._deviceSheet, room: this._roomSheet, scene: this._sceneSheet, sched: this._schedSheet, watts: this._wattsSheet };
     const html = builders[s.type]?.call(this, s);
     if (html === null || html === undefined) return this._closeSheet();
     const key = `${s.type}|${s.id}|${s.wide ? 1 : 0}`;
@@ -3509,7 +3843,7 @@ class PlugApp extends HTMLElement {
         ${chart}
         <div class="gi"><span class="gl">內建排程<small>${esc(nativeText)}</small></span>${n && !n.ok ? `<span class="gv warn">${ic("mdi:alert-circle-outline")}</span>` : n ? `<span class="gv ok">${ic("mdi:check-circle")}</span>` : ""}</div>
         ${(n?.kasa || []).length ? `<div class="gi"><span class="gl">Kasa App 設的排程<small>插座自己會執行；在「排程」頁可以修改</small></span><span class="gv kasa">${n.kasa.map((r) => `${r.sact ? "開" : "關"} ${this._ruleText(r)}${r.wday.every(Boolean) ? "" : ` ${r.wday.map((v, i) => (v ? "日一二三四五六"[i] : "")).join("")}`}${r.enable ? "" : "（停用）"}`).join("<br>")}</span></div>` : ""}
-        <div class="gi"><span class="gl">TP-Link 雲端</span><span class="gv">${p.cloud ? "連線中" : p.cloud === false ? "未連線" : "—"}</span></div>
+        <div class="gi"><span class="gl">TP-Link 雲端</span><span class="gv">${p.net?.cloud_bound === false ? "已解除綁定" : p.net?.cloud_bound ? "綁著帳號" : p.cloud ? "連線中" : p.cloud === false ? "未連線" : "—"}</span></div>
         <div class="gi"><span class="gl">重新啟動插座<small>插座卡住時用；${shared ? "整條排插都會重開，" : ""}可能短暫斷電</small></span><button class="btn sm" data-a="reboot" data-confirm="重新啟動插座？" data-confirm-text="插座大約 30 秒後恢復，期間可能短暫斷電${shared ? "；整條排插的每個孔都會一起重開" : ""}。" data-confirm-ok="重新啟動">重新啟動</button></div>
       </div>`;
   }

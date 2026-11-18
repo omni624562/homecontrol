@@ -32,7 +32,17 @@ DEFAULTS: dict[str, Any] = {
         "away": {"enabled": False, "start": "18:00", "end": "23:00", "plugs": []},
         "sensing": True,  # Wi-Fi 感測（實驗）：每 2 秒讀插座的訊號強度
         "habit_dismissed": [],  # 按了「不用」的排程建議
+        # 讀路由器的連線裝置清單（SSH 金鑰登入，只讀）；host 空白 = 不用
+        "router": {"host": "", "port": 22, "user": ""},
+        "new_device_alert": True,  # 沒看過的裝置連上 Wi-Fi 就通知
+        # 誰在家：最後一個人離開 / 第一個人回來時執行的情境（None = 不做事）；手機離線多久才算出門
+        "presence": {"away_scene": None, "home_scene": None, "grace_min": 10},
     },
+    # 路由器看過的裝置：MAC → {"first": 第一次看到, "label": 自己取的名字, "map": 放到訊號地圖}
+    "net_devices": {},
+    "net_seeded": False,  # 第一次讀到路由器清單時，把已經在的裝置都當作認得的（不通知）
+    # 在家的人：[{"id","name","macs":[手機的 MAC...]}]
+    "people": [],
     # 整個 Wi-Fi 網路的插座同時斷線（多半是路由器的問題）：[{"ssid","start","end","devices"}]，最近 30 筆
     "net_events": [],
     # 關閉時記住關了哪些，之後可以還原：

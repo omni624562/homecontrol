@@ -36,8 +36,10 @@ import io
 import json
 import logging
 import os
+import re
 import secrets
 import time
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -405,7 +407,8 @@ async def put_floorplan(body: dict = Body(...)) -> dict[str, Any]:
                        for k, v in list((body["items"] or {}).items())[:100]}
     if "aps" in body:
         fp["aps"] = [{"id": str(a.get("id"))[:20], "name": str(a.get("name", ""))[:30],
-                      "ssid": str(a["ssid"])[:32] if a.get("ssid") else None, "z": z(a.get("z"))}
+                      "ssid": str(a["ssid"])[:32] if a.get("ssid") else None,
+                      "node": _mac(a.get("node")), "z": z(a.get("z"))}
                      for a in (body["aps"] or [])[:10]]
     if "meters" in body:
         fp["meters"] = _num(body["meters"], 2, 100)
@@ -662,6 +665,93 @@ async def set_settings(body: dict = Body(...)) -> dict[str, Any]:
             settings[key] = min(hi, max(lo, float(body[key])))
     if "ntfy_topic" in body:
         settings["ntfy_topic"] = str(body["ntfy_topic"]).strip()
+    if "new_device_alert" in body:
+        settings["new_device_alert"] = bool(body["new_device_alert"])
+    if isinstance(body.get("presence"), dict):
+        pres = settings.setdefault("presence", {})
+        for key in ("away_scene", "home_scene"):
+            if key in body["presence"]:
+                v = body["presence"][key]
+                pres[key] = v if v and store.scene(v) else None
+        if "grace_min" in body["presence"]:
+            pres["grace_min"] = min(60, max(2, int(body["presence"]["grace_min"])))
+    if isinstance(body.get("router"), dict):
+        r = body["router"]
+        host = str(r.get("host", "")).strip()
+        user = str(r.get("user", "")).strip()
+        if host and not re.fullmatch(r"(10|172|192)\.[0-9.]{3,11}", host):
+            raise HTTPException(400, "路由器的位址要是家裡網路的 IP（例如 192.168.1.1）")
+        if user and not re.fullmatch(r"[A-Za-z0-9._-]{1,32}", user):
+            raise HTTPException(400, "帳號名稱只能有英文、數字和 . _ -")
+        settings["router"] = {"host": host, "user": user, "port": min(65535, max(1, int(r.get("port") or 22)))}
+    store.save()
+    return await _done()
+
+
+# ---- 路由器：連線裝置、誰在家 ----
+
+
+def _mac(v: Any) -> str | None:
+    v = str(v or "").strip().upper()
+    return v if re.fullmatch(r"([0-9A-F]{2}:){5}[0-9A-F]{2}", v) else None
+
+
+@app.get("/api/net")
+async def net() -> dict[str, Any]:
+    return hub.net_report()
+
+
+@app.patch("/api/net/devices/{mac}")
+async def edit_net_device(mac: str, body: dict = Body(...)) -> dict[str, Any]:
+    """{"label": 自己取的名字 或 null, "map": 放到訊號地圖}"""
+    m = _mac(mac)
+    if not m:
+        raise HTTPException(400, "MAC 格式不對")
+    d = store.data["net_devices"].setdefault(m, {"first": time.time()})
+    if "label" in body:
+        label = str(body["label"] or "").strip()[:30]
+        d["label"] = label or None
+    if "map" in body:
+        d["map"] = bool(body["map"])
+        if not d["map"]:
+            hub.sensing.forget(m)
+            store.data["floorplan"]["items"].pop(m, None)
+    store.save()
+    await hub.changed()
+    return hub.net_report()
+
+
+def _person(body: dict[str, Any]) -> dict[str, Any]:
+    name = str(body.get("name", "")).strip()[:20]
+    if not name:
+        raise HTTPException(400, "請填名字")
+    macs = [m for m in (_mac(x) for x in (body.get("macs") or [])[:6]) if m]
+    return {"name": name, "macs": list(dict.fromkeys(macs))}
+
+
+@app.post("/api/people")
+async def add_person(body: dict = Body(...)) -> dict[str, Any]:
+    if len(store.data["people"]) >= 12:
+        raise HTTPException(400, "最多 12 個人")
+    store.data["people"].append({"id": uuid.uuid4().hex[:8], **_person(body)})
+    store.save()
+    return await _done()
+
+
+@app.put("/api/people/{pid}")
+async def edit_person(pid: str, body: dict = Body(...)) -> dict[str, Any]:
+    p = next((x for x in store.data["people"] if x["id"] == pid), None)
+    if p is None:
+        raise HTTPException(404, "找不到這個人")
+    p.update(_person(body))
+    store.save()
+    return await _done()
+
+
+@app.delete("/api/people/{pid}")
+async def delete_person(pid: str) -> dict[str, Any]:
+    store.data["people"] = [x for x in store.data["people"] if x["id"] != pid]
+    hub._presence.pop(pid, None)
     store.save()
     return await _done()
 
