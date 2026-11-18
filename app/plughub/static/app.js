@@ -1637,8 +1637,12 @@ class PlugApp extends HTMLElement {
     for (const d of devices.values()) {
       const names = d.plugs.map((p) => p.name).join("、");
       const label = d.plugs.length > 1 ? `${d.net.model || "排插"}（${names}）` : names;
-      if (main && d.net.ssid && d.net.ssid !== main) issues.push({ label, text: `連到另一個 Wi-Fi「${d.net.ssid}」，其他裝置都在「${main}」` });
-      if (d.net.key_type != null && d.net.key_type < 3) issues.push({ label, text: `Wi-Fi 加密是 ${keyName(d.net.key_type)}，比較容易被破解，建議改用 WPA2 以上` });
+      // 兩個 Wi-Fi 名稱都是同一台路由器發的（從路由器讀到的）就不算問題
+      const sameRouter = [main, d.net.ssid].every((x) => (this._s.router?.ssids || []).includes(x));
+      if (main && d.net.ssid && d.net.ssid !== main && !sameRouter) issues.push({ label, text: `連到另一個 Wi-Fi「${d.net.ssid}」，其他裝置都在「${main}」` });
+      // 路由器上的 Wi-Fi 都是 WPA2／WPA3（從路由器讀到的），插座回報的舊數字就不用管
+      const routerSsid = (this._s.router?.ssids || []).includes(d.net.ssid);
+      if (d.net.key_type != null && d.net.key_type < 3 && !routerSsid) issues.push({ label, text: `Wi-Fi 加密是 ${keyName(d.net.key_type)}，比較容易被破解，建議改用 WPA2 以上` });
       if ((d.net.fw_updates || []).length) issues.push({ label, text: `有新韌體 ${d.net.fw_updates[0].version || ""}` });
     }
     const fwUnknown = [...devices.values()].some((d) => d.net.fw_check === "unavailable");
@@ -3855,15 +3859,16 @@ class PlugApp extends HTMLElement {
     const n = p.net;
     if (!n) return "";
     const r = this._netReport();
-    const other = r.main && n.ssid && n.ssid !== r.main;
-    const weak = n.key_type != null && n.key_type < 3;
+    const other = r.main && n.ssid && n.ssid !== r.main && ![r.main, n.ssid].every((x) => (this._s.router?.ssids || []).includes(x));
+    const onRouter = (this._s.router?.ssids || []).includes(n.ssid);
+    const weak = n.key_type != null && n.key_type < 3 && !onRouter;
     const ups = n.fw_updates || [];
     const fw = n.fw_check === "unavailable" ? "無法檢查（已斷開雲端）" : ups.length ? `有新版 ${esc(ups[0].version || "")}` : n.fw_check === "ok" ? "已是最新" : "檢查中…";
     return `
       <div class="gi"><span class="gl">Wi-Fi 網路${other ? `<small class="warn">和其他裝置不同（大多數在「${esc(r.main)}」）</small>` : ""}</span>
         <span class="gv ${other ? "warn" : ""}">${esc(n.ssid || "—")}</span></div>
       <div class="gi"><span class="gl">加密方式${weak ? `<small class="warn">比較容易被破解，建議改用 WPA2 以上</small>` : ""}</span>
-        <span class="gv ${weak ? "warn" : ""}">${keyName(n.key_type)}</span></div>
+        <span class="gv ${weak ? "warn" : ""}">${onRouter ? "WPA2 以上（路由器設定）" : keyName(n.key_type)}</span></div>
       <div class="gi"><span class="gl">韌體<small>${esc(n.model || "")} 硬體 ${esc(n.hw || "")}</small></span>
         <span class="gv ${ups.length ? "warn" : ""}">${esc(n.fw || "")}・${fw}</span></div>`;
   }

@@ -1464,7 +1464,8 @@ class Hub:
             "net_events": self.store.data["net_events"][-10:] + list(self._outage.values()),
             "matter": self.matter_status(),
             "router": {"configured": self.router.configured, "ok": self.router.ok, "error": self.router.error,
-                       "nodes": self.router.nodes},
+                       "nodes": self.router.nodes,
+                       "ssids": sorted({i["ssid"] for i in self.router.ifaces.values() if i.get("ssid")})},
             "people": self.people_report(),
         }
 
