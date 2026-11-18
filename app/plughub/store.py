@@ -46,6 +46,10 @@ DEFAULTS: dict[str, Any] = {
     #         "restore_at": "HH:MM:SS" 或 None（關閉之後幾點再打開被它關掉的）}]
     # None = 還沒從舊版的夜間排程轉過來
     "schedules": None,
+    # 訊號地圖：rooms = [{"id","name","x","y","w","h"}]（座標 0～w／0～h）、
+    # items = {裝置 MAC 或 "ap:編號": {"x","y"}}、aps = [{"id","name"}]（Wi-Fi 基地台）、
+    # image = 平面圖底圖的版本（None = 沒有）
+    "floorplan": {"w": 1000, "h": 700, "rooms": None, "items": {}, "aps": [], "image": None},
 }
 
 

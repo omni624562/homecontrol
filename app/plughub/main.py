@@ -15,6 +15,7 @@ POST /api/scenes/{id}/run   執行情境（可以 /api/restore 復原）
 POST /api/schedules         新增排程；PUT/DELETE /api/schedules/{id}
 PUT  /api/settings
 PUT  /api/away              離家模式 {"enabled", "start", "end", "plugs"}
+GET/PUT /api/floorplan      訊號地圖（房間、裝置位置、Wi-Fi 基地台）；POST/GET/DELETE /api/floorplan/image 底圖
 GET/PUT /api/sensing        Wi-Fi 感測（實驗）：訊號擾動；{"enabled": false} 停止記錄
 GET  /api/energy             用電（插座自己記錄的開機時間 × 瓦數）
 GET  /api/plugs/{id}/usage  插座自己記錄的使用時間；POST /api/plugs/{id}/reboot 重新啟動
@@ -360,6 +361,76 @@ async def delete_schedule(sched_id: str) -> dict[str, Any]:
 
 
 # ---- 插座本身的功能 ----
+
+
+# ---- 訊號地圖 ----
+
+FLOORPLAN_IMAGE = DATA_DIR / "floorplan.img"
+
+
+def _num(v: Any, lo: float, hi: float) -> float:
+    try:
+        return max(lo, min(hi, float(v)))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "座標不對") from None
+
+
+@app.get("/api/floorplan")
+async def get_floorplan() -> dict[str, Any]:
+    return store.data["floorplan"]
+
+
+@app.put("/api/floorplan")
+async def put_floorplan(body: dict = Body(...)) -> dict[str, Any]:
+    """{"w","h","rooms":[{id,name,x,y,w,h}],"items":{key:{x,y}},"aps":[{id,name}]}"""
+    fp = store.data["floorplan"]
+    w = _num(body.get("w", fp["w"]), 200, 4000)
+    h = _num(body.get("h", fp["h"]), 200, 4000)
+    if "rooms" in body:
+        fp["rooms"] = [
+            {"id": str(r.get("id"))[:20], "name": str(r.get("name", ""))[:20],
+             "x": _num(r.get("x"), 0, w), "y": _num(r.get("y"), 0, h), "w": _num(r.get("w"), 20, w), "h": _num(r.get("h"), 20, h)}
+            for r in body["rooms"][:40]
+        ] if body["rooms"] is not None else None
+    if "items" in body:
+        fp["items"] = {str(k)[:80]: {"x": _num(v.get("x"), 0, w), "y": _num(v.get("y"), 0, h)} for k, v in (body["items"] or {}).items()}
+    if "aps" in body:
+        fp["aps"] = [{"id": str(a.get("id"))[:20], "name": str(a.get("name", ""))[:30]} for a in (body["aps"] or [])[:10]]
+    fp["w"], fp["h"] = w, h
+    store.save()
+    return fp
+
+
+@app.post("/api/floorplan/image")
+async def put_floorplan_image(body: dict = Body(...)) -> dict[str, Any]:
+    """平面圖底圖：{"data": "data:image/png;base64,..."}（最大 5 MB）。"""
+    data = str(body.get("data", ""))
+    if not data.startswith("data:image/") or ";base64," not in data:
+        raise HTTPException(400, "請上傳圖片")
+    import base64
+    raw = base64.b64decode(data.split(",", 1)[1])
+    if len(raw) > 5 * 1024 * 1024:
+        raise HTTPException(400, "圖片太大（最大 5 MB）")
+    FLOORPLAN_IMAGE.write_bytes(raw)
+    store.data["floorplan"]["image"] = data[5:data.index(";")] + "|" + str(int(time.time()))
+    store.save()
+    return store.data["floorplan"]
+
+
+@app.delete("/api/floorplan/image")
+async def delete_floorplan_image() -> dict[str, Any]:
+    FLOORPLAN_IMAGE.unlink(missing_ok=True)
+    store.data["floorplan"]["image"] = None
+    store.save()
+    return store.data["floorplan"]
+
+
+@app.get("/api/floorplan/image")
+async def floorplan_image() -> Response:
+    img = store.data["floorplan"].get("image")
+    if not img or not FLOORPLAN_IMAGE.exists():
+        raise HTTPException(404, "沒有平面圖")
+    return FileResponse(FLOORPLAN_IMAGE, media_type=img.split("|")[0], headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/api/sensing")

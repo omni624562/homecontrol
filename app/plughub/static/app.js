@@ -805,6 +805,40 @@ const STYLE = `
   .group .wheel::before { background: var(--soft); box-shadow: none; }
   @media (min-width: 720px) { .wcol { width: 76px; } }
 
+  /* ═════════ 訊號地圖 ═════════ */
+  .link.back { display: inline-flex; align-items: center; gap: 0; padding: 0 0 4px; font-size: 14px; }
+  .link.back .i { width: 18px; height: 18px; margin-left: -4px; }
+  .mapgrid { display: grid; gap: 16px; grid-template-columns: 1fr; align-items: start; }
+  @media (min-width: 1100px) { .mapgrid { grid-template-columns: 1fr 320px; } }
+  .mapcard { margin: 0; }
+  .mapside { margin: 0; }
+  .mapside .pad { padding: 0 16px 16px; }
+  .mapside .chips.pad { padding: 0 16px 16px; }
+  .maptools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 14px 16px 6px; }
+  .maptools .end { margin-left: auto; }
+  .mapwrap { padding: 4px 16px 16px; }
+  svg.map { width: 100%; height: auto; display: block; border-radius: var(--r-md); background: var(--soft); touch-action: none; user-select: none; -webkit-user-select: none; }
+  svg.map .bgimg { opacity: .55; }
+  svg.map .room rect:first-child { fill: transparent; stroke: var(--soft2); stroke-width: 2; }
+  svg.map .roomsbg rect { fill: var(--card); }
+  svg.map .room.sel rect:first-child { stroke: var(--accent); stroke-width: 3; }
+  svg.map .room .rl { font-weight: 600; fill: var(--text2); }
+  svg.map .room .rh { fill: var(--accent); cursor: nwse-resize; }
+  svg.map.editing .room rect:first-child { cursor: move; }
+  svg.map .mk .dot { fill: var(--card); stroke: var(--accent); stroke-width: 2.5; }
+  svg.map .mk.weak .dot { stroke: var(--warn); }
+  svg.map .mk.off .dot { stroke: var(--faint); stroke-dasharray: 3 3; }
+  svg.map .mk.sel .dot, svg.map .ap.sel rect { stroke-width: 4; }
+  svg.map .mk .v { font-size: 11px; font-weight: 700; text-anchor: middle; fill: var(--text); font-variant-numeric: tabular-nums; }
+  svg.map .mk.weak .v { fill: var(--warn); }
+  svg.map .n { font-size: 12px; font-weight: 500; text-anchor: middle; fill: var(--text); }
+  svg.map .halo { fill: var(--warn); fill-opacity: calc(var(--a) * .45 + .1); }
+  svg.map .ap rect { fill: var(--text); stroke: var(--card); stroke-width: 2; }
+  svg.map .ap .w { fill: none; stroke: var(--card); stroke-width: 2.2; stroke-linecap: round; }
+  svg.map .ap .wd { fill: var(--card); }
+  svg.map.editing .mk, svg.map.editing .ap { cursor: grab; }
+  svg.map .mk.hot .dot { stroke-width: 4; }
+
   /* ═════════ 確認對話框 ═════════ */
   .cwrap { position: fixed; inset: 0; z-index: 60; background: rgba(15,23,42,.45); display: flex; align-items: center; justify-content: center; padding: 24px; animation: fade .15s; }
   .cbox { width: min(400px, 100%); background: var(--card); border-radius: var(--r-xl); padding: 22px 22px 18px; box-shadow: var(--shadow-lg); animation: pop .18s var(--ease); }
@@ -874,9 +908,12 @@ class PlugApp extends HTMLElement {
       viz.querySelectorAll(".hot").forEach((x) => x.classList.remove("hot"));
     });
     root.addEventListener("pointerdown", (e) => {
+      const md = e.target.closest?.("[data-mdrag]");
+      if (md && this._mapEdit) return this._mapDragStart(e, md);
       const grip = e.target.closest?.("[data-drag]");
       if (grip) this._dragStart(e, grip);
     });
+    window.addEventListener("resize", () => this._tab === "map" && this._render());
     window.addEventListener("hashchange", () => {
       const tab = this._tabFromHash();
       if (tab && tab !== this._tab) this._go(tab, false);
@@ -898,7 +935,7 @@ class PlugApp extends HTMLElement {
 
   _tabFromHash() {
     const h = location.hash.slice(1);
-    return TABS.some(([k]) => k === h) ? h : null;
+    return TABS.some(([k]) => k === h) || h === "map" ? h : null;
   }
 
   _go(tab, replace = true) {
@@ -1024,7 +1061,7 @@ class PlugApp extends HTMLElement {
   _render() {
     const nav = TABS.map(
       ([key, label, icon]) =>
-        `<button class="tab ${this._tab === key ? "sel" : ""}" data-a="tab" data-v="${key}" ${this._tab === key ? 'aria-current="page"' : ""}>${ic(icon)}<span>${label}</span></button>`,
+        `<button class="tab ${(this._tab === "map" ? "settings" : this._tab) === key ? "sel" : ""}" data-a="tab" data-v="${key}" ${(this._tab === "map" ? "settings" : this._tab) === key ? 'aria-current="page"' : ""}>${ic(icon)}<span>${label}</span></button>`,
     ).join("");
     const conn = `<div class="conn"><span class="led ${this._connected ? "" : "bad"}"></span>${this._connected ? "已連線" : "連線中斷"}</div>`;
     let page;
@@ -1036,6 +1073,7 @@ class PlugApp extends HTMLElement {
         schedule: () => this._schedulePage(),
         energy: () => this._energyPage(),
         settings: () => this._settingsPage(),
+        map: () => this._mapPage(),
       };
       page = (pages[this._tab] || pages.plugs)();
     }
@@ -1882,6 +1920,345 @@ class PlugApp extends HTMLElement {
         <b>限制：</b>插座只回報訊號強度（一個數字），只能偵測走動，偵測不到靜止的人；路由器、其他 Wi-Fi、微波爐也會造成擾動。要可靠地偵測有沒有人，建議用毫米波雷達感測器。</p>`;
   }
 
+  // ───────────── 訊號地圖 ─────────────
+
+  _mapLoad() {
+    if (this._fp || this._fpLoading) return;
+    this._fpLoading = true;
+    api("GET", "/api/floorplan")
+      .then((fp) => {
+        this._fp = fp;
+        if (!fp.rooms) {
+          this._mapAutoLayout(false);
+          this._mapSave();
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        this._fpLoading = false;
+        this._render();
+      });
+    // 有開 Wi-Fi 感測就一起讀動靜
+    const sense = () => {
+      if (this._tab !== "map") return clearInterval(this._mapTimer);
+      api("GET", "/api/sensing")
+        .then((d) => {
+          this._mapSense = d;
+          this._render();
+        })
+        .catch(() => {});
+    };
+    sense();
+    clearInterval(this._mapTimer);
+    this._mapTimer = setInterval(sense, 10000);
+  }
+
+  // 每台插座一個標記（排插算一台）
+  _mapDevices() {
+    const devs = new Map();
+    for (const p of this._plugs) {
+      if (!devs.has(p.device)) devs.set(p.device, { key: p.device, plugs: [], rssi: p.rssi, online: p.online, room: p.room });
+      const d = devs.get(p.device);
+      d.plugs.push(p);
+      d.online = d.online || p.online;
+    }
+    for (const d of devs.values()) {
+      d.name = d.plugs.length > 1 ? `${d.plugs[0].name} 等 ${d.plugs.length} 個` : d.plugs[0].name;
+      d.full = d.plugs.map((p) => p.name).join("、");
+    }
+    return [...devs.values()];
+  }
+
+  // 第一次：用家庭中控的房間排出草圖，裝置放進各自的房間
+  _mapAutoLayout(reset) {
+    const fp = this._fp;
+    const rooms = this._rooms.length ? this._rooms : [{ id: "all", name: "家" }];
+    const cols = rooms.length > 4 ? 3 : 2;
+    const rowsN = Math.ceil(rooms.length / cols);
+    const pad = 16;
+    const cw = (fp.w - pad * (cols + 1)) / cols;
+    const ch = (fp.h - pad * (rowsN + 1)) / rowsN;
+    fp.rooms = rooms.map((r, i) => ({
+      id: r.id, name: r.name,
+      x: pad + (i % cols) * (cw + pad), y: pad + Math.floor(i / cols) * (ch + pad), w: cw, h: ch,
+    }));
+    if (reset) fp.items = Object.fromEntries(Object.entries(fp.items).filter(([k]) => k.startsWith("ap:")));
+    const devs = this._mapDevices();
+    for (const room of fp.rooms) {
+      const inRoom = devs.filter((d) => (d.room || "") === room.id || (room.id === "all"));
+      inRoom.forEach((d, i) => {
+        if (fp.items[d.key]) return;
+        const n = inRoom.length;
+        const c = Math.ceil(Math.sqrt(n));
+        const r = Math.ceil(n / c);
+        fp.items[d.key] = { x: room.x + ((i % c) + 0.5) * (room.w / c), y: room.y + 30 + (Math.floor(i / c) + 0.5) * ((room.h - 30) / r) };
+      });
+    }
+  }
+
+  // 訊號覆蓋：反距離加權推算每一格，畫成一張小圖再放大（瀏覽器會自動平滑）
+  _mapHeat(pts, W, H) {
+    if (!pts.length) return "";
+    const accent = getComputedStyle(this).getPropertyValue("--accent").trim() || "#2563eb";
+    const key = JSON.stringify([pts, W, H, accent]);
+    if (this._heatKey === key) return this._heatUrl;
+    const cell = 10;
+    const cw = Math.ceil(W / cell);
+    const chh = Math.ceil(H / cell);
+    const c = document.createElement("canvas");
+    c.width = cw;
+    c.height = chh;
+    const ctx = c.getContext("2d");
+    ctx.fillStyle = accent;
+    for (let y = 0; y < chh; y++)
+      for (let x = 0; x < cw; x++) {
+        let num = 0;
+        let den = 0;
+        for (const p of pts) {
+          const w = 1 / ((p.x - (x + 0.5) * cell) ** 2 + (p.y - (y + 0.5) * cell) ** 2 + 900);
+          num += w * p.v;
+          den += w;
+        }
+        // -80 dBm 以下最淡，-40 以上最深
+        ctx.globalAlpha = Math.max(0.05, Math.min(0.8, ((num / den + 80) / 40) * 0.8));
+        ctx.fillRect(x, y, 1, 1);
+      }
+    this._heatKey = key;
+    this._heatUrl = c.toDataURL();
+    return this._heatUrl;
+  }
+
+  _mapSave() {
+    clearTimeout(this._fpSaveT);
+    this._fpSaveT = setTimeout(() => {
+      const { w, h, aps } = this._fp;
+      const R = Math.round;
+      const rooms = this._fp.rooms.map((r) => ({ ...r, x: R(r.x), y: R(r.y), w: R(r.w), h: R(r.h) }));
+      const items = Object.fromEntries(Object.entries(this._fp.items).map(([k, v]) => [k, { x: R(v.x), y: R(v.y) }]));
+      api("PUT", "/api/floorplan", { w, h, rooms, items, aps }).catch((err) => this._showToast(`地圖沒有存到：${err.message}`));
+    }, 400);
+  }
+
+  async _mapUpload(file) {
+    try {
+      // 縮到最長邊 1600px，再上傳
+      const img = await new Promise((resolve, reject) => {
+        const im = new Image();
+        im.onload = () => resolve(im);
+        im.onerror = reject;
+        im.src = URL.createObjectURL(file);
+      });
+      const scale = Math.min(1, 1600 / Math.max(img.width, img.height));
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.width * scale);
+      c.height = Math.round(img.height * scale);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      const data = c.toDataURL("image/jpeg", 0.85);
+      // 地圖的比例跟著平面圖
+      const fp = this._fp;
+      const nh = Math.round((1000 * c.height) / c.width);
+      const sy = nh / fp.h;
+      for (const r of fp.rooms) {
+        r.y *= sy;
+        r.h *= sy;
+      }
+      for (const it of Object.values(fp.items)) it.y *= sy;
+      fp.w = 1000;
+      fp.h = nh;
+      await api("PUT", "/api/floorplan", { w: fp.w, h: fp.h, rooms: fp.rooms, items: fp.items, aps: fp.aps });
+      this._fp = await api("POST", "/api/floorplan/image", { data });
+      this._render();
+    } catch (err) {
+      this._showToast(`上傳沒有成功：${err.message || err}`);
+    }
+  }
+
+  _mapPoint(e) {
+    const svg = this._root.querySelector("svg.map");
+    const pt = svg.createSVGPoint();
+    pt.x = e.clientX;
+    pt.y = e.clientY;
+    return pt.matrixTransform(svg.getScreenCTM().inverse());
+  }
+
+  _mapDragStart(e, el) {
+    e.preventDefault();
+    const fp = this._fp;
+    const { mdrag: kind, id } = el.dataset;
+    const start = this._mapPoint(e);
+    let orig;
+    if (kind === "item") orig = { ...fp.items[id] };
+    else orig = { ...fp.rooms.find((r) => r.id === id) };
+    this._mapSel = kind === "item" ? (id.startsWith("ap:") ? { kind: "ap", id: id.slice(3) } : { kind: "dev", id }) : { kind: "room", id };
+    let raf = 0;
+    const move = (ev) => {
+      const pt = this._mapPoint(ev);
+      const dx = pt.x - start.x;
+      const dy = pt.y - start.y;
+      const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+      if (kind === "item") {
+        fp.items[id] = { x: clamp(orig.x + dx, 0, fp.w), y: clamp(orig.y + dy, 0, fp.h) };
+      } else {
+        const r = fp.rooms.find((x) => x.id === id);
+        if (kind === "room") {
+          r.x = clamp(orig.x + dx, 0, fp.w - r.w);
+          r.y = clamp(orig.y + dy, 0, fp.h - r.h);
+        } else {
+          r.w = clamp(orig.w + dx, 40, fp.w - r.x);
+          r.h = clamp(orig.h + dy, 40, fp.h - r.y);
+        }
+      }
+      if (!raf) raf = requestAnimationFrame(() => ((raf = 0), this._render()));
+    };
+    const end = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      this._mapSave();
+      this._render();
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+    this._render();
+  }
+
+  _mapPage() {
+    this._mapLoad();
+    const fp = this._fp;
+    const edit = !!this._mapEdit;
+    const head = `
+      <div class="ph">
+        <div><button class="link back" data-a="map-back">${ic("mdi:chevron-left")}設定</button><h1>訊號地圖</h1>
+          <div class="sub">${edit ? "拖曳房間和裝置到實際的位置；拉右下角改大小" : "各裝置的 Wi-Fi 訊號強度，顏色越深訊號越好"}</div></div>
+        <div class="right"><button class="btn ${edit ? "primary" : ""}" data-a="map-edit">${edit ? "完成" : `${ic("mdi:pencil")}編輯`}</button></div>
+      </div>`;
+    if (!fp || !fp.rooms) return `${head}<div class="card"><div class="empty">讀取中…</div></div>`;
+    const W = fp.w;
+    const H = fp.h;
+    const devs = this._mapDevices();
+    const sense = this._mapSense;
+    const motion = Object.fromEntries((sense?.devices || []).map((d) => [d.key, d.now]));
+    const layer = this._mapLayer || "signal";
+    const placed = devs.filter((d) => fp.items[d.key]);
+
+    // 訊號覆蓋：用擺好的裝置的訊號強度（反距離加權）推算每一格
+    const pts = placed.filter((d) => d.online && d.rssi != null).map((d) => ({ ...fp.items[d.key], v: d.rssi }));
+    const heatUrl = layer === "signal" ? this._mapHeat(pts, W, H) : "";
+    const heat = heatUrl ? `<image href="${heatUrl}" x="0" y="0" width="${W}" height="${H}" preserveAspectRatio="none"/>` : "";
+    // 標記大小跟著螢幕寬度：手機上地圖縮得很小，標記要放大才看得到
+    const px = this._root.querySelector("svg.map")?.clientWidth || Math.min(innerWidth - 64, 900);
+    const k = Math.max(1, Math.min(2.6, (W / px) * 0.9));
+    const showNames = k < 1.9;
+    const clip = `<clipPath id="rooms">${fp.rooms.map((r) => `<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="10"/>`).join("")}</clipPath>`;
+    const img = fp.image ? `<image href="/api/floorplan/image?v=${encodeURIComponent(fp.image)}" x="0" y="0" width="${W}" height="${H}" preserveAspectRatio="xMidYMid meet" class="bgimg"/>` : "";
+    const rooms = fp.rooms
+      .map((r) => {
+        const sel = edit && this._mapSel?.kind === "room" && this._mapSel.id === r.id;
+        return `<g class="room ${sel ? "sel" : ""}">
+          <rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="10" ${edit ? `data-mdrag="room" data-id="${esc(r.id)}"` : ""}/>
+          <text x="${r.x + 12 * k}" y="${r.y + 24 * k}" class="rl" style="font-size:${15 * k}px">${esc(r.name)}</text>
+          ${edit ? `<rect class="rh" x="${r.x + r.w - 20 * k}" y="${r.y + r.h - 20 * k}" width="${18 * k}" height="${18 * k}" rx="${4 * k}" data-mdrag="resize" data-id="${esc(r.id)}"/>` : ""}
+        </g>`;
+      })
+      .join("");
+    const sigText = (v) => (v == null ? "—" : `${v}`);
+    const weak = (v) => v != null && v < -70;
+    const markers = placed
+      .map((d) => {
+        const it = fp.items[d.key];
+        const m = motion[d.key];
+        const ring = layer === "motion" && m != null && m > 0.15 ? `<circle r="${20 + Math.min(m, 3) * 12}" class="halo" style="--a:${Math.min(1, m / 3).toFixed(2)}"/>` : "";
+        const sel = edit && this._mapSel?.kind === "dev" && this._mapSel.id === d.key;
+        const tip = `${d.full}：${d.online ? `訊號 ${sigText(d.rssi)} dBm` : "離線"}${m != null ? `・擾動 ${fmt(m, 1)}` : ""}`;
+        return `<g class="mk ${weak(d.rssi) ? "weak" : ""} ${d.online ? "" : "off"} ${sel ? "sel" : ""}" transform="translate(${it.x} ${it.y}) scale(${k.toFixed(2)})" ${edit ? `data-mdrag="item" data-id="${esc(d.key)}"` : ""} data-tip="${esc(tip)}">
+          ${ring}<circle r="15" class="dot"/><text class="v" y="5">${layer === "motion" ? (m == null ? "·" : fmt(m, 1)) : sigText(d.rssi)}</text>
+          ${showNames || sel ? `<text class="n" y="31">${esc(d.name.length > 10 ? `${d.name.slice(0, 9)}…` : d.name)}</text>` : ""}</g>`;
+      })
+      .join("");
+    const aps = fp.aps
+      .filter((a) => fp.items[`ap:${a.id}`])
+      .map((a) => {
+        const it = fp.items[`ap:${a.id}`];
+        const sel = edit && this._mapSel?.kind === "ap" && this._mapSel.id === a.id;
+        return `<g class="ap ${sel ? "sel" : ""}" transform="translate(${it.x} ${it.y}) scale(${k.toFixed(2)})" ${edit ? `data-mdrag="item" data-id="ap:${esc(a.id)}"` : ""} data-tip="${esc(a.name)}">
+          <rect x="-17" y="-17" width="34" height="34" rx="9"/><path d="M-9,-2 Q0,-11 9,-2 M-5,2 Q0,-3 5,2" class="w"/><circle cy="6" r="2.5" class="wd"/>
+          <text class="n" y="33">${esc(a.name.length > 12 ? `${a.name.slice(0, 11)}…` : a.name)}</text></g>`;
+      })
+      .join("");
+    const svg = `
+      <svg class="map ${edit ? "editing" : ""}" viewBox="0 0 ${W} ${H}" role="img" aria-label="訊號地圖">
+        <defs>${clip}</defs>
+        ${img}
+        <g class="roomsbg">${fp.rooms.map((r) => `<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="10"/>`).join("")}</g>
+        ${heat ? `<g clip-path="url(#rooms)">${heat}</g>` : ""}
+        ${rooms}${aps}${markers}
+      </svg>`;
+    const dflt = layer === "signal" ? "滑過裝置看訊號強度" : sense?.enabled === false ? "Wi-Fi 感測已暫停（設定 → Wi-Fi 感測）" : "橘色光圈越大，那附近越可能有人在走動・每 10 秒更新";
+    const legend =
+      layer === "signal"
+        ? `<span class="legend">訊號弱<i style="--a:.15"></i><i style="--a:.4"></i><i style="--a:.7"></i><i style="--a:1"></i>訊號好</span>`
+        : `<span class="legend warm">安靜<i style="--a:.15"></i><i style="--a:.4"></i><i style="--a:.7"></i><i style="--a:1"></i>擾動大</span>`;
+    const tools = edit
+      ? `<div class="maptools">
+          <button class="btn sm" data-a="map-room-add">${ic("mdi:plus")}房間</button>
+          <button class="btn sm" data-a="map-ap-add">${ic("mdi:wifi")}Wi-Fi 基地台</button>
+          <button class="btn sm" data-a="map-image">${ic("mdi:plus")}${fp.image ? "換" : "上傳"}平面圖</button>
+          ${fp.image ? `<button class="btn sm" data-a="map-image-del" data-confirm="移除平面圖？" data-confirm-text="只移除底圖，房間和裝置的位置會保留。" data-confirm-ok="移除">移除平面圖</button>` : ""}
+          <button class="btn sm" data-a="map-auto" data-confirm="重新自動排版？" data-confirm-text="房間會依家庭中控的房間重新排列，裝置放回各自的房間；Wi-Fi 基地台的位置保留。" data-confirm-ok="重新排版" data-confirm-safe="1">重新自動排版</button>
+          <input type="file" accept="image/*" data-map-file data-c="map-file" hidden>
+        </div>`
+      : `<div class="maptools"><div class="seg">${[["signal", "訊號強度"], ["motion", "動靜"]]
+          .map(([k, l]) => `<button class="${layer === k ? "sel" : ""}" data-a="map-layer" data-v="${k}">${l}</button>`)
+          .join("")}</div><div class="end">${legend}</div></div>`;
+    // 編輯：選到的房間／基地台可以改名、刪除；還沒擺上去的裝置
+    let side = "";
+    if (edit) {
+      const sel = this._mapSel;
+      let selHtml = `<p class="desc">點房間或裝置可以選取；拖曳移動，房間拉右下角的小方塊改大小。</p>`;
+      if (sel?.kind === "room") {
+        const r = fp.rooms.find((x) => x.id === sel.id);
+        if (r)
+          selHtml = `<div class="q">房間名稱</div><div class="field"><input class="text" data-c="map-name" value="${esc(r.name)}" maxlength="20" aria-label="房間名稱"><button class="btn danger" data-a="map-room-del" data-v="${esc(r.id)}" data-confirm="從地圖移除這個房間？" data-confirm-text="只影響地圖，家庭中控的房間設定不變。" data-confirm-ok="移除">移除</button></div>`;
+      } else if (sel?.kind === "ap") {
+        const a = fp.aps.find((x) => x.id === sel.id);
+        if (a)
+          selHtml = `<div class="q">Wi-Fi 基地台名稱</div><div class="field"><input class="text" data-c="map-name" value="${esc(a.name)}" maxlength="30" aria-label="名稱"><button class="btn danger" data-a="map-ap-del" data-v="${esc(a.id)}" data-confirm="移除這個 Wi-Fi 基地台？" data-confirm-text="只從地圖移除。" data-confirm-ok="移除">移除</button></div>`;
+      } else if (sel?.kind === "dev") {
+        const d = devs.find((x) => x.key === sel.id);
+        if (d) selHtml = `<div class="q">${esc(d.full)}</div><p class="desc">訊號 ${sigText(d.rssi)} dBm</p><button class="btn sm" data-a="map-unplace" data-v="${esc(d.key)}">從地圖拿下來</button>`;
+      }
+      const tray = devs.filter((d) => !fp.items[d.key]);
+      side = `
+        <section class="card mapside">
+          <div class="ch"><div class="n">選取的項目</div></div><div class="pad">${selHtml}</div>
+          ${tray.length ? `<div class="ch"><div class="n">還沒擺上去的裝置</div></div><div class="chips pad">${tray.map((d) => `<button class="chip" data-a="map-place" data-v="${esc(d.key)}">${ic("mdi:plus")}${esc(d.name)}</button>`).join("")}</div>` : ""}
+        </section>`;
+    } else {
+      const weakDevs = devs.filter((d) => d.online && weak(d.rssi));
+      const off = devs.filter((d) => !d.online);
+      side = `
+        <section class="card mapside">
+          <div class="ch"><div class="n">訊號狀況</div></div>
+          <div class="pad">
+            ${weakDevs.length ? weakDevs.map((d) => `<div class="netwarn">${ic("mdi:alert-circle-outline")}<span><b>${esc(d.full)}</b>：訊號 ${d.rssi} dBm，偏弱，容易斷線。可以考慮把 Wi-Fi 基地台移近一點。</span></div>`).join("") : `<p class="desc">${ic("mdi:check-circle")} 所有裝置的訊號都在 -70 dBm 以上。</p>`}
+            ${off.length ? `<div class="netwarn">${ic("mdi:wifi-off")}<span>${off.length} 台離線：${esc(off.map((d) => d.name).join("、"))}</span></div>` : ""}
+            ${fp.aps.length ? "" : `<p class="desc" style="margin-top:10px">按右上角「編輯」可以把你的 Wi-Fi 基地台也擺上去，比較容易看出哪裡離基地台太遠。</p>`}
+            <p class="desc" style="margin-top:10px">顏色是用各裝置的訊號強度推算出來的，只是大概的樣子：沒有裝置的地方是猜的。</p>
+          </div>
+        </section>`;
+    }
+    return `${head}
+      <div class="mapgrid">
+        <section class="card mapcard viz">
+          ${tools}
+          <div class="readout-line" data-default="${esc(dflt)}">${esc(dflt)}</div>
+          <div class="mapwrap">${svg}</div>
+        </section>
+        ${side}
+      </div>`;
+  }
+
   _numberRow(key, label, desc, unit, step) {
     const v = this._s.settings[key];
     return `
@@ -1922,6 +2299,10 @@ class PlugApp extends HTMLElement {
         <section class="card">
           <div class="ch"><div class="ri">${ic("mdi:magnify")}</div><div class="n">裝置</div></div>
           ${this._netCheckHtml()}
+          <button class="set tapset" data-a="map-open">
+            <div class="tx"><div class="l">訊號地圖</div><div class="s">在平面圖上看每個裝置的 Wi-Fi 訊號、哪裡有動靜</div></div>
+            ${ic("mdi:chevron-right")}
+          </button>
           <button class="set tapset" data-a="sense-open">
             <div class="tx"><div class="l">Wi-Fi 感測 <span class="badge wait">實驗</span></div><div class="s">用插座的訊號擾動，猜哪裡有人在走動</div></div>
             ${ic("mdi:chevron-right")}
@@ -2149,6 +2530,81 @@ class PlugApp extends HTMLElement {
           this._showToast("插座重新啟動中，大約 30 秒後恢復");
         }),
       "away-open": () => this._openAway(),
+      "map-open": () => {
+        this._go("map", false);
+        history.pushState(null, "", "#map");
+      },
+      "map-back": () => {
+        this._mapEdit = false;
+        this._go("settings", false);
+        history.pushState(null, "", "#settings");
+      },
+      "map-edit": () => {
+        this._mapEdit = !this._mapEdit;
+        this._mapSel = null;
+        this._render();
+      },
+      "map-layer": (v) => {
+        this._mapLayer = v;
+        this._render();
+      },
+      "map-place": (v) => {
+        const fp = this._fp;
+        fp.items[v] = { x: fp.w / 2 + (Math.random() - 0.5) * 80, y: fp.h / 2 + (Math.random() - 0.5) * 80 };
+        this._mapSave();
+        this._render();
+      },
+      "map-unplace": (v) => {
+        delete this._fp.items[v];
+        this._mapSel = null;
+        this._mapSave();
+        this._render();
+      },
+      "map-room-add": () => {
+        const fp = this._fp;
+        const id = `r${Date.now().toString(36)}`;
+        fp.rooms.push({ id, name: "新房間", x: fp.w / 2 - 120, y: fp.h / 2 - 90, w: 240, h: 180 });
+        this._mapSel = { kind: "room", id };
+        this._mapSave();
+        this._render();
+      },
+      "map-room-del": (v, t) => {
+        if (!sure(t)) return;
+        this._fp.rooms = this._fp.rooms.filter((r) => r.id !== v);
+        this._mapSel = null;
+        this._mapSave();
+        this._render();
+      },
+      "map-ap-add": () => {
+        const fp = this._fp;
+        const id = `a${Date.now().toString(36)}`;
+        fp.aps.push({ id, name: `Wi-Fi 基地台 ${fp.aps.length + 1}` });
+        fp.items[`ap:${id}`] = { x: fp.w / 2, y: fp.h / 2 };
+        this._mapSel = { kind: "ap", id };
+        this._mapSave();
+        this._render();
+      },
+      "map-ap-del": (v, t) => {
+        if (!sure(t)) return;
+        this._fp.aps = this._fp.aps.filter((a) => a.id !== v);
+        delete this._fp.items[`ap:${v}`];
+        this._mapSel = null;
+        this._mapSave();
+        this._render();
+      },
+      "map-image": () => this._root.querySelector("[data-map-file]")?.click(),
+      "map-image-del": (v, t) =>
+        sure(t) &&
+        this._safe(async () => {
+          this._fp = await api("DELETE", "/api/floorplan/image");
+          this._render();
+        }),
+      "map-auto": (v, t) => {
+        if (!sure(t)) return;
+        this._mapAutoLayout(true);
+        this._mapSave();
+        this._render();
+      },
       "sense-open": () => {
         this._openSheet({ type: "sense", wide: true });
         const load = () =>
@@ -2361,6 +2817,21 @@ class PlugApp extends HTMLElement {
         });
       },
       "scene-name": (v, t) => (this._sheet.draft.name = t.value),
+      "map-name": (v, t) => {
+        const sel = this._mapSel;
+        if (!sel) return;
+        const list = sel.kind === "room" ? this._fp.rooms : this._fp.aps;
+        const x = list.find((r) => r.id === sel.id);
+        if (x) x.name = t.value.trim().slice(0, 20) || x.name;
+        this._mapSave();
+        this._render();
+      },
+      "map-file": (v, t) => {
+        const file = t.files?.[0];
+        if (!file) return;
+        this._mapUpload(file);
+        t.value = "";
+      },
     };
   }
 
