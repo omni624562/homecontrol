@@ -14,7 +14,7 @@ services:
     restart: unless-stopped
 
   # Google Home 串接（Matter）：把插座變成 Matter 插座，Google Home 在家裡直接控制
-  # 設定頁 http://樹莓派的IP:8283 會顯示配對 QR code
+  # 配對 QR code 在插座 App 的「設定 → Google Home」
   matterbridge:
     image: luligu/matterbridge:latest
     container_name: matterbridge
@@ -29,6 +29,13 @@ services:
       - ./data/matterbridge/cert:/root/.mattercert
     command: ["sh", "/root/Matterbridge/matterbridge-plughub/start.sh"]
     stop_grace_period: 60s
+    healthcheck:
+      # 管理頁只開在 127.0.0.1，健康檢查也要連這裡
+      test: ["CMD", "mb_health", "http://127.0.0.1:8283/health"]
+      interval: 60s
+      timeout: 10s
+      start_period: 60s
+      retries: 5
     restart: unless-stopped
     depends_on:
       - plughub

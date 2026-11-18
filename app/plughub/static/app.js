@@ -196,6 +196,14 @@ const STYLE = `
   .row-desc { font-size: 12px; color: var(--muted); margin-top: 2px; line-height: 1.45; font-weight: 400; }
   .desc { font-size: 13px; color: var(--muted); line-height: 1.5; margin: 4px 0; }
   .muted { opacity: 0.45; pointer-events: none; }
+  .badge { margin-left: auto; font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px; background: var(--soft); color: var(--muted); white-space: nowrap; }
+  .badge.ok { background: rgba(52, 168, 83, 0.15); color: #1e8e3e; }
+  .badge.wait { background: rgba(47, 128, 237, 0.14); color: var(--accent); }
+  .pair { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+  .pair img { width: 168px; height: 168px; border-radius: 12px; background: #fff; flex: none; }
+  .pair-code { font-size: 22px; font-weight: 700; letter-spacing: 1px; font-variant-numeric: tabular-nums; user-select: all; }
+  .steps { margin: 8px 0 0; padding-left: 20px; font-size: 13px; line-height: 1.6; color: var(--muted); }
+  .steps b { color: var(--text); font-weight: 600; }
   input[type="time"], .num input, .text { background: var(--soft); border: 0; border-radius: 10px; height: 40px; padding: 0 10px; font-size: 16px; font-variant-numeric: tabular-nums; outline: none; color-scheme: light dark; }
   input:focus { box-shadow: 0 0 0 2px var(--accent); }
   .num { display: flex; align-items: center; gap: 4px; }
@@ -593,7 +601,53 @@ class PlugApp extends HTMLElement {
             <button class="small-btn" data-discover>${ic("mdi:magnify")}現在找</button>
           </div>
         </section>
+
+        ${this._googleHtml()}
       </div>`;
+  }
+
+  // Google Home（Matter）配對：狀態由 Matterbridge 外掛回報
+  _googleHtml() {
+    const m = this._s.matter;
+    const head = (badge) => `
+      <div class="panel-head"><div class="room-icon">${ic("mdi:microphone")}</div><div class="panel-title">Google Home</div>${badge}</div>`;
+    if (!m || !m.running) {
+      return `
+        <section class="block panel">
+          ${head('<span class="badge">沒有在執行</span>')}
+          <div class="desc">用 Google Home 語音或 App 控制插座（Matter，不經過 TP-Link 雲端）。要先在樹莓派上啟動串接：</div>
+          <div class="desc"><code>cd app &amp;&amp; docker compose up -d matterbridge</code></div>
+        </section>`;
+    }
+    if (m.commissioned) {
+      const names = [...new Set(m.fabrics.map((f) => f.vendor))];
+      return `
+        <section class="block panel">
+          ${head('<span class="badge ok">已連上</span>')}
+          <div class="desc">${m.plugs} 個插座已加入${esc(names.join("、") || "Google Home")}。可以說「Hey Google，關掉${esc(this._plugs[0]?.name || "立燈")}」，或在 Google Home 的「自動化」裡設定。</div>
+          <div class="desc">名稱和房間在 Google Home App 裡設定。要再加到 Apple 家庭或 Alexa：在 Google Home 打開任一個插座 → 設定 →「連結的 Matter 應用程式與服務」。</div>
+        </section>`;
+    }
+    const code = m.manual_code.replace(/^(\d{4})(\d{3})(\d{4})$/, "$1-$2-$3");
+    return `
+      <section class="block panel">
+        ${head('<span class="badge wait">等待配對</span>')}
+        <div class="desc">用 Google Home 語音或 App 控制插座，不經過 TP-Link 雲端。需要家裡有 Nest 音箱、Nest Hub 或 Google TV。</div>
+        <div class="pair">
+          <img src="/api/matter/qr.svg?c=${encodeURIComponent(m.manual_code)}" alt="配對 QR code">
+          <div>
+            <div class="row-desc">或輸入配對碼</div>
+            <div class="pair-code">${esc(code)}</div>
+          </div>
+        </div>
+        <ol class="steps">
+          <li>打開 <b>Google Home</b> App →「＋」→「裝置」→「新裝置」→ 選家庭</li>
+          <li>選「<b>Matter 裝置</b>」，掃上面的 QR code（或輸入配對碼）</li>
+          <li>出現「未經認證的裝置」時選「<b>仍要繼續</b>」</li>
+          <li>${m.plugs} 個插座會一次加進來，再把它們分到房間</li>
+        </ol>
+        <div class="desc">配對的手機要和樹莓派在同一個 Wi-Fi。</div>
+      </section>`;
   }
 
   // ───────────── 事件 ─────────────

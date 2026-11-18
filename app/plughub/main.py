@@ -10,20 +10,25 @@ POST /api/rooms             {"name"}；PATCH/DELETE /api/rooms/{id}
 POST /api/order             {"plugs": [...], "rooms": [...]}
 PUT  /api/schedule、/api/settings
 POST /api/discover          立刻重新找插座
+PUT  /api/matter            Google Home 串接外掛回報配對狀態（只接受樹莓派本機）
+GET  /api/matter/qr.svg     配對用的 QR code
 """
 
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+import segno
 from fastapi import Body, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .hub import Hub
@@ -227,6 +232,48 @@ async def test_notify() -> dict[str, Any]:
         raise HTTPException(400, "還沒有填通知主題")
     hub.notifier.send("測試通知", "收到這則通知，就代表手機通知設定好了")
     return {"ok": True}
+
+
+# ---- Google Home 串接（Matter） ----
+
+LOCAL = {"127.0.0.1", "::1", "localhost"}
+
+
+@app.put("/api/matter")
+async def matter_report(request: Request, body: dict = Body(...)) -> dict[str, Any]:
+    # 只有樹莓派上的 Matterbridge 外掛可以回報，區網裡的其他裝置不行
+    if not request.client or request.client.host not in LOCAL:
+        raise HTTPException(403, "只接受本機回報")
+    status = {
+        "online": bool(body.get("online")),
+        "commissioned": bool(body.get("commissioned")),
+        "manual_code": str(body.get("manual_code") or "")[:20],
+        "qr_code": str(body.get("qr_code") or "")[:64],
+        "fabrics": [
+            {"vendor": str(f.get("vendor") or "")[:40], "label": str(f.get("label") or "")[:40]}
+            for f in (body.get("fabrics") or [])[:8]
+            if isinstance(f, dict)
+        ],
+        "plugs": int(body.get("plugs") or 0),
+    }
+    was_running = (hub.matter_status() or {}).get("running")
+    changed = status != hub.matter
+    hub.matter = status
+    hub.matter_seen = time.monotonic()
+    if changed or not was_running:
+        await hub.changed()
+    return {"ok": True}
+
+
+@app.get("/api/matter/qr.svg")
+async def matter_qr() -> Response:
+    status = hub.matter_status()
+    # 配對好之後就不再提供配對碼
+    if not status or status["commissioned"] or not status["qr_code"]:
+        raise HTTPException(404, "目前不需要配對")
+    out = io.BytesIO()
+    segno.make(status["qr_code"], error="m").save(out, kind="svg", scale=6, border=2, dark="#000", light="#fff")
+    return Response(out.getvalue(), media_type="image/svg+xml", headers={"Cache-Control": "no-store"})
 
 
 # ---- 網頁 ----

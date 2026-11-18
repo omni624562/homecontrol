@@ -46,7 +46,7 @@ docker compose up -d --build
 
 配對（只要做一次）：
 
-1. 電腦或平板打開 `http://樹莓派的IP:8283`，畫面上會有配對 QR code
+1. 打開插座 App，捲到最下面「**Google Home**」，上面有配對 QR code 和配對碼（配對好之後會改成顯示「已連上」）
 2. 手機或平板打開 **Google Home** App →「＋」→「裝置」→「新裝置」→ 選家庭 →「Matter 裝置」
 3. 掃 QR code（或輸入畫面上的 11 位數配對碼）。出現「未經認證的裝置」時選「仍要繼續」
 4. 所有插座會一次加進來，在 Google Home 裡把它們分到房間
@@ -61,6 +61,8 @@ docker compose up -d --build
 注意：配對時手機要能連到樹莓派（同一個 Wi-Fi、沒有 AP 隔離）。如果手機連不上插座 App，就改用連得上的平板配對。
 
 要重新配對：停掉容器（`docker compose stop matterbridge`）後刪除 `app/data/matterbridge/`。
+
+安全：Matterbridge 自己的管理頁（:8283）沒有密碼，所以只開給樹莓派本機；配對狀態由外掛回報給插座 App 顯示，配對好之後就不再顯示配對碼。真的要用管理頁時，從電腦開 SSH 通道：`ssh -L 8283:127.0.0.1:8283 樹莓派`，再開 `http://localhost:8283`。Docker 映像用的是 `latest`，要固定版本就改 `docker-compose.yml` 的 `image:`。
 
 ## 檔案
 
@@ -87,3 +89,5 @@ docker compose up -d --build
 | POST | `/api/order` | `{"plugs": [...], "rooms": [...]}` 順序 |
 | PUT | `/api/schedule`、`/api/settings` | 夜間排程、電價與門檻、ntfy 主題 |
 | POST | `/api/discover` | 立刻重新找插座 |
+| PUT | `/api/matter` | Google Home 串接外掛回報配對狀態（只接受樹莓派本機） |
+| GET | `/api/matter/qr.svg` | 配對用的 QR code（配對好之後就沒有了） |

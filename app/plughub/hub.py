@@ -62,6 +62,9 @@ class Hub:
         self.devices: dict[str, DeviceEntry] = {}  # MAC → 裝置
         self.plugs: dict[str, Plug] = {}
         self.version = 0
+        # Google Home 串接（Matterbridge 外掛回報的配對狀態）
+        self.matter: dict[str, Any] | None = None
+        self.matter_seen = 0.0
         self._changed = asyncio.Condition()
         self._tasks: list[asyncio.Task] = []
         self._schedule_done: dict[str, str] = {}  # "night_off"/"morning_on" → 今天已執行的日期
@@ -404,7 +407,14 @@ class Hub:
             "schedule": self.store.data["schedule"],
             "settings": settings,
             "can_restore": bool(self.store.data["remembered"].get("undo")),
+            "matter": self.matter_status(),
         }
+
+    def matter_status(self) -> dict[str, Any] | None:
+        """Google Home 串接的狀態；外掛每 30 秒回報一次，超過 90 秒沒回報就當作沒在執行。"""
+        if self.matter is None:
+            return None
+        return {**self.matter, "running": time.monotonic() - self.matter_seen < 90}
 
 
 def _is_plug(device: Device) -> bool:

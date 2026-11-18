@@ -8,5 +8,7 @@ if [ ! -f /root/.matterbridge/.plughub-added ]; then
   matterbridge --add "$PLUGIN"
   touch /root/.matterbridge/.plughub-added
 fi
-# 只在家裡的網路卡廣播（避開 VPN 之類的介面）
-exec matterbridge --docker --bridge --mdnsinterface "${MDNS_INTERFACE:-eth0}"
+# --mdnsinterface：只在家裡的網路卡廣播（避開 VPN 之類的介面）
+# --bind 127.0.0.1：Matterbridge 管理頁只有樹莓派本機能開（它沒有密碼，開放到區網的話
+#   誰都能看到配對碼、裝外掛）。配對 QR code 改在插座 App 的設定頁顯示
+exec matterbridge --docker --bridge --mdnsinterface "${MDNS_INTERFACE:-eth0}" --bind 127.0.0.1

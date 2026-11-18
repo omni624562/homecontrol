@@ -9,6 +9,9 @@ import { createHash } from 'node:crypto';
 import { MatterbridgeDynamicPlatform, MatterbridgeEndpoint, bridgedNode, onOffPlugInUnit, powerSource } from 'matterbridge';
 import { BridgedDeviceBasicInformation, OnOff } from 'matterbridge/matter/clusters';
 
+// Matter 控制器的廠商代號 → 名稱（配對到哪些平台）
+const VENDORS = { 0x6006: 'Google Home', 0x1349: 'Apple 家庭', 0x1217: 'Amazon Alexa', 0x110a: 'SmartThings', 0x134b: 'Home Assistant' };
+
 export default function initializePlugin(matterbridge, log, config) {
   return new PlughubPlatform(matterbridge, log, config);
 }
@@ -37,6 +40,7 @@ export class PlughubPlatform extends MatterbridgeDynamicPlatform {
     this.state = new Map(); // 插座 ID → 最後一次的插座資料
     this.abort = undefined;
     this.stopped = false;
+    this.reportTimer = undefined;
   }
 
   async api(path, options = {}) {
@@ -71,11 +75,13 @@ export class PlughubPlatform extends MatterbridgeDynamicPlatform {
   async onConfigure() {
     await super.onConfigure();
     for (const plug of this.state.values()) await this.applyState(plug);
+    this.watchPairing();
   }
 
   async onShutdown(reason) {
     this.stopped = true;
     this.abort?.abort();
+    clearInterval(this.reportTimer);
     await super.onShutdown(reason);
     if (this.config.unregisterOnShutdown) await this.unregisterAllDevices();
   }
@@ -148,6 +154,59 @@ export class PlughubPlatform extends MatterbridgeDynamicPlatform {
     for (const [id, plug] of this.state) {
       if (!seen.has(id) && plug.online) await this.applyState({ ...plug, online: false });
     }
+  }
+
+  // ---- 配對狀態：回報給插座 App，讓它在設定頁顯示 QR code 和「已連上 Google Home」----
+
+  // 外掛拿不到 Matterbridge 本身，從自己的插座往上找到 Matter 節點
+  serverNode() {
+    let node = this.devices.values().next().value;
+    while (node?.owner) node = node.owner;
+    return node?.state?.commissioning ? node : undefined;
+  }
+
+  pairingStatus() {
+    const node = this.serverNode();
+    if (!node) return undefined;
+    const { qrPairingCode, manualPairingCode } = node.state.commissioning.pairingCodes;
+    const fabrics = Object.values(node.state.commissioning.fabrics ?? {}).map((f) => ({
+      vendor: VENDORS[f.rootVendorId] ?? `廠商 ${f.rootVendorId}`,
+      label: f.label ?? '',
+    }));
+    return {
+      online: node.lifecycle.isOnline,
+      commissioned: node.lifecycle.isCommissioned,
+      qr_code: qrPairingCode,
+      manual_code: manualPairingCode,
+      fabrics,
+      plugs: this.devices.size,
+    };
+  }
+
+  async reportPairing() {
+    const status = this.pairingStatus();
+    if (!status) return;
+    try {
+      await this.api('/api/matter', { method: 'PUT', body: JSON.stringify(status) });
+    } catch (err) {
+      this.log.debug(`回報配對狀態失敗：${err.message}`);
+    }
+  }
+
+  watchPairing() {
+    const node = this.serverNode();
+    if (!node) {
+      this.log.warn('找不到 Matter 節點，插座 App 不會顯示配對狀態（要用 bridge 模式啟動）');
+      return;
+    }
+    const report = () => setTimeout(() => this.reportPairing(), 1000);
+    node.lifecycle.commissioned?.on(report);
+    node.lifecycle.decommissioned?.on(report);
+    node.lifecycle.online?.on(report);
+    node.events?.commissioning?.fabricsChanged?.on(report);
+    clearInterval(this.reportTimer);
+    this.reportTimer = setInterval(() => this.reportPairing(), 30000);
+    this.reportPairing();
   }
 
   // 收插座 App 的即時推送；斷線就重連
