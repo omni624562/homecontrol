@@ -146,6 +146,20 @@ const hmsSec = (t) => {
 // 插座的 wday（星期日開始）↔ 我們的星期（0 = 星期一）
 const kasaDays = (wday) => wday.map((v, i) => (v ? (i + 6) % 7 : -1)).filter((d) => d >= 0).sort();
 const toKasaWday = (days) => [0, 1, 2, 3, 4, 5, 6].map((i) => (days.includes((i + 6) % 7) ? 1 : 0));
+// 長條圖：items = [{ v, tip, label, now }]；平均線不算還沒過完的最後一根
+function barPlot(items, unit) {
+  const max = Math.max(0.001, ...items.map((x) => x.v));
+  const done = items.slice(0, -1);
+  const avg = done.length ? done.reduce((a, x) => a + x.v, 0) / done.length : 0;
+  const slots = items
+    .map((x) => `<div class="slot ${x.now ? "now" : ""}" data-tip="${esc(x.tip)}"><i style="height:${Math.max(x.v > 0 ? 1.5 : 0, (x.v / max) * 100)}%"></i></div>`)
+    .join("");
+  const labels = items.map((x) => `<span>${x.label}</span>`).join("");
+  return {
+    avg,
+    html: `<div class="plot"><div class="cols">${slots}</div>${avg ? `<div class="avgline" style="bottom:${(avg / max) * 100}%"><span>平均 ${fmt(avg, 1)} ${unit}</span></div>` : ""}</div><div class="xl">${labels}</div>`,
+  };
+}
 // 只有時、分（離家模式、插座內建排程）
 function hmPicker(key, t) {
   const [h, m] = String(t || "00:00").split(":").map(Number);
@@ -480,6 +494,11 @@ const STYLE = `
   .chart.months .bar div { max-width: 22px; }
   /* ═════════ 用電 dashboard ═════════ */
   .dash { display: grid; gap: 16px; grid-template-columns: 1fr; }
+  .kpis.mini4 { margin: 4px 0 12px; }
+  .kpis.mini4 .kpi { background: var(--soft); box-shadow: none; padding: 12px 14px; }
+  .kpis.mini4 .kv { font-size: 22px; }
+  .card.flat { box-shadow: none; border: 1px solid var(--line); margin: 0; }
+  .card.flat .ch { padding-left: 14px; }
   .dash > .card { margin: 0; }
   .kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   .kpi { background: var(--card); border-radius: var(--r-lg); box-shadow: var(--shadow); padding: 14px 16px; min-width: 0; }
@@ -1559,6 +1578,7 @@ class PlugApp extends HTMLElement {
       .then((e) => {
         this._energy = e;
         this._energyAt = Date.now();
+        if (this._sheet?.type === "edev") this._renderSheet();
       })
       .catch(() => (this._energyErr = true))
       .finally(() => {
@@ -1656,7 +1676,7 @@ class PlugApp extends HTMLElement {
           e.insights.length
             ? e.insights
                 .map(
-                  (x) => `<div class="ins ${x.plug ? "tap" : ""}" ${x.plug ? `data-a="dev" data-v="${esc(x.plug)}" role="button" tabindex="0"` : ""}>
+                  (x) => `<div class="ins ${x.plug ? "tap" : ""}" ${x.plug ? `data-a="edev" data-v="${esc(x.plug)}" role="button" tabindex="0"` : ""}>
                     <span class="ii ${x.kind}">${ic(iconFor[x.kind] || "mdi:alert-circle-outline")}</span><span>${esc(x.text)}</span>${x.plug ? ic("mdi:chevron-right") : ""}</div>`,
                 )
                 .join("")
@@ -1702,7 +1722,7 @@ class PlugApp extends HTMLElement {
             ? `<b>${fmt(p.month_kwh, 1)} 度</b><small>$${fmt(p.month_cost)}</small>`
             : `<span class="pill quiet">設定瓦數</span>`;
         return `
-          <div class="row tap erow" data-a="dev" data-v="${esc(p.id)}" role="button" tabindex="0">
+          <div class="row tap erow" data-a="edev" data-v="${esc(p.id)}" role="button" tabindex="0" aria-label="${esc(p.name)}的用電明細">
             <div class="di">${ic(deviceIcon(p.name))}</div>
             <div class="nm"><div class="a"><span>${esc(p.name)}</span></div>
               <div class="b">${p.known ? `開了 ${fmtMin(p.month_min)}` : ""}${p.watts ? `・${fmt(p.watts)} W` : ""} ${chTxt}</div>
@@ -1713,7 +1733,7 @@ class PlugApp extends HTMLElement {
       .join("");
     const rank = `
       <section class="card d-rank">
-        <div class="ch"><div class="n">本月各裝置</div><div class="c">比上月同期・點一下可以改瓦數</div></div>
+        <div class="ch"><div class="n">本月各裝置</div><div class="c">比上月同期・點一下看明細</div></div>
         ${rows}
       </section>`;
     const tariffCard = `
@@ -1724,6 +1744,76 @@ class PlugApp extends HTMLElement {
         <p class="desc">所有金額都是估算：開著的時間 × 設定的瓦數。時間是插座自己記錄的（樹莓派停機時也有記錄），實際用電會依電器狀態而不同。</p>
       </section>`;
     return `${head}<div class="dash">${kpis}${trend}${rooms}${insights}${heat}${rank}${tariffCard}</div>`;
+  }
+
+  // 單一裝置的用電明細：本月數字、每天／每月趨勢、接的電器（唯一和用電有關的設定）
+  _edevSheet(s) {
+    const e = this._energy;
+    const p = this._plug(s.id);
+    const ep = e?.plugs.find((x) => x.id === s.id);
+    if (!p || !ep) return null;
+    const kw = (p.watts || 0) / 1000;
+    const range = s.range || "days";
+    const useKwh = !!p.watts;
+    const unit = useKwh ? "度" : "小時";
+    let items = [];
+    if (ep.known) {
+      items =
+        range === "days"
+          ? ep.days.map((m, i) => {
+              const d = e.days[i].day;
+              const last = i === ep.days.length - 1;
+              const kwh = (m / 60) * kw;
+              return {
+                v: useKwh ? kwh : m / 60,
+                now: last,
+                label: last ? "今" : i % 5 === 4 ? Number(d.slice(8)) : "",
+                tip: `${Number(d.slice(5, 7))}/${Number(d.slice(8))}${last ? "（今天）" : ""}：開了 ${fmtMin(m)}${useKwh ? `・${fmt(kwh, 2)} 度・約 $${fmt(kwh * e.price, 1)}` : ""}`,
+              };
+            })
+          : ep.months.map((m, i) => {
+              const mm = e.months[i].month;
+              const last = i === ep.months.length - 1;
+              const kwh = (m / 60) * kw;
+              return {
+                v: useKwh ? kwh : m / 60,
+                now: last,
+                label: `${Number(mm.slice(5))}月`,
+                tip: `${mm.slice(0, 4)} 年 ${Number(mm.slice(5))} 月${last ? "（本月至今）" : ""}：開了 ${fmtMin(m)}${useKwh ? `・${fmt(kwh, 1)} 度` : ""}`,
+              };
+            });
+    }
+    const chart = items.length ? barPlot(items, unit) : null;
+    const ch = ep.known && ep.same_min > 30 ? (ep.month_min - ep.same_min) / ep.same_min : null;
+    const chTxt = ch == null ? "—" : Math.abs(ch) < 0.05 ? "持平" : `${ch > 0 ? "▲" : "▼"} ${fmt(Math.abs(ch) * 100)}%`;
+    const dflt = chart ? `平均每${range === "days" ? "天" : "月"} ${fmt(chart.avg, 1)} ${unit}・滑過長條看${range === "days" ? "每天" : "每月"}` : "";
+    const room = this._room(p.room)?.name || "還沒分房間";
+    return `
+      ${this._sheetHead(deviceIcon(p.name), p.name, `${room}・用電明細`)}
+      ${
+        !ep.known
+          ? `<div class="callout bad">${ic("mdi:alert-circle-outline")}<div><b>讀不到這個插座的使用時間</b><span>插座離線或還沒讀到，稍後再看</span></div></div>`
+          : `<div class="kpis mini4">
+              <div class="kpi"><div class="kl">本月用電</div><div class="kv">${useKwh ? `${fmt(ep.month_kwh, 1)}<small> 度</small>` : "—"}</div><div class="ks">${useKwh ? "" : "沒設瓦數"}</div></div>
+              <div class="kpi"><div class="kl">本月電費</div><div class="kv">${useKwh ? `$${fmt(ep.month_cost)}` : "—"}</div><div class="ks">估算</div></div>
+              <div class="kpi"><div class="kl">本月開機</div><div class="kv">${fmt(ep.month_min / 60, 0)}<small> 小時</small></div><div class="ks">平均每天 ${fmt(ep.month_min / 60 / Math.max(1, e.day_of_month), 1)} 小時</div></div>
+              <div class="kpi"><div class="kl">比上月同期</div><div class="kv ${ch > 0.05 ? "up" : ch < -0.05 ? "down" : ""}">${chTxt}</div><div class="ks">開機時數</div></div>
+            </div>
+            <div class="card viz flat">
+              <div class="ch"><div class="n">${useKwh ? "用電（度）" : "開機時數（小時）"}</div>
+                <div class="end"><div class="seg">${[["days", "近 30 天"], ["months", "近 12 個月"]]
+                  .map(([k, l]) => `<button class="${range === k ? "sel" : ""}" data-a="edev-range" data-v="${k}">${l}</button>`)
+                  .join("")}</div></div></div>
+              <div class="readout-line" data-default="${esc(dflt)}">${esc(dflt)}</div>
+              ${chart.html}
+            </div>`
+      }
+      <div class="q">接的電器 <small>決定這個裝置怎麼估算用電</small></div>
+      <div class="group">
+        <label class="gi"><span class="gl">瓦數<small>改了會馬上重算</small></span><select class="gsel" data-c="sheet-watts" aria-label="接的電器">${this._wattOptions(p)}</select></label>
+      </div>
+      <div class="err"></div>
+      <button class="link sm" data-a="dev" data-v="${esc(p.id)}">裝置設定 ›</button>`;
   }
 
   _numberRow(key, label, desc, unit, step) {
@@ -1890,6 +1980,11 @@ class PlugApp extends HTMLElement {
       offline: (v) => this._showToast(`${this._plug(v)?.name || "插座"}連不上：檢查插頭有沒有插好、Wi-Fi 有沒有訊號`),
       timer: (v) => this._openDevice(v),
       dev: (v) => this._openDevice(v),
+      edev: (v) => this._openSheet({ type: "edev", id: v, wide: true, live: true }),
+      "edev-range": (v) => {
+        this._sheet.range = v;
+        this._renderSheet();
+      },
       "all-off": () => this._turnOff({}),
       "room-off": (v) => this._turnOff({ room: v }),
       "room-on": async (v) => {
@@ -2096,6 +2191,7 @@ class PlugApp extends HTMLElement {
         this._safe(async () => {
           await api("PATCH", `/api/plugs/${this._sheet.id}`, { watts: n });
           this._closeSheet();
+          this._loadEnergy(true);
         });
       },
       "room-save": () => this._saveRoom(),
@@ -2157,7 +2253,10 @@ class PlugApp extends HTMLElement {
       "sheet-room": (v, t) => this._safe(() => api("PATCH", `/api/plugs/${this._sheet.id}`, { room: t.value || null })),
       "sheet-watts": (v, t) => {
         if (t.value === "custom") return this._openSheet({ type: "watts", id: this._sheet.id });
-        this._safe(() => api("PATCH", `/api/plugs/${this._sheet.id}`, { watts: t.value ? Number(t.value) : null }));
+        this._safe(async () => {
+          await api("PATCH", `/api/plugs/${this._sheet.id}`, { watts: t.value ? Number(t.value) : null });
+          this._loadEnergy(true);
+        });
       },
       "scene-name": (v, t) => (this._sheet.draft.name = t.value),
     };
@@ -2470,7 +2569,7 @@ class PlugApp extends HTMLElement {
   _renderSheet() {
     const s = this._sheet;
     if (!s) return;
-    const builders = { kasa: this._kasaSheet, confirm: this._confirmSheet, away: this._awaySheet, cloud: this._cloudSheet, device: this._deviceSheet, timer: this._deviceSheet, plug: this._deviceSheet, room: this._roomSheet, scene: this._sceneSheet, sched: this._schedSheet, watts: this._wattsSheet };
+    const builders = { edev: this._edevSheet, kasa: this._kasaSheet, confirm: this._confirmSheet, away: this._awaySheet, cloud: this._cloudSheet, device: this._deviceSheet, timer: this._deviceSheet, plug: this._deviceSheet, room: this._roomSheet, scene: this._sceneSheet, sched: this._schedSheet, watts: this._wattsSheet };
     const html = builders[s.type]?.call(this, s);
     if (html === null || html === undefined) return this._closeSheet();
     const key = `${s.type}|${s.id}|${s.wide ? 1 : 0}`;

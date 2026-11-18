@@ -608,6 +608,7 @@ class Hub:
                 "avg7_h": round(sum(last7) / 7 / 60, 1),
                 "avg21_h": round(sum(prev21) / max(1, len(prev21)) / 60, 1),
                 "days": [use["days"].get(d, 0) for d in days],
+                "months": [use["months"].get(mm, 0) for mm in months],
             })
 
         # 值得注意的事（依每月影響的金額排序，最多 4 則）
