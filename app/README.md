@@ -1,4 +1,4 @@
-# 插座 App（不用 Home Assistant）
+# 家庭中控 Home Hub（不用 Home Assistant）
 
 樹莓派上的小伺服器加一個手機網頁 App，直接在區網控制 TP-Link Kasa／Tapo 插座：不用帳號、不經過雲端、不用 Home Assistant。
 

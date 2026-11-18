@@ -237,6 +237,8 @@ const STYLE = `
   button { background: none; border: 0; padding: 0; cursor: pointer; }
   button:disabled { cursor: default; opacity: .4; }
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  :focus:not(:focus-visible) { outline: none; }
+  .tab:focus-visible { outline-offset: -2px; }
   .i { width: 20px; height: 20px; fill: currentColor; flex: none; display: block; }
   ::-webkit-scrollbar { width: 10px; height: 10px; }
   ::-webkit-scrollbar-thumb { background: var(--soft2); border-radius: 10px; border: 3px solid transparent; background-clip: content-box; }
@@ -269,8 +271,10 @@ const STYLE = `
       display: flex; flex-direction: column; gap: 2px; position: fixed; left: 0; top: 0; bottom: 0; width: 240px;
       padding: 20px 12px; background: var(--card); border-right: 1px solid var(--line); z-index: 20;
     }
-    .side .logo { display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 700; letter-spacing: -.2px; padding: 4px 10px 22px; }
-    .side .logo .i { width: 32px; height: 32px; padding: 6px; border-radius: 10px; background: var(--on); color: #fff; }
+    .side .logo { display: flex; align-items: center; gap: 11px; padding: 4px 8px 24px; }
+    .side .logo .i { width: 36px; height: 36px; padding: 7px; border-radius: 11px; background: linear-gradient(140deg, #fbbf24, #f59e0b 55%, #ea8a06); color: #fff; box-shadow: 0 2px 6px -1px rgba(245,158,11,.45); }
+    .side .logo b { display: block; font-size: 16px; font-weight: 700; letter-spacing: .5px; line-height: 1.2; }
+    .side .logo small { display: block; font-size: 11.5px; font-weight: 500; color: var(--muted); letter-spacing: .3px; }
     .side .tab { flex: none; flex-direction: row; justify-content: flex-start; gap: 12px; height: 40px; padding: 0 12px; border-radius: var(--r-sm); font-size: 14.5px; font-weight: 500; color: var(--muted); }
     .side .tab .i { width: 20px; height: 20px; }
     .side .tab.sel { background: var(--accent-soft); color: var(--accent-text); font-weight: 600; }
@@ -771,7 +775,7 @@ class PlugApp extends HTMLElement {
     }
     const banner = this._s && !this._connected ? `<div class="banner">${ic("mdi:cloud-off-outline")}連不上插座伺服器，重新連線中…</div>` : "";
     const html = `
-      <nav class="side" aria-label="選單"><div class="logo">${ic("mdi:power-plug")}插座</div>${nav}${conn}</nav>
+      <nav class="side" aria-label="選單"><div class="logo">${ic("mdi:home-automation")}<div><b>家庭中控</b><small>Home Hub</small></div></div>${nav}${conn}</nav>
       <main class="content"><div class="page">${banner}${page}</div></main>
       <nav class="tabbar" aria-label="選單">${nav}</nav>`;
     if (html === this._lastHtml) return; // 沒有變就不動畫面
