@@ -1677,6 +1677,7 @@ class Hub:
                        "nodes": self.router.nodes,
                        "ssids": sorted({i["ssid"] for i in self.router.ifaces.values() if i.get("ssid")})},
             "people": self.people_report(),
+            "assistant": self.assistant.status() if getattr(self, "assistant", None) else None,
         }
 
     def _plug_net(self, key: str) -> dict[str, Any]:

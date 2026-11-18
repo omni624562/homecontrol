@@ -153,6 +153,7 @@ function devKind(c) {
 // 路由器給的名字看不懂（MAC、android-dhcp-12、MSFT 5.0…）
 const isRawName = (n) => !n || /^([0-9A-F]{2}:){5}[0-9A-F]{2}$/i.test(n) || /^(android-dhcp|dhcpcd|msft|espressif|unknown)/i.test(n);
 const netName = (c) => c.label || c.name;
+const fmtUsd = (u) => (u == null ? "—" : `US$${u < 1 ? u.toFixed(2) : u.toFixed(1)}（約 NT$${Math.round(u * 32)}）`);
 const fmtBytes = (b) => (b >= 1e9 ? `${fmt(b / 1e9, 1)} GB` : b >= 1e6 ? `${fmt(b / 1e6, 0)} MB` : `${fmt(Math.max(1, b / 1e3), 0)} KB`);
 // 訊號強度分三級：強 / 普通 / 弱（低於 -70 容易斷線）
 const sigQ = (v) => (v >= -55 ? "good" : v >= -70 ? "mid" : "weak");
@@ -1038,6 +1039,35 @@ const STYLE = `
   .set.sugg .sun { display: inline-flex; align-items: center; gap: 2px; }
   .set.sugg .sun .i { width: 15px; height: 15px; }
   .netwarn.past { color: var(--muted); }
+  /* 問家裡 */
+  :host .page { padding-bottom: 72px; }
+  .askfab { position: fixed; right: 16px; bottom: calc(var(--tabbar) + 16px + env(safe-area-inset-bottom)); z-index: 25; height: 48px; padding: 0 18px 0 14px; border-radius: 999px; background: var(--text); color: var(--bg); display: inline-flex; align-items: center; gap: 8px; font-weight: 650; box-shadow: var(--shadow-lg); }
+  .askfab .i { width: 22px; height: 22px; }
+  @media (min-width: 1100px) { .askfab { bottom: 24px; right: 28px; } }
+  :host([data-layout="b"]) .askfab { bottom: 20px; }
+  @media (min-width: 1280px) { :host([data-layout="c"]) .askfab { right: 468px; } }
+  .askbox { display: grid; gap: 10px; padding: 4px 0 12px; min-height: 200px; }
+  .msg { display: grid; gap: 6px; justify-items: start; }
+  .msg.user { justify-items: end; }
+  .msg .bub { max-width: 88%; padding: 10px 14px; border-radius: 16px; background: var(--soft); line-height: 1.55; font-size: 15px; overflow-wrap: anywhere; }
+  .msg.user .bub { background: var(--accent); color: #fff; border-bottom-right-radius: 6px; }
+  .msg.assistant .bub { border-bottom-left-radius: 6px; }
+  .msg.err .bub { background: var(--danger-soft); color: var(--danger); }
+  .bub.typing { display: flex; gap: 4px; padding: 14px; }
+  .bub.typing i { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); animation: blink 1.2s infinite; }
+  .bub.typing i:nth-child(2) { animation-delay: .2s; } .bub.typing i:nth-child(3) { animation-delay: .4s; }
+  @keyframes blink { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
+  .acard { width: min(100%, 460px); display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 10px 12px; border-radius: 14px; border: 1px solid var(--line); background: var(--card); }
+  .acard .al { flex: 1 1 220px; display: flex; gap: 8px; align-items: flex-start; font-size: 14px; }
+  .acard .al .i { width: 18px; height: 18px; color: var(--accent); margin-top: 2px; }
+  .acard .ab { display: flex; gap: 6px; margin-left: auto; }
+  .astate { font-size: 13px; color: var(--muted); display: inline-flex; align-items: center; gap: 4px; margin-left: auto; }
+  .astate.ok { color: var(--ok); } .astate.bad { color: var(--danger); }
+  .astate .i { width: 16px; height: 16px; }
+  .askbar { position: sticky; bottom: 0; display: flex; gap: 8px; padding: 10px 0; background: var(--card); }
+  .askbar .text { flex: 1; min-width: 0; height: 46px; }
+  .askbar .btn { height: 46px; }
+  .micbtn { width: 46px; padding: 0; justify-content: center; }
   .senseleg { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 0 16px 4px; }
   .senseleg .desc { margin: 0; font-size: 12.5px; }
   /* 網路裝置頁 */
@@ -1210,6 +1240,10 @@ class PlugApp extends HTMLElement {
     root.addEventListener("click", (e) => this._onClick(e));
     root.addEventListener("change", (e) => this._onChange(e));
     root.addEventListener("input", (e) => {
+      if (e.target.matches?.("[data-ask-input]")) {
+        (this._ask ||= { msgs: [], draft: "", busy: false }).draft = e.target.value;
+        return;
+      }
       if (!e.target.matches?.("[data-q]")) return;
       this._q = e.target.value;
       this._render();
@@ -1418,13 +1452,14 @@ class PlugApp extends HTMLElement {
       page = (pages[this._tab] || pages.plugs)();
     }
     const banner = this._s && !this._connected ? `<div class="banner">${ic("mdi:cloud-off-outline")}連不上插座伺服器，重新連線中…</div>` : "";
+    const fab = this._s && this._s.assistant ? `<button class="askfab" data-a="ask-open" aria-label="問家裡">${ic("mdi:message-text")}<span>問家裡</span></button>` : "";
     const html =
       this._layout === "b"
-        ? `${this._panelBar(nav)}<main class="content"><div class="page">${banner}${page}</div></main>`
+        ? `${this._panelBar(nav)}<main class="content"><div class="page">${banner}${page}</div></main>${fab}`
         : `
       <nav class="side" aria-label="選單"><div class="logo">${ic("mdi:home-automation")}<div><b>家庭中控</b><small>Home Hub</small></div></div>${nav}${conn}</nav>
       <main class="content"><div class="page">${banner}${page}</div>${this._layout === "c" && this._tab === "plugs" ? `<aside class="cpane-empty">${ic("mdi:power-plug-outline")}<b>選一個裝置</b><span>點左邊清單裡的裝置，詳細資料會固定顯示在這裡</span></aside>` : ""}</main>
-      <nav class="tabbar" aria-label="選單">${nav}</nav>`;
+      <nav class="tabbar" aria-label="選單">${nav}</nav>${fab}`;
     if (html === this._lastHtml) return this._measure(); // 沒有變就不動畫面
     this._lastHtml = html;
     if (this._root.firstElementChild) morph(this._root, html);
@@ -3285,6 +3320,7 @@ class PlugApp extends HTMLElement {
           </div>
         </section>
         ${this._layoutCard()}
+        ${this._askCard()}
         ${this._googleHtml()}
         <section class="card">
           <div class="ch"><div class="ri">${ic("mdi:magnify")}</div><div class="n">裝置</div></div>
@@ -3318,6 +3354,161 @@ class PlugApp extends HTMLElement {
   }
 
   // Google Home（Matter）配對：狀態由 Matterbridge 外掛回報
+  // ── 問家裡（Claude）──
+
+  _askSheet() {
+    const st = this._s.assistant || {};
+    const a = (this._ask ||= { msgs: [], draft: "", busy: false });
+    const model = (st.models || []).find((m) => m.id === st.model)?.name || "Claude";
+    const head = this._sheetHead("mdi:message-text", "問家裡", st.configured ? `${model}・打字或按麥克風說話` : "用 Claude 打字或說話控制家裡");
+    if (!st.configured) return `${head}${this._askSetup()}`;
+    const SUGG = ["客廳的燈都關掉", "還有哪些東西開著？", "這個月哪個最耗電？", "昨天誰最晚回家？", "平日天黑開客廳立燈、11 點關", "訊號地圖哪裡訊號最弱？", "昨晚哪裡有動靜？"];
+    const bubbles = a.msgs
+      .map((m, i) => {
+        const acts = (m.actions || [])
+          .map((x) => {
+            const done = x.state === "done" ? `<span class="astate ok">${ic("mdi:check")}${x.kind === "schedule" || x.kind === "scene" ? "已建立" : "已執行"}</span>` : x.state === "skip" ? `<span class="astate">不用了</span>` : x.state === "err" ? `<span class="astate bad">${esc(x.err || "失敗")}</span>` : "";
+            const btn = x.kind === "schedule" || x.kind === "scene" ? "建立" : "確認";
+            return `<div class="acard"><div class="al">${ic(x.kind === "schedule" ? "mdi:calendar-clock" : x.kind === "scene" ? "mdi:star-outline" : "mdi:power")}<span>${esc(x.label)}</span></div>
+              ${done || `<div class="ab"><button class="btn sm" data-a="ask-skip" data-v="${i}:${esc(x.id)}">不要</button><button class="btn sm primary" data-a="ask-do" data-v="${i}:${esc(x.id)}">${btn}</button></div>`}</div>`;
+          })
+          .join("");
+        return `<div class="msg ${m.role}${m.error ? " err" : ""}"><div class="bub">${esc(m.content).replace(/\n/g, "<br>")}</div>${acts}</div>`;
+      })
+      .join("");
+    const mic = window.isSecureContext && (window.SpeechRecognition || window.webkitSpeechRecognition);
+    return `${head}
+      <div class="askbox" data-ask-scroll>
+        ${a.msgs.length ? bubbles : `<p class="desc">可以這樣問：</p><div class="chips">${SUGG.map((t) => `<button class="chip" data-a="ask-sugg" data-v="${esc(t)}">${esc(t)}</button>`).join("")}</div>`}
+        ${a.busy ? `<div class="msg assistant"><div class="bub typing"><i></i><i></i><i></i></div></div>` : ""}
+      </div>
+      <div class="askbar">
+        ${mic ? `<button class="btn ${a.listening ? "danger solid" : ""} micbtn" data-a="ask-mic" aria-label="${a.listening ? "停止" : "用說的"}">${ic("mdi:microphone")}</button>` : ""}
+        <input class="text" data-ask-input value="${esc(a.draft)}" placeholder="${a.listening ? "請說…" : mic ? "想做什麼、想知道什麼？" : "想做什麼、想知道什麼？（可以按手機鍵盤上的麥克風用說的）"}" autocomplete="off" aria-label="問題" ${a.busy ? "disabled" : ""}>
+        <button class="btn primary" data-a="ask-send" ${a.busy ? "disabled" : ""}>送出</button>
+      </div>
+      <p class="note">${a.msgs.length ? `<button class="link" data-a="ask-clear">重新開始</button>・` : ""}每次提問會把需要的家裡資料（裝置名稱、開關狀態、誰在家）送到 Anthropic 處理${mic ? "；用說的會經過瀏覽器的語音辨識（Google）" : ""}。本月用了約 ${fmtUsd(st.month_usd)}。</p>`;
+  }
+
+  _askSetup() {
+    return `
+      <p class="lead">要先貼上 Anthropic 的 API 金鑰（只存在樹莓派上，不會再顯示出來）。</p>
+      <ol class="steps">
+        <li>到 <b>console.anthropic.com</b> 登入，在「Billing」加一點額度（例如 5 美元）</li>
+        <li>到「API Keys」按「Create Key」，複製 <code>sk-ant-</code> 開頭的金鑰</li>
+        <li>貼到下面，按「儲存」</li>
+      </ol>
+      <div class="field"><input class="text" type="password" data-ask-key placeholder="sk-ant-…" autocomplete="off" aria-label="API 金鑰"><button class="btn primary" data-a="ask-key-save">儲存</button></div>
+      <div class="err"></div>
+      <p class="note">費用照用量計：預設用 Claude Opus 5.5，一次大約 NT$0.5；可以在「設定 → 問家裡」改成 Claude Haiku 5.5，便宜約 40 倍。</p>`;
+  }
+
+  _askCard() {
+    const st = this._s.assistant;
+    if (!st) return "";
+    return `
+      <section class="card">
+        <div class="ch"><div class="ri">${ic("mdi:message-text")}</div><div class="n">問家裡（Claude）</div><div class="end"><span class="badge ${st.configured ? "ok" : ""}">${st.configured ? "已設定" : "還沒設定"}</span></div></div>
+        <div class="set"><div class="tx"><div class="l">打字或說話控制家裡</div><div class="s">「客廳的燈都關掉」「這個月哪個最耗電」「平日天黑開玄關燈」；建立排程、關閉有防呆的插座都會先問你</div></div>
+          <button class="btn" data-a="ask-open">${ic("mdi:message-text")}打開</button></div>
+        ${
+          st.configured
+            ? `<div class="set"><div class="tx"><div class="l">模型</div><div class="s">Opus 比較聰明；Haiku 便宜很多，簡單的開關、查詢夠用</div></div>
+          <select class="gsel" data-c="ask-model" aria-label="模型">${st.models.map((m) => `<option value="${m.id}" ${st.model === m.id ? "selected" : ""}>${esc(m.name)}</option>`).join("")}</select></div>
+          <div class="set"><div class="tx"><div class="l">本月費用</div><div class="s">${st.month_count} 次・估算，實際以 Anthropic 帳單為準</div></div><span class="gv">${fmtUsd(st.month_usd)}</span></div>
+          <div class="set"><div class="tx"><div class="l">每月上限</div><div class="s">到了就先停用到下個月；家裡 Wi-Fi 上的人都能用，建議設上限</div></div>
+            <select class="gsel" data-c="ask-cap" aria-label="每月上限">${[1, 3, 5, 10, 20, 50, 0].map((c) => `<option value="${c}" ${+st.cap === c ? "selected" : ""}>${c ? `US$${c}（約 NT$${c * 32}）` : "不限"}</option>`).join("")}</select></div>
+          <div class="set"><div class="tx"><div class="l">API 金鑰</div><div class="s">只存在樹莓派上</div></div>
+            <button class="btn" data-a="ask-key-del" data-confirm="刪除 API 金鑰？" data-confirm-text="刪除後就不能用「問家裡」，要再貼一次金鑰。" data-confirm-ok="刪除">刪除</button></div>`
+            : `<div class="pad">${this._askSetup()}</div>`
+        }
+      </section>`;
+  }
+
+  async _askSend(text) {
+    const a = (this._ask ||= { msgs: [], draft: "", busy: false });
+    text = (text ?? a.draft).trim();
+    if (!text || a.busy) return;
+    a.msgs.push({ role: "user", content: text });
+    a.draft = "";
+    a.busy = true;
+    this._renderSheet();
+    this._askScroll();
+    try {
+      const hist = a.msgs.filter((m) => !m.error).map((m) => ({ role: m.role, content: m.content }));
+      const r = await api("POST", "/api/assistant/chat", { messages: hist });
+      a.msgs.push({ role: "assistant", content: r.reply, actions: r.actions });
+    } catch (err) {
+      a.msgs.push({ role: "assistant", content: `沒有成功：${err.message}`, error: true });
+    }
+    a.busy = false;
+    if (this._sheet?.type === "ask") {
+      this._renderSheet();
+      this._askScroll();
+      this._sheetHost.querySelector("[data-ask-input]")?.focus();
+    }
+  }
+
+  _askScroll() {
+    requestAnimationFrame(() => {
+      const box = this._sheetHost.querySelector("[data-ask-scroll]");
+      const sheet = this._sheetHost.querySelector(".sheet");
+      if (box) box.scrollTop = box.scrollHeight;
+      if (sheet) sheet.scrollTop = sheet.scrollHeight;
+    });
+  }
+
+  async _askDo(v, skip) {
+    const [i, id] = v.split(":");
+    const x = this._ask?.msgs[+i]?.actions?.find((y) => y.id === id);
+    if (!x || x.state) return;
+    if (skip) x.state = "skip";
+    else {
+      try {
+        if (x.kind === "power") await api("POST", `/api/plugs/${encodeURIComponent(x.plug)}/power`, { on: x.on });
+        else if (x.kind === "all_off") await this._turnOff({});
+        else if (x.kind === "schedule") await api("POST", "/api/schedules", x.body);
+        else if (x.kind === "scene") await api("POST", "/api/scenes", x.body);
+        x.state = "done";
+      } catch (err) {
+        x.state = "err";
+        x.err = err.message;
+      }
+    }
+    this._renderSheet();
+  }
+
+  _askMic() {
+    const a = (this._ask ||= { msgs: [], draft: "", busy: false });
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return;
+    if (a.listening) {
+      this._rec?.stop();
+      return;
+    }
+    const rec = new SR();
+    rec.lang = "zh-TW";
+    rec.interimResults = true;
+    rec.onresult = (e) => {
+      a.draft = [...e.results].map((r) => r[0].transcript).join("");
+      const input = this._sheetHost.querySelector("[data-ask-input]");
+      if (input) input.value = a.draft;
+      if (e.results[e.results.length - 1].isFinal) {
+        rec.stop();
+        this._askSend(a.draft);
+      }
+    };
+    rec.onend = () => {
+      a.listening = false;
+      if (this._sheet?.type === "ask") this._renderSheet();
+    };
+    rec.onerror = (e) => this._showToast(e.error === "not-allowed" ? "瀏覽器不允許用麥克風（要用 https 或在瀏覽器設定裡允許）" : `語音辨識沒有成功：${e.error}`);
+    this._rec = rec;
+    a.listening = true;
+    this._renderSheet();
+    rec.start();
+  }
+
   _layoutCard() {
     const mini = {
       classic: `<i class="mside"></i><i class="mcards"><b></b><b></b><b></b><b></b></i>`,
@@ -3413,6 +3604,11 @@ class PlugApp extends HTMLElement {
       t.click();
     }
     if (e.key === "Enter" && t.matches?.("input[data-c]")) t.blur();
+    if (e.key === "Enter" && t.matches?.("[data-ask-input]") && !e.isComposing && e.keyCode !== 229) {
+      e.preventDefault();
+      this._askSend();
+      return;
+    }
     if (e.key === "Enter" && t.matches?.("[data-enter]")) this._actions[t.dataset.enter]?.();
   }
 
@@ -3464,6 +3660,35 @@ class PlugApp extends HTMLElement {
       },
       "all-off": () => this._turnOff({}),
       layout: (v) => this._setLayout(v),
+      "ask-open": () => {
+        this._openSheet({ type: "ask", wide: true });
+        this._askScroll();
+      },
+      "ask-send": () => this._askSend(),
+      "ask-sugg": (v) => this._askSend(v),
+      "ask-do": (v) => this._askDo(v, false),
+      "ask-skip": (v) => this._askDo(v, true),
+      "ask-mic": () => this._askMic(),
+      "ask-clear": () => {
+        this._ask = { msgs: [], draft: "", busy: false };
+        this._renderSheet();
+      },
+      "ask-key-save": () => {
+        const el = this.shadowRoot.querySelector("[data-ask-key]");
+        const key = el?.value.trim();
+        if (!key) return this._sheetError("請貼上金鑰");
+        this._safe(async () => {
+          await api("PUT", "/api/assistant", { key });
+          this._showToast("已儲存金鑰，可以開始問了");
+          if (this._sheet?.type === "ask") this._renderSheet();
+        });
+      },
+      "ask-key-del": (v, t) =>
+        sure(t) &&
+        this._safe(async () => {
+          await api("PUT", "/api/assistant", { key: "" });
+          this._showToast("已刪除金鑰");
+        }),
       "room-filter": (v) => {
         this._roomFilter = v === "none" ? NO_ROOM : v;
         this._render();
@@ -3991,6 +4216,14 @@ class PlugApp extends HTMLElement {
         this._mapSave();
         this._render();
       },
+      "ask-cap": (v, t) =>
+        this._safe(async () => {
+          await api("PUT", "/api/assistant", { cap: +t.value });
+        }),
+      "ask-model": (v, t) =>
+        this._safe(async () => {
+          await api("PUT", "/api/assistant", { model: t.value });
+        }),
       pres: (v, t) =>
         this._safe(async () => {
           const val = v === "grace_min" ? +t.value : v === "left_on" ? t.value : t.value || null;
@@ -4431,7 +4664,7 @@ class PlugApp extends HTMLElement {
   _renderSheet() {
     const s = this._sheet;
     if (!s) return;
-    const builders = { sense: this._senseSheet, edev: this._edevSheet, kasa: this._kasaSheet, confirm: this._confirmSheet, away: this._awaySheet, cloud: this._cloudSheet, netdev: this._netdevSheet, person: this._personSheet, device: this._deviceSheet, timer: this._deviceSheet, plug: this._deviceSheet, room: this._roomSheet, scene: this._sceneSheet, sched: this._schedSheet, watts: this._wattsSheet };
+    const builders = { sense: this._senseSheet, edev: this._edevSheet, kasa: this._kasaSheet, confirm: this._confirmSheet, away: this._awaySheet, cloud: this._cloudSheet, ask: this._askSheet, netdev: this._netdevSheet, person: this._personSheet, device: this._deviceSheet, timer: this._deviceSheet, plug: this._deviceSheet, room: this._roomSheet, scene: this._sceneSheet, sched: this._schedSheet, watts: this._wattsSheet };
     const html = builders[s.type]?.call(this, s);
     if (html === null || html === undefined) return this._closeSheet();
     const key = `${s.type}|${s.id}|${s.wide ? 1 : 0}`;

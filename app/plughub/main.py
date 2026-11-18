@@ -50,6 +50,7 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from .assistant import MODELS as ASSISTANT_MODELS, Assistant
 from .hub import SOURCE, Hub, Locked
 from .notify import Notifier
 from .store import Store, _hms
@@ -61,6 +62,9 @@ STATIC = Path(__file__).parent / "static"
 
 store = Store(DATA_DIR)
 hub = Hub(store, Notifier(lambda: store.data["settings"].get("ntfy_topic", "")))
+assistant = Assistant(hub)
+hub.assistant = assistant
+_LOGGER = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -713,6 +717,56 @@ async def day_off(body: dict = Body(...)) -> dict[str, Any]:
     store.save()
     hub.mark_native()
     return await _done()
+
+
+# ---- 問家裡（Claude）----
+
+
+@app.get("/api/assistant")
+async def assistant_status() -> dict[str, Any]:
+    return assistant.status()
+
+
+@app.put("/api/assistant")
+async def assistant_settings(body: dict = Body(...)) -> dict[str, Any]:
+    """{"key": API 金鑰（空字串 = 刪除）, "model": 模型}；金鑰不會回傳。"""
+    if "key" in body:
+        key = str(body["key"] or "").strip()
+        if key and not re.fullmatch(r"sk-ant-[A-Za-z0-9_\-]{20,300}", key):
+            raise HTTPException(400, "金鑰格式不對，應該是 sk-ant- 開頭")
+        assistant.set_key(key or None)
+    if "cap" in body:
+        store.data["settings"].setdefault("assistant", {})["cap"] = max(0.0, min(500.0, float(body["cap"] or 0)))
+        store.save()
+    if body.get("model") in ASSISTANT_MODELS:
+        store.data["settings"].setdefault("assistant", {})["model"] = body["model"]
+        store.save()
+    await hub.changed()
+    return assistant.status()
+
+
+@app.post("/api/assistant/chat")
+async def assistant_chat(body: dict = Body(...)) -> dict[str, Any]:
+    """{"messages": [{"role": "user"|"assistant", "content": 文字}]} → {"reply", "actions", "usd"}"""
+    import anthropic  # noqa: PLC0415
+
+    try:
+        result = await assistant.chat(list(body.get("messages") or []))
+    except anthropic.AuthenticationError:
+        raise HTTPException(401, "API 金鑰無效，請到設定重新貼上") from None
+    except anthropic.PermissionDeniedError:
+        raise HTTPException(403, "這把金鑰沒有權限，或帳戶沒有額度") from None
+    except anthropic.RateLimitError:
+        raise HTTPException(429, "用得太快了，等一下再試") from None
+    except anthropic.APIConnectionError:
+        raise HTTPException(503, "連不上 Anthropic，確認樹莓派有網路") from None
+    except anthropic.APIStatusError as err:
+        _LOGGER.warning("Claude API 錯誤：%s", err)
+        raise HTTPException(502, f"Claude 那邊出錯了（{err.status_code}），等一下再試") from None
+    except (RuntimeError, ValueError) as err:
+        raise HTTPException(400, str(err)) from None
+    await hub.changed()
+    return result
 
 
 @app.get("/api/weekly")
