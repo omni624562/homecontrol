@@ -119,6 +119,32 @@ const hms = (v) => {
 };
 // 時間／長度選擇器：滾輪（像手機鬧鐘）。手指上下滑、滑鼠滾輪、點數字、鍵盤 ↑ ↓ 都可以
 const pad2 = (n) => String(n).padStart(2, "0");
+// 路由器上的裝置：從名字、廠商猜種類
+const KIND = {
+  phone: { icon: "mdi:cellphone", label: "手機" },
+  tablet: { icon: "mdi:cellphone", label: "平板" },
+  watch: { icon: "mdi:watch", label: "手錶" },
+  computer: { icon: "mdi:laptop", label: "電腦" },
+  tv: { icon: "mdi:television", label: "電視" },
+  speaker: { icon: "mdi:speaker", label: "音箱" },
+  network: { icon: "mdi:wifi", label: "網路設備" },
+  other: { icon: "mdi:help-circle-outline", label: "不明裝置" },
+};
+function devKind(c) {
+  const t = `${c.label || ""} ${c.name || ""} ${c.router_name || ""} ${c.vendor || ""}`.toLowerCase();
+  if (/watch/.test(t)) return "watch";
+  if (/\btab\b|tab-|ipad|pad\b/.test(t)) return "tablet";
+  if (/iphone|pixel|galaxy|phone|redmi|xiaomi|oppo|vivo|huawei|sm-[a-z]/.test(t)) return "phone";
+  if (/msft|windows|laptop|desktop|macbook|imac|hyperv|ubuntu|\bpc\b|raspberry/.test(t)) return "computer";
+  if (/\btv\b|nvidia|shield|chromecast|roku|bravia|apple tv/.test(t)) return "tv";
+  if (/google|nest|echo|alexa|homepod|speaker/.test(t)) return "speaker";
+  if (/\basus\b|rt-[a-z]{2}\d|router|tp-link deco|mesh|zyxel|synology|qnap|netgear/.test(t)) return "network";
+  if (/android|dhcpcd/.test(t)) return "phone";
+  return "other";
+}
+// 路由器給的名字看不懂（MAC、android-dhcp-12、MSFT 5.0…）
+const isRawName = (n) => !n || /^([0-9A-F]{2}:){5}[0-9A-F]{2}$/i.test(n) || /^(android-dhcp|dhcpcd|msft|espressif|unknown)/i.test(n);
+const netName = (c) => c.label || c.name;
 const fmtBytes = (b) => (b >= 1e9 ? `${fmt(b / 1e9, 1)} GB` : b >= 1e6 ? `${fmt(b / 1e6, 0)} MB` : `${fmt(Math.max(1, b / 1e3), 0)} KB`);
 // 訊號強度分三級：強 / 普通 / 弱（低於 -70 容易斷線）
 const sigQ = (v) => (v >= -55 ? "good" : v >= -70 ? "mid" : "weak");
@@ -833,6 +859,48 @@ const STYLE = `
   .set.sugg .sun { display: inline-flex; align-items: center; gap: 2px; }
   .set.sugg .sun .i { width: 15px; height: 15px; }
   .netwarn.past { color: var(--muted); }
+  /* 網路裝置頁 */
+  .netgrid { display: grid; gap: 16px; grid-template-columns: 1fr; grid-template-areas: "people" "auto" "devs" "usage" "alert"; }
+  .netgrid > .card { margin: 0; }
+  .na-people { grid-area: people; } .na-auto { grid-area: auto; } .na-devs { grid-area: devs; } .na-usage { grid-area: usage; } .na-alert { grid-area: alert; }
+  @media (min-width: 1000px) {
+    .netgrid { grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); grid-template-areas: "people devs" "auto devs" "usage devs" "alert devs"; grid-template-rows: auto auto auto 1fr; align-items: start; }
+    .na-devs { align-self: start; }
+  }
+  .person { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 16px; text-align: left; border-top: 1px solid var(--line); cursor: pointer; }
+  .person:hover { background: var(--hover); }
+  .person > .i { color: var(--faint); margin-left: auto; flex: none; }
+  .person .av { width: 40px; height: 40px; border-radius: 50%; flex: none; display: flex; align-items: center; justify-content: center; font-weight: 650; font-size: 16px; background: var(--soft); color: var(--muted); }
+  .person .av.home { background: var(--ok-soft); color: var(--ok); }
+  .person .pt { display: grid; gap: 6px; min-width: 0; }
+  .person .pn { display: flex; align-items: center; gap: 8px; font-size: 15.5px; font-weight: 600; }
+  .person .ps { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .person .pw { font-size: 12.5px; color: var(--muted); margin-right: 2px; }
+  .dchip { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); background: var(--soft); border-radius: 999px; padding: 3px 9px 3px 7px; }
+  .dchip .i { width: 13px; height: 13px; }
+  .dchip.on { color: var(--text2); }
+  .dchip.on .i { color: var(--ok); }
+  .na-people .callout { margin: 0 16px 12px; flex-wrap: wrap; }
+  .na-people .callout .btn { margin-left: auto; }
+  .set.sub { padding-left: 32px; }
+  .ntabs { padding: 0 16px 10px; }
+  .na-usage .usage { padding: 0 16px 8px; }
+  .na-devs > .desc { padding: 0 16px 8px; margin: 0; }
+  .nlist { display: grid; }
+  .nsub { padding: 14px 16px 4px; font-size: 12.5px; font-weight: 600; color: var(--muted); }
+  .ndev { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 16px; text-align: left; cursor: pointer; }
+  .ndev:hover { background: var(--hover); }
+  .ndev .ndi { width: 36px; height: 36px; border-radius: 10px; flex: none; display: flex; align-items: center; justify-content: center; background: var(--accent-soft); color: var(--accent-text); }
+  .ndev .ndi .i { width: 20px; height: 20px; }
+  .ndev .ndi.k-other, .ndev .ndi.k-network { background: var(--soft); color: var(--muted); }
+  .ndev.raw .nn { color: var(--muted); font-weight: 500; }
+  .ndev .nt { display: grid; gap: 2px; min-width: 0; flex: 1; }
+  .ndev .nn { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 15px; font-weight: 600; }
+  .ndev .ns { font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ndev .nu { font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .ndev .tag { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 500; color: var(--muted); background: var(--soft); border-radius: 6px; padding: 1px 6px 1px 4px; }
+  .ndev .tag .i { width: 12px; height: 12px; }
+  .ndev .tag.new { background: var(--accent-soft); color: var(--accent-text); padding: 1px 6px; }
   .usage { display: grid; gap: 4px; }
   .urow { display: grid; grid-template-columns: minmax(80px, 34%) 1fr auto; gap: 10px; align-items: center; padding: 6px 0; text-align: left; cursor: pointer; }
   .urow .un { font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -2155,94 +2223,144 @@ class PlugApp extends HTMLElement {
     const people = this._s.people || [];
     const pres = set.presence || {};
     const scenes = this._scenes;
-    const sceneSel = (key) =>
-      `<select class="gsel" data-c="pres" data-v="${key}" aria-label="情境"><option value="">不做事</option>${scenes.map((x) => `<option value="${esc(x.id)}" ${pres[key] === x.id ? "selected" : ""}>執行「${esc(x.name)}」</option>`).join("")}</select>`;
+    const nodes = Object.fromEntries((n.nodes || []).map((x) => [x.mac, x]));
+
+    // ── 誰在家：一個人一列，下面列出他的裝置 ──
     const peopleRows = people
       .map((x) => {
-        const devs = x.macs.map((m) => this._netClient(m)?.name || m).join("、");
-        const when = x.since ? `${this._netAgo(x.since)} ${x.home ? "回來" : "出門"}・` : "";
-        return `<button class="set tapset" data-a="person-edit" data-v="${esc(x.id)}">
-            <div class="tx"><div class="l">${esc(x.name)}</div><div class="s">${esc(when)}${esc(devs || "還沒選手機")}</div></div>
-            <span class="badge ${x.home ? "ok" : ""}">${x.home == null ? "—" : x.home ? "在家" : "出門"}</span>
+        const devs = x.macs.map((m) => this._netClient(m)).filter(Boolean);
+        const chips = devs.length
+          ? devs.map((c) => `<span class="dchip ${c.online ? "on" : ""}">${ic(KIND[devKind(c)].icon)}${esc(netName(c))}</span>`).join("")
+          : `<span class="dchip">還沒選裝置</span>`;
+        const when = x.since ? `${this._netAgo(x.since)} ${x.home ? "回來" : "出門"}` : "";
+        return `<button class="person" data-a="person-edit" data-v="${esc(x.id)}">
+            <span class="av ${x.home ? "home" : ""}">${esc([...x.name][0] || "?")}</span>
+            <span class="pt"><span class="pn">${esc(x.name)}<span class="badge ${x.home ? "ok" : ""}">${x.home == null ? "—" : x.home ? "在家" : "出門"}</span></span>
+              <span class="ps">${when ? `<span class="pw">${esc(when)}</span>` : ""}${chips}</span></span>
+            ${ic("mdi:chevron-right")}
           </button>`;
       })
       .join("");
+    // 「ERIC watch」「ERIC Phone」看起來是同一個人：建議合併
+    const groups = {};
+    for (const x of people) {
+      const k = x.name.trim().split(/\s+/)[0];
+      if (k && k !== x.name.trim()) (groups[k] ||= []).push(x);
+    }
+    const merge = Object.entries(groups).find(([, xs]) => xs.length > 1);
+    const mergeHint = merge
+      ? `<div class="callout">${ic("mdi:information-outline")}<div><b>${merge[1].map((x) => `「${esc(x.name)}」`).join("和")}是同一個人嗎？</b><span>一個人可以有好幾台裝置（手機、手錶、平板），任何一台在家就算在家</span></div>
+          <button class="btn sm primary" data-a="person-merge" data-v="${esc(merge[0])}">合併成「${esc(merge[0])}」</button></div>`
+      : "";
     const peopleCard = `
-      <section class="card">
-        <div class="ch"><div class="ri">${ic("mdi:home-outline")}</div><div class="n">誰在家</div><div class="end"><button class="btn sm" data-a="person-new">${ic("mdi:plus")}新增</button></div></div>
-        ${peopleRows || `<p class="desc">新增家人、選他的手機，就能看誰在家，最後一個人出門時自動執行「出門」。</p>`}
+      <section class="card na-people">
+        <div class="ch"><div class="ri">${ic("mdi:home-outline")}</div><div class="n">誰在家</div><div class="end"><button class="btn sm" data-a="person-new">${ic("mdi:plus")}新增家人</button></div></div>
+        ${mergeHint}
+        ${peopleRows || `<p class="desc">新增家人、選他的手機（和手錶），就能看誰在家，最後一個人出門時自動執行「出門」。</p>`}
+        <p class="desc foot">${ic("mdi:shield-check-outline")}只看裝置有沒有連著家裡的 Wi-Fi，紀錄只留在樹莓派上；請先讓家人知道。</p>
+      </section>`;
+
+    // ── 出門與回家（自動化）──
+    const sceneSel = (key) =>
+      `<select class="gsel" data-c="pres" data-v="${key}" aria-label="情境"><option value="">不做事</option>${scenes.map((x) => `<option value="${esc(x.id)}" ${pres[key] === x.id ? "selected" : ""}>執行「${esc(x.name)}」</option>`).join("")}</select>`;
+    const autoCard = people.length
+      ? `<section class="card na-auto">
+        <div class="ch"><div class="ri">${ic("mdi:home-automation")}</div><div class="n">出門與回家</div></div>
+        <div class="set"><div class="tx"><div class="l">大家都出門時</div><div class="s">最後一個人離開 ${pres.grace_min || 10} 分鐘後</div></div>${sceneSel("away_scene")}</div>
+        <div class="set"><div class="tx"><div class="l">有人回家時</div><div class="s">大家都出門之後，第一個人回來</div></div>${sceneSel("home_scene")}</div>
         ${
-          people.length
-            ? `<div class="set"><div class="tx"><div class="l">大家都出門時</div><div class="s">最後一個人的手機離開家裡的 Wi-Fi</div></div>${sceneSel("away_scene")}</div>
-          <div class="set"><div class="tx"><div class="l">有人回家時</div><div class="s">大家都出門之後，第一個人回來</div></div>${sceneSel("home_scene")}</div>
-          ${
-            pres.home_scene
-              ? `<div class="set"><div class="tx"><div class="l">只在天黑後</div><div class="s">日落前 30 分鐘到日出之間回家才執行（白天回家不開燈）</div></div>
-            <button class="sw ${pres.home_dark_only ? "on" : ""}" data-a="pres-dark" role="switch" aria-checked="${!!pres.home_dark_only}" aria-label="只在天黑後"></button></div>`
-              : ""
-          }
-          <div class="set"><div class="tx"><div class="l">沒人在家還有電器開著</div><div class="s">大家都出門 10 分鐘後檢查；設成「常開」的不算</div></div>
-            <select class="gsel" data-c="pres" data-v="left_on" aria-label="怎麼處理">${[["notify", "通知我"], ["off", "自動關掉並通知"], ["none", "不用管"]].map(([k, l]) => `<option value="${k}" ${(pres.left_on || "notify") === k ? "selected" : ""}>${l}</option>`).join("")}</select></div>
-          <div class="set"><div class="tx"><div class="l">離線多久才算出門</div><div class="s">手機睡著時偶爾會斷線一下，太短會誤判</div></div>
-            <select class="gsel" data-c="pres" data-v="grace_min" aria-label="分鐘">${[5, 10, 15, 20, 30].map((m) => `<option value="${m}" ${+pres.grace_min === m ? "selected" : ""}>${m} 分鐘</option>`).join("")}</select></div>`
+          pres.home_scene
+            ? `<div class="set sub"><div class="tx"><div class="l">只在天黑後</div><div class="s">白天回家不執行（日落前 30 分鐘到日出之間才執行）</div></div>
+          <button class="sw ${pres.home_dark_only ? "on" : ""}" data-a="pres-dark" role="switch" aria-checked="${!!pres.home_dark_only}" aria-label="只在天黑後"></button></div>`
             : ""
         }
-        <p class="desc foot">${ic("mdi:shield-check-outline")}只看手機有沒有連著家裡的 Wi-Fi，紀錄只留在樹莓派上；請先讓家人知道。手機如果對這個 Wi-Fi 用「隨機／私人 MAC 位址」而且會一直換，就認不出來，要改成固定。</p>
-      </section>`;
-    const alertCard = `
-      <section class="card">
-        <div class="group"><div class="gi"><div class="gt"><div class="gl">新裝置通知</div><div class="gs">沒看過的裝置連上家裡的網路就推播通知（要先在「提醒與通知」填 ntfy）</div></div>
-          <button class="sw ${set.new_device_alert !== false ? "on" : ""}" data-a="newdev-toggle" role="switch" aria-checked="${set.new_device_alert !== false}" aria-label="新裝置通知"></button></div></div>
-      </section>`;
-    const day = 86400;
-    const row = (c) => {
-      const tags = [
-        c.person ? `<span class="tag">${ic("mdi:account")}${esc(c.person)}</span>` : "",
-        c.plug ? `<span class="tag">${ic("mdi:power-plug")}插座</span>` : "",
-        c.map ? `<span class="tag">${ic("mdi:wifi")}在地圖上</span>` : "",
-        c.first && n.now - c.first < day ? `<span class="tag new">新</span>` : "",
-      ].join("");
-      const sub = [c.vendor && c.vendor !== c.name ? c.vendor : "", this._netWhere(c), c.today_bytes ? `今天 ${fmtBytes(c.today_bytes)}` : "", c.online ? "" : c.seen ? `最後看到 ${this._netAgo(c.seen)}` : ""].filter(Boolean).join("・");
-      return `<button class="set tapset netdev" data-a="netdev-open" data-v="${esc(c.mac)}">
-          <div class="tx"><div class="l">${esc(c.name)}${tags}</div><div class="s">${esc(sub)}</div></div>${ic("mdi:chevron-right")}</button>`;
-    };
-    const online = n.clients.filter((c) => c.online);
-    const groups = n.nodes
-      .slice()
-      .sort((a, b) => b.main - a.main)
-      .map((node) => {
-        const all = online.filter((c) => c.node === node.mac);
-        const list = all.filter((c) => !c.plug);
-        const plugs = all.length - list.length;
-        return all.length
-          ? `<section class="card"><div class="ch"><div class="ri">${ic("mdi:wifi")}</div><div class="n">${esc(node.model)}<small>${node.main ? "主路由器" : "節點"}</small></div><div class="end"><span class="badge">${all.length}</span></div></div>${list.map(row).join("")}
-            ${plugs ? `<p class="desc foot">${ic("mdi:power-plug")}另外還有 ${plugs} 台插座連在這裡</p>` : ""}</section>`
-          : "";
-      })
-      .join("");
-    const offline = n.clients.filter((c) => !c.online && (c.person || c.map || c.label));
-    const offCard = offline.length
-      ? `<section class="card"><div class="ch"><div class="ri">${ic("mdi:wifi-off")}</div><div class="n">現在沒連線</div></div>${offline.map(row).join("")}</section>`
-      : "";
-    const heavy = n.clients.filter((c) => c.today_bytes > 0 && !c.plug).sort((a, b) => b.today_bytes - a.today_bytes).slice(0, 5);
-    const maxB = heavy[0]?.today_bytes || 1;
-    const usageCard = heavy.length
-      ? `<section class="card">
-        <div class="ch"><div class="ri">${ic("mdi:chart-bar")}</div><div class="n">今天用最多網路</div></div>
-        <div class="pad usage">${heavy.map((c) => `<button class="urow" data-a="netdev-open" data-v="${esc(c.mac)}"><span class="un">${esc(c.name)}</span><span class="ubar"><i style="width:${Math.max(3, (c.today_bytes / maxB) * 100).toFixed(1)}%"></i></span><span class="uv">${fmtBytes(c.today_bytes)}</span></button>`).join("")}</div>
-        <p class="desc foot">下載＋上傳；只算連在主路由器 Wi-Fi 上的裝置（節點和有線的讀不到）</p>
+        <div class="set"><div class="tx"><div class="l">沒人在家還有電器開著</div><div class="s">設成「常開」的不算</div></div>
+          <select class="gsel" data-c="pres" data-v="left_on" aria-label="怎麼處理">${[["notify", "通知我"], ["off", "自動關掉"], ["none", "不用管"]].map(([k, l]) => `<option value="${k}" ${(pres.left_on || "notify") === k ? "selected" : ""}>${l}</option>`).join("")}</select></div>
+        <div class="set"><div class="tx"><div class="l">離開多久才算出門</div><div class="s">手機睡著時偶爾會斷線一下，太短會誤判</div></div>
+          <select class="gsel" data-c="pres" data-v="grace_min" aria-label="分鐘">${[5, 10, 15, 20, 30].map((m) => `<option value="${m}" ${+(pres.grace_min || 10) === m ? "selected" : ""}>${m} 分鐘</option>`).join("")}</select></div>
       </section>`
       : "";
+
+    // ── 家裡的裝置 ──
+    const day = 86400;
+    const online = n.clients.filter((c) => c.online && !c.plug);
+    const plugCount = n.clients.filter((c) => c.online && c.plug).length;
+    const filt = this._netFilter || "all";
+    const tabs = [
+      ["all", "全部"],
+      ["mobile", "手機・手錶"],
+      ["computer", "電腦"],
+      ["media", "電視・音箱"],
+      ["unnamed", "還沒取名字"],
+    ];
+    const match = (c) => {
+      const k = devKind(c);
+      if (filt === "mobile") return ["phone", "tablet", "watch"].includes(k);
+      if (filt === "computer") return k === "computer";
+      if (filt === "media") return k === "tv" || k === "speaker";
+      if (filt === "unnamed") return !c.label && isRawName(c.name);
+      return k !== "network";
+    };
+    const sig = (v) => (v == null ? "" : v >= -60 ? "訊號好" : v >= -70 ? "訊號普通" : "訊號弱");
+    const row = (c) => {
+      const k = devKind(c);
+      const raw = !c.label && isRawName(c.name);
+      const where = c.wired ? "有線" : [c.band, nodes[c.node] && !nodes[c.node].main ? "連在節點" : "", c.online ? sig(c.rssi) : ""].filter(Boolean).join("・");
+      const sub = [raw ? KIND[k].label : c.vendor && c.vendor !== c.name && !/dhcp|MSFT/i.test(c.vendor) ? c.vendor : "", where, c.online ? "" : c.seen ? `最後看到 ${this._netAgo(c.seen)}` : ""].filter(Boolean).join("・");
+      const tags = [
+        c.person ? `<span class="tag">${ic("mdi:account")}${esc(c.person)}</span>` : "",
+        c.map ? `<span class="tag">${ic("mdi:wifi")}地圖</span>` : "",
+        c.first && n.now - c.first < day ? `<span class="tag new">新</span>` : "",
+      ].join("");
+      return `<button class="ndev ${raw ? "raw" : ""}" data-a="netdev-open" data-v="${esc(c.mac)}">
+          <span class="ndi k-${k}">${ic(KIND[k].icon)}</span>
+          <span class="nt"><span class="nn">${esc(raw ? `${KIND[k].label}（還沒取名字）` : netName(c))}${tags}</span><span class="ns">${esc(raw ? [c.name, where].filter(Boolean).join("・") : sub)}</span></span>
+          <span class="nu">${c.today_bytes ? fmtBytes(c.today_bytes) : ""}</span>
+        </button>`;
+    };
+    const order = (a, b) => (isRawName(a.name) && !a.label) - (isRawName(b.name) && !b.label) || netName(a).localeCompare(netName(b), "zh-Hant");
+    const shown = online.filter(match).sort(order);
+    const gear = online.filter((c) => devKind(c) === "network");
+    const offline = n.clients.filter((c) => !c.online && !c.plug && (c.person || c.map || c.label));
+    const unnamed = online.filter((c) => !c.label && isRawName(c.name)).length;
+    const devCard = `
+      <section class="card na-devs">
+        <div class="ch"><div class="ri">${ic("mdi:wifi")}</div><div class="n">家裡的裝置</div><div class="end"><span class="badge">${online.length} 台連線中</span></div></div>
+        <div class="chips pad ntabs">${tabs
+          .map(([k, l]) => `<button class="chip ${filt === k ? "sel" : ""}" data-a="net-filter" data-v="${k}">${l}${k === "unnamed" && unnamed ? ` ${unnamed}` : ""}</button>`)
+          .join("")}</div>
+        ${filt === "unnamed" && unnamed ? `<p class="desc">點一下取個好認的名字。不知道是哪一台：右邊是它今天用的網路量；也可以把懷疑的裝置的 Wi-Fi 關掉，看哪一台消失。</p>` : ""}
+        <div class="nlist">${shown.map(row).join("") || `<p class="desc">沒有這類的裝置</p>`}</div>
+        ${filt === "all" && gear.length ? `<div class="nsub">網路設備</div><div class="nlist">${gear.map(row).join("")}</div>` : ""}
+        ${filt === "all" && offline.length ? `<div class="nsub">現在沒連線</div><div class="nlist">${offline.map(row).join("")}</div>` : ""}
+        ${plugCount ? `<p class="desc foot">${ic("mdi:power-plug")}另外還有 ${plugCount} 台插座（在首頁管理）</p>` : ""}
+      </section>`;
+
+    // ── 今天用最多網路 ──
+    const heavy = online.filter((c) => c.today_bytes > 0).sort((a, b) => b.today_bytes - a.today_bytes).slice(0, 5);
+    const maxB = heavy[0]?.today_bytes || 1;
+    const usageCard = heavy.length
+      ? `<section class="card na-usage">
+        <div class="ch"><div class="ri">${ic("mdi:chart-bar")}</div><div class="n">今天用最多網路</div></div>
+        <div class="pad usage">${heavy.map((c) => `<button class="urow" data-a="netdev-open" data-v="${esc(c.mac)}"><span class="un">${esc(netName(c))}</span><span class="ubar"><i style="width:${Math.max(3, (c.today_bytes / maxB) * 100).toFixed(1)}%"></i></span><span class="uv">${fmtBytes(c.today_bytes)}</span></button>`).join("")}</div>
+        <p class="desc foot">下載加上傳；只算連在主路由器 Wi-Fi 上的裝置</p>
+      </section>`
+      : "";
+    const alertCard = `
+      <section class="card na-alert">
+        <div class="set"><div class="tx"><div class="l">新裝置通知</div><div class="s">沒看過的裝置連上家裡的網路就通知你</div></div>
+          <button class="sw ${set.new_device_alert !== false ? "on" : ""}" data-a="newdev-toggle" role="switch" aria-checked="${set.new_device_alert !== false}" aria-label="新裝置通知"></button></div>
+      </section>`;
     const err = !n.ok ? `<div class="netwarn">${ic("mdi:alert-circle-outline")}<span>連不上路由器${n.error ? `：${esc(n.error)}` : ""}。下面是最後讀到的資料。</span></div>` : "";
     return `${head}${err}
-      <div class="grid">
+      <div class="netgrid">
         ${peopleCard}
-        ${alertCard}
+        ${autoCard}
+        ${devCard}
         ${usageCard}
-        ${groups}
-        ${offCard}
+        ${alertCard}
       </div>
-      <p class="note">每 4～20 秒從路由器讀一次（SSH 金鑰登入，只讀，不改路由器的設定）。點裝置可以取名字、指定是誰的手機、放到訊號地圖。</p>`;
+      <p class="note">從路由器讀（只讀，不改路由器的設定）。點裝置可以取名字、指定是誰的、放到訊號地圖。</p>`;
   }
 
   _netdevSheet(s) {
@@ -3055,6 +3173,20 @@ class PlugApp extends HTMLElement {
         history.pushState(null, "", "#settings");
       },
       "netdev-open": (v) => this._openSheet({ type: "netdev", id: v }),
+      "net-filter": (v) => {
+        this._netFilter = v;
+        this._render();
+      },
+      "person-merge": (v) =>
+        this._safe(async () => {
+          const xs = (this._s.people || []).filter((x) => x.name.trim().split(/\s+/)[0] === v && x.name.trim() !== v);
+          if (xs.length < 2) return;
+          const macs = [...new Set(xs.flatMap((x) => x.macs))];
+          await api("PUT", `/api/people/${xs[0].id}`, { name: v, macs });
+          for (const x of xs.slice(1)) await api("DELETE", `/api/people/${x.id}`);
+          await this._netRefresh();
+          this._showToast(`已合併成「${v}」：${macs.length} 台裝置`);
+        }),
       "netdev-map": () => {
         const d = this._sheet.draft;
         d.label = this._sheetHost.querySelector("[data-netdev-label]")?.value ?? d.label;
