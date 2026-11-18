@@ -578,6 +578,7 @@ class Hub:
             return {"total": 0, "ok": 0, "issues": []}
         total = ok = 0
         issues: list[dict[str, str]] = []
+        rules: list[list] = []  # 實際寫進插座的內容（含自動加的關閉），給畫面顯示
         for pid in native.schedule_plugs(self.store, sched):
             plug = self.plugs.get(pid)
             want = native.schedule_rules(self.store, pid, [sched])
@@ -587,6 +588,10 @@ class Hub:
                     issues.append({"plug": self.name(plug), "reason": "裝置已鎖定，不寫進插座"})
                 continue
             total += 1
+            for act, smin, wday in want:
+                item = [act, smin, list(wday)]
+                if item not in rules:
+                    rules.append(item)
             info = self.native.get(pid)
             written = {(r["sact"], r["smin"], tuple(r["wday"])) for r in self._native_rules.get(pid, [])}
             if all(rule in written for rule in want):
@@ -599,7 +604,7 @@ class Hub:
                 issues.append({"plug": self.name(plug), "reason": "同步中", "pending": "1"})
             else:
                 issues.append({"plug": self.name(plug), "reason": "插座的規則滿了"})
-        return {"total": total, "ok": ok, "issues": issues}
+        return {"total": total, "ok": ok, "issues": issues, "rules": rules}
 
     def _target(self, plug_id: str) -> tuple[Any, dict[str, Any]]:
         plug = self.plugs[plug_id]

@@ -2450,13 +2450,31 @@ class PlugApp extends HTMLElement {
           ? `<div class="bstat ok">${ic("mdi:check-circle")}${b.total} 個插座都寫好了</div>`
           : b.issues.map((i) => `<div class="bstat ${i.pending ? "" : "bad"}">${ic(i.pending ? "mdi:clock-outline" : "mdi:alert-circle-outline")}${esc(i.plug)}：${esc(i.reason)}</div>`).join("")
         : "";
+    // 實際寫進插座的內容（插座只到分鐘；「X 秒後關閉」會變成下一分鐘的關閉）
+    const rules = d.backup && saved && saved.backup !== false && b?.rules?.length
+      ? `<div class="bstat">${ic("mdi:power-plug-outline")}插座裡：${Object.entries(
+          b.rules
+            .sort((x, y) => x[1] - y[1])
+            .reduce((g, [act, smin, wday]) => {
+              const k = daysText(kasaDays(wday));
+              (g[k] ||= []).push(`${pad2(Math.floor(smin / 60))}:${pad2(smin % 60)} ${act ? "開" : "關"}`);
+              return g;
+            }, {}),
+        )
+          .map(([days, list]) => `${days} ${list.join("、")}`)
+          .join("；")}</div>`
+      : "";
+    const extraNote =
+      d.action === "on" && d.duration_s && d.duration_s % 60
+        ? `<div class="bstat">${ic("mdi:alert-circle-outline")}插座只到分鐘：樹莓派離線時會在下一個整分鐘才關，最多多開 ${60 - (d.duration_s % 60)} 秒</div>`
+        : "";
     return `
       <div class="q">備援</div>
       <div class="group">
         <div class="gi"><div class="gt"><div class="gl">樹莓派離線時由插座接手</div>
           <div class="gs">寫一份到插座裡；平常由樹莓派執行，樹莓派離線時插座照樣會做（只到分鐘${d.action === "off" && d.restore_at ? "；「之後再打開」不會寫進插座" : ""}）</div></div>
           <button class="sw ${d.backup ? "on" : ""}" data-a="sched-backup" role="switch" aria-checked="${!!d.backup}" aria-label="樹莓派離線時由插座接手"></button></div>
-        ${status ? `<div class="gi col">${status}</div>` : ""}
+        ${status || rules || extraNote ? `<div class="gi col">${status}${rules}${d.backup ? extraNote : ""}</div>` : ""}
       </div>`;
   }
 
