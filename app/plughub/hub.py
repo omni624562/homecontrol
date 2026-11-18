@@ -67,16 +67,18 @@ class Hub:
         self.matter_seen = 0.0
         self._changed = asyncio.Condition()
         self._tasks: list[asyncio.Task] = []
-        self._schedule_done: dict[str, str] = {}  # "night_off"/"morning_on" → 今天已執行的日期
+        self._schedule_done: dict[str, str] = {}  # 排程 ID（或「ID:restore」）→ 今天已執行的日期
         self._offline_notified: set[str] = set()
         self._overload_notified: set[str] = set()
         self._last_flush = time.monotonic()
         self._discovering = False
+        self._dirty = False  # store 有沒寫回的變動
 
     # ---- 生命週期 ----
 
     async def start(self) -> None:
         await self.discover()
+        self._default_scenes()
         self._tasks = [
             asyncio.create_task(self._loop(self.discover, DISCOVER_SECONDS)),
             asyncio.create_task(self._loop(self.poll, POLL_SECONDS)),
@@ -170,10 +172,25 @@ class Hub:
 
     # ---- 更新狀態 ----
 
+    def _set_is_on(self, plug: Plug, on: bool) -> None:
+        on_since = self.store.data["on_since"]
+        if on and plug.id not in on_since:
+            on_since[plug.id] = time.time()
+            self._dirty = True
+        elif not on and (plug.id in on_since or plug.id in self.store.data["timers"]):
+            on_since.pop(plug.id, None)
+            self.store.data["timers"].pop(plug.id, None)  # 關掉了，定時就不用了
+            self._dirty = True
+        plug.is_on = on
+
     async def poll(self) -> None:
         await asyncio.gather(*(self._poll_one(e) for e in list(self.devices.values())))
         self._accrue()
         self._check_alerts()
+        await self._run_timers()
+        if self._dirty:
+            self._dirty = False
+            self.store.save()
         if time.monotonic() - self._last_flush > 60:
             self.store.energy.flush()
             self._last_flush = time.monotonic()
@@ -200,7 +217,7 @@ class Hub:
         for pid in entry.plugs:
             plug = self.plugs[pid]
             source = device.children[plug.child_index] if plug.child_index is not None else device
-            plug.is_on = bool(source.is_on)
+            self._set_is_on(plug, bool(source.is_on))
             plug.kasa_name = source.alias or plug.kasa_name
             plug.online = True
             plug.offline_since = None
@@ -284,7 +301,7 @@ class Hub:
         entry = self.devices[plug.device_key]
         target = entry.device.children[plug.child_index] if plug.child_index is not None else entry.device
         await asyncio.wait_for(target.turn_on() if on else target.turn_off(), DEVICE_TIMEOUT)
-        plug.is_on = on
+        self._set_is_on(plug, on)
         try:
             await asyncio.wait_for(entry.device.update(), DEVICE_TIMEOUT)
             self._read(entry)
@@ -315,30 +332,135 @@ class Hub:
         return done
 
     async def restore(self, remember: str) -> list[str]:
-        """打開 remember 記住的、而且現在還關著的插座。"""
-        ids = self.store.data["remembered"].pop(remember, [])
-        self.store.save()
-        targets = [pid for pid in ids if pid in self.plugs and self.plugs[pid].is_on is False]
-        await asyncio.gather(*(self.set_power(pid, True) for pid in targets), return_exceptions=True)
-        return targets
+        """恢復 remember 記住的狀態。
 
-    # ---- 夜間排程 ----
+        清單 = 被關掉的插座，打開還關著的；字典 = {插座: 原本開著嗎}，改回原本的樣子。
+        """
+        saved = self.store.data["remembered"].pop(remember, [])
+        self.store.save()
+        wanted = saved if isinstance(saved, dict) else {pid: True for pid in saved}
+        targets = {pid: on for pid, on in wanted.items() if pid in self.plugs and self.plugs[pid].is_on is not on}
+        await asyncio.gather(*(self.set_power(pid, on) for pid, on in targets.items()), return_exceptions=True)
+        return list(targets)
+
+    # ---- 定時關閉 ----
+
+    async def set_timer(self, plug_id: str, minutes: float) -> None:
+        if not self.plugs[plug_id].is_on:
+            await self.set_power(plug_id, True)
+        self.store.data["timers"][plug_id] = time.time() + minutes * 60
+        self.store.save()
+        await self.changed()
+
+    async def cancel_timer(self, plug_id: str) -> None:
+        if self.store.data["timers"].pop(plug_id, None) is not None:
+            self.store.save()
+            await self.changed()
+
+    async def _run_timers(self) -> None:
+        now = time.time()
+        for pid, at in list(self.store.data["timers"].items()):
+            if at > now or pid not in self.plugs:
+                continue
+            plug = self.plugs[pid]
+            try:
+                await self.set_power(pid, False)
+            except Exception:  # noqa: BLE001
+                if now - at < 300:  # 插座一時沒回應就下一輪再試，5 分鐘後放棄
+                    continue
+                self.notifier.send("定時關閉失敗", f"{self.name(plug)} 沒有回應，請手動關閉")
+            self.store.data["timers"].pop(pid, None)
+            self._dirty = True
+            self.notifier.send("定時關閉", f"{self.name(plug)} 時間到，已經關閉")
+
+    # ---- 情境 ----
+
+    def _default_scenes(self) -> None:
+        """第一次執行時建立「出門」「睡覺」「看電影」，之後可以在畫面上改。"""
+        if self.store.data.get("scenes") is not None or not self.plugs:
+            return
+        metas = {pid: self.store.meta(pid) for pid in self.plugs}
+        leave = {pid: ("keep" if m.keep_on else "off") for pid, m in metas.items()}
+        sleep: dict[str, str] = {}
+        movie: dict[str, str] = {}
+        for pid, plug in self.plugs.items():
+            name = self.name(plug).lower()
+            is_tv = "電視" in name or "tv" in name
+            is_light = "燈" in name or "lamp" in name
+            if metas[pid].keep_on:
+                continue
+            if is_tv or is_light or metas[pid].night:
+                sleep[pid] = "off"  # 睡覺：燈和電視都關
+            if is_tv:
+                movie[pid] = "on"  # 看電影：開電視、關燈
+            elif is_light:
+                movie[pid] = "off"
+        self.store.data["scenes"] = []
+        self.store.save_scene(None, "出門", "mdi:logout", leave, "off")
+        self.store.save_scene(None, "睡覺", "mdi:weather-night", sleep, "keep")
+        self.store.save_scene(None, "看電影", "mdi:television", movie, "keep")
+
+    async def run_scene(self, scene_id: str, remember: str | None = None) -> list[str]:
+        """執行情境；常開的插座不會被關。remember 有給就記住原本的狀態，可以復原。"""
+        scene = self.store.scene(scene_id)
+        if scene is None:
+            raise KeyError(scene_id)
+        targets: dict[str, bool] = {}
+        for pid, plug in self.plugs.items():
+            act = scene["actions"].get(pid, scene.get("others", "keep"))
+            if act == "keep" or not plug.online:
+                continue
+            on = act == "on"
+            if not on and self.store.meta(pid).keep_on:
+                continue
+            if plug.is_on is not on:
+                targets[pid] = on
+        before = {pid: not on for pid, on in targets.items()}
+        results = await asyncio.gather(*(self.set_power(pid, on) for pid, on in targets.items()), return_exceptions=True)
+        done = [pid for pid, r in zip(targets, results) if not isinstance(r, Exception)]
+        if remember:
+            self.store.data["remembered"][remember] = {pid: before[pid] for pid in done}
+            self.store.save()
+        return done
+
+    # ---- 排程 ----
 
     async def run_schedule(self) -> None:
-        sched = self.store.data["schedule"]
         now = datetime.now()
         hhmm = now.strftime("%H:%M")
         today = now.date().isoformat()
-        if sched["enabled"] and hhmm == sched["night_off"] and self._schedule_done.get("night_off") != today:
-            self._schedule_done["night_off"] = today
-            done = await self.turn_off(night_only=True, remember="night")
-            _LOGGER.info("夜間排程關閉 %d 個插座", len(done))
-        # 早上只打開晚上被排程關掉的
-        if hhmm == sched["morning_on"] and self._schedule_done.get("morning_on") != today:
-            self._schedule_done["morning_on"] = today
-            if "night" in self.store.data["remembered"]:
-                done = await self.restore("night")
-                _LOGGER.info("早上打開 %d 個插座", len(done))
+        for sched in self.store.schedules:
+            key = sched["id"]
+            if sched["enabled"] and hhmm == sched["time"] and now.weekday() in sched["days"]:
+                if self._schedule_done.get(key) != today:
+                    self._schedule_done[key] = today
+                    await self._run_one(sched)
+            # 關閉之後指定時間再打開：只開被這個排程關掉、現在還關著的
+            restore_key = f"{key}:restore"
+            if sched.get("restore_at") and hhmm == sched["restore_at"] and self._schedule_done.get(restore_key) != today:
+                self._schedule_done[restore_key] = today
+                if f"sched:{key}" in self.store.data["remembered"]:
+                    done = await self.restore(f"sched:{key}")
+                    _LOGGER.info("排程 %s 打開 %d 個插座", key, len(done))
+
+    async def _run_one(self, sched: dict[str, Any]) -> None:
+        if sched["action"] == "scene":
+            if self.store.scene(sched.get("scene") or ""):
+                done = await self.run_scene(sched["scene"])
+                _LOGGER.info("排程執行情境 %s：%d 個插座", sched["scene"], len(done))
+            return
+        on = sched["action"] == "on"
+        targets = [
+            pid for pid in sched["plugs"]
+            if pid in self.plugs and self.plugs[pid].online and self.plugs[pid].is_on is not on
+            and (on or not self.store.meta(pid).keep_on)
+        ]
+        results = await asyncio.gather(*(self.set_power(pid, on) for pid in targets), return_exceptions=True)
+        done = [pid for pid, r in zip(targets, results) if not isinstance(r, Exception)]
+        if not on and sched.get("restore_at"):
+            self.store.data["remembered"][f"sched:{sched['id']}"] = done
+            self.store.save()
+        _LOGGER.info("排程%s %d 個插座", "打開" if on else "關閉", len(done))
 
     # ---- 給前端的資料 ----
 
@@ -389,6 +511,8 @@ class Hub:
                 "keep_on": meta.keep_on,
                 "night": meta.night,
                 "standby": self.is_standby(plug),
+                "on_since": self.store.data["on_since"].get(plug.id) if plug.is_on else None,
+                "timer": self.store.data["timers"].get(plug.id),
             })
         return {
             "version": self.version,
@@ -404,7 +528,9 @@ class Hub:
                 "season": "夏月" if tariff.is_summer(today) else "非夏月",
                 "history": history,
             },
-            "schedule": self.store.data["schedule"],
+            "now": time.time(),
+            "scenes": self.store.scenes,
+            "schedules": self.store.schedules,
             "settings": settings,
             "can_restore": bool(self.store.data["remembered"].get("undo")),
             "matter": self.matter_status(),

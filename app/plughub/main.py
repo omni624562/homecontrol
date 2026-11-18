@@ -7,8 +7,12 @@ PATCH /api/plugs/{id}       {"name", "room", "keep_on", "night", "watts"}
 POST /api/off               {"room", "standby_only"} 關閉並記住，可以 /api/restore 復原
 POST /api/restore
 POST /api/rooms             {"name"}；PATCH/DELETE /api/rooms/{id}
-POST /api/order             {"plugs": [...], "rooms": [...]}
-PUT  /api/schedule、/api/settings
+POST /api/order             {"plugs": [...], "rooms": [...], "scenes": [...]}
+POST /api/plugs/{id}/timer  {"minutes": 10} 打開、幾分鐘後自動關閉；DELETE 取消
+POST /api/scenes            {"name", "icon", "actions", "others"}；PUT/DELETE /api/scenes/{id}
+POST /api/scenes/{id}/run   執行情境（可以 /api/restore 復原）
+POST /api/schedules         新增排程；PUT/DELETE /api/schedules/{id}
+PUT  /api/settings
 POST /api/discover          立刻重新找插座
 PUT  /api/matter            Google Home 串接外掛回報配對狀態（只接受樹莓派本機）
 GET  /api/matter/qr.svg     配對用的 QR code
@@ -107,6 +111,29 @@ async def set_power(plug_id: str, body: dict = Body(...)) -> dict[str, Any]:
     return {"ok": True}
 
 
+@app.post("/api/plugs/{plug_id}/timer")
+async def set_timer(plug_id: str, body: dict = Body(...)) -> dict[str, Any]:
+    _plug(plug_id)
+    try:
+        minutes = float(body.get("minutes"))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "請輸入分鐘數") from None
+    if not 1 <= minutes <= 24 * 60:
+        raise HTTPException(400, "定時要在 1 分鐘到 24 小時之間")
+    try:
+        await hub.set_timer(plug_id, minutes)
+    except Exception as err:  # noqa: BLE001
+        raise HTTPException(502, f"插座沒有回應：{err}") from err
+    return {"ok": True}
+
+
+@app.delete("/api/plugs/{plug_id}/timer")
+async def cancel_timer(plug_id: str) -> dict[str, Any]:
+    _plug(plug_id)
+    await hub.cancel_timer(plug_id)
+    return {"ok": True}
+
+
 @app.patch("/api/plugs/{plug_id}")
 async def update_plug(plug_id: str, body: dict = Body(...)) -> dict[str, Any]:
     _plug(plug_id)
@@ -192,23 +219,90 @@ async def set_order(body: dict = Body(...)) -> dict[str, Any]:
         ordered = [by_id[i] for i in dict.fromkeys(body["rooms"]) if i in by_id]
         ordered += [r for r in store.rooms if r not in ordered]
         store.data["rooms"] = ordered
+    if "scenes" in body:
+        by_id = {x["id"]: x for x in store.scenes}
+        ordered = [by_id[i] for i in dict.fromkeys(body["scenes"]) if i in by_id]
+        store.data["scenes"] = ordered + [x for x in store.scenes if x not in ordered]
     store.save()
     return await _done()
 
 
-# ---- 排程與設定 ----
 
 
-@app.put("/api/schedule")
-async def set_schedule(body: dict = Body(...)) -> dict[str, Any]:
-    sched = store.data["schedule"]
-    if "enabled" in body:
-        sched["enabled"] = bool(body["enabled"])
-    for key in ("night_off", "morning_on"):
-        if body.get(key):
-            sched[key] = str(body[key])[:5]
-    store.save()
+# ---- 情境 ----
+
+
+def _scene_body(body: dict) -> tuple[str, str, dict[str, str], str]:
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "請輸入情境名稱")
+    actions = body.get("actions") or {}
+    if not isinstance(actions, dict):
+        raise HTTPException(400, "actions 格式不對")
+    return name, str(body.get("icon") or ""), {str(k): str(v) for k, v in actions.items()}, str(body.get("others") or "keep")
+
+
+@app.post("/api/scenes")
+async def add_scene(body: dict = Body(...)) -> dict[str, Any]:
+    scene = store.save_scene(None, *_scene_body(body))
+    await hub.changed()
+    return scene
+
+
+@app.put("/api/scenes/{scene_id}")
+async def update_scene(scene_id: str, body: dict = Body(...)) -> dict[str, Any]:
+    if not store.scene(scene_id):
+        raise HTTPException(404, "沒有這個情境")
+    scene = store.save_scene(scene_id, *_scene_body(body))
+    await hub.changed()
+    return scene
+
+
+@app.delete("/api/scenes/{scene_id}")
+async def delete_scene(scene_id: str) -> dict[str, Any]:
+    store.delete_scene(scene_id)
+    for sched in store.schedules:  # 用到這個情境的排程先停用
+        if sched["action"] == "scene" and sched.get("scene") == scene_id:
+            store.save_schedule(sched["id"], {"enabled": False, "scene": None})
     return await _done()
+
+
+@app.post("/api/scenes/{scene_id}/run")
+async def run_scene(scene_id: str) -> dict[str, Any]:
+    if not store.scene(scene_id):
+        raise HTTPException(404, "沒有這個情境")
+    done = await hub.run_scene(scene_id, remember="undo")
+    await hub.changed()
+    return {"ok": True, "count": len(done)}
+
+
+# ---- 排程 ----
+
+
+@app.post("/api/schedules")
+async def add_schedule(body: dict = Body(...)) -> dict[str, Any]:
+    sched = store.save_schedule(None, body)
+    await hub.changed()
+    return sched
+
+
+@app.put("/api/schedules/{sched_id}")
+async def update_schedule(sched_id: str, body: dict = Body(...)) -> dict[str, Any]:
+    try:
+        sched = store.save_schedule(sched_id, body)
+    except KeyError:
+        raise HTTPException(404, "沒有這個排程") from None
+    await hub.changed()
+    return sched
+
+
+@app.delete("/api/schedules/{sched_id}")
+async def delete_schedule(sched_id: str) -> dict[str, Any]:
+    store.delete_schedule(sched_id)
+    return await _done()
+
+
+# ---- 設定 ----
 
 
 @app.put("/api/settings")
@@ -218,6 +312,7 @@ async def set_settings(body: dict = Body(...)) -> dict[str, Any]:
         "household_monthly_kwh": (0, 5000),
         "standby_watts": (0, 100),
         "overload_watts": (50, 5000),
+        "long_on_hours": (1, 48),
     }
     for key, (lo, hi) in limits.items():
         if key in body:

@@ -27,8 +27,21 @@ DEFAULTS: dict[str, Any] = {
         "standby_watts": 5.0,  # 開著但低於這個瓦數 = 待機
         "overload_watts": 1500.0,  # 超過這個瓦數持續 1 分鐘就通知
         "ntfy_topic": "",  # 有填就用 ntfy 推播通知
+        "long_on_hours": 6.0,  # 開超過這麼久就在畫面上提醒（常開的不算）
     },
-    "remembered": {},  # 關閉時記住關了哪些，之後可以還原：{"undo": [...], "night": [...]}
+    # 關閉時記住關了哪些，之後可以還原：
+    #   {"night": [插座 ID...]}（被關掉的）或 {"undo": {插座 ID: 原本開著嗎}}
+    "remembered": {},
+    "on_since": {},  # 插座 ID → 從什麼時候開著（epoch 秒）
+    "timers": {},  # 插座 ID → 什麼時候自動關閉（epoch 秒）
+    # 情境：[{"id", "name", "icon", "actions": {插座 ID: "on"/"off"/"keep"}, "others": "keep"/"off"}]
+    # others：actions 裡沒有的插座（之後新找到的）要怎麼做。None = 還沒建立預設情境
+    "scenes": None,
+    # 排程：[{"id", "enabled", "time": "HH:MM", "days": [0-6，0 = 星期一],
+    #         "action": "scene"/"on"/"off", "scene": 情境 ID, "plugs": [插座 ID...],
+    #         "restore_at": "HH:MM" 或 None（關閉之後幾點再打開被它關掉的）}]
+    # None = 還沒從舊版的夜間排程轉過來
+    "schedules": None,
 }
 
 
@@ -63,6 +76,26 @@ class Store:
             pid: PlugMeta.from_dict(meta) for pid, meta in self.data["plugs"].items()
         }
         self.energy = EnergyLog(self.dir / "energy.db")
+        if self.data["schedules"] is None:
+            self._migrate_schedule()
+
+    def _migrate_schedule(self) -> None:
+        """舊版只有一組夜間排程（勾選的插座晚上關、早上開），轉成新的排程清單。"""
+        old = self.data.get("schedule") or {}
+        night = [pid for pid, meta in self.plugs.items() if meta.night]
+        self.data["schedules"] = []
+        if night or old.get("enabled"):
+            self.data["schedules"].append({
+                "id": uuid.uuid4().hex[:8],
+                "enabled": bool(old.get("enabled")),
+                "time": old.get("night_off", "23:00"),
+                "days": list(range(7)),
+                "action": "off",
+                "scene": None,
+                "plugs": night,
+                "restore_at": old.get("morning_on", "07:00"),
+            })
+        self.save()
 
     def save(self) -> None:
         self.data["plugs"] = {pid: asdict(meta) for pid, meta in self.plugs.items()}
@@ -92,6 +125,65 @@ class Store:
                 meta.room = None
         self.save()
 
+    # ---- 情境 ----
+
+    @property
+    def scenes(self) -> list[dict[str, Any]]:
+        return self.data["scenes"] or []
+
+    def scene(self, scene_id: str) -> dict[str, Any] | None:
+        return next((s for s in self.scenes if s["id"] == scene_id), None)
+
+    def save_scene(self, scene_id: str | None, name: str, icon: str, actions: dict[str, str], others: str) -> dict[str, Any]:
+        clean = {pid: a for pid, a in actions.items() if a in ("on", "off", "keep")}
+        others = others if others in ("keep", "off") else "keep"
+        scene = self.scene(scene_id) if scene_id else None
+        if scene is None:
+            scene = {"id": uuid.uuid4().hex[:8]}
+            self.data["scenes"] = [*self.scenes, scene]
+        scene.update(name=name.strip()[:20], icon=icon or "mdi:star-outline", actions=clean, others=others)
+        self.save()
+        return scene
+
+    def delete_scene(self, scene_id: str) -> None:
+        self.data["scenes"] = [s for s in self.scenes if s["id"] != scene_id]
+        self.save()
+
+    # ---- 排程 ----
+
+    @property
+    def schedules(self) -> list[dict[str, Any]]:
+        return self.data["schedules"] or []
+
+    def save_schedule(self, sched_id: str | None, body: dict[str, Any]) -> dict[str, Any]:
+        sched = next((x for x in self.schedules if x["id"] == sched_id), None) if sched_id else None
+        if sched is None:
+            if sched_id:
+                raise KeyError(sched_id)
+            sched = {"id": uuid.uuid4().hex[:8], "enabled": True, "time": "23:00", "days": list(range(7)),
+                     "action": "off", "scene": None, "plugs": [], "restore_at": None}
+            self.data["schedules"] = [*self.schedules, sched]
+        if "enabled" in body:
+            sched["enabled"] = bool(body["enabled"])
+        if "time" in body and _hhmm(body["time"]):
+            sched["time"] = _hhmm(body["time"])
+        if "days" in body:
+            sched["days"] = sorted({int(d) for d in body["days"] if 0 <= int(d) <= 6})
+        if body.get("action") in ("scene", "on", "off"):
+            sched["action"] = body["action"]
+        if "scene" in body:
+            sched["scene"] = body["scene"] if self.scene(body["scene"]) else None
+        if "plugs" in body:
+            sched["plugs"] = list(dict.fromkeys(str(p) for p in body["plugs"]))
+        if "restore_at" in body:
+            sched["restore_at"] = _hhmm(body["restore_at"]) if body["restore_at"] else None
+        self.save()
+        return sched
+
+    def delete_schedule(self, sched_id: str) -> None:
+        self.data["schedules"] = [x for x in self.schedules if x["id"] != sched_id]
+        self.save()
+
     def meta(self, plug_id: str) -> PlugMeta:
         if plug_id not in self.plugs:
             self.plugs[plug_id] = PlugMeta()
@@ -112,6 +204,16 @@ ROOM_ICONS = [
     (("玄關", "門口"), "mdi:door"),
     (("洗衣",), "mdi:washing-machine"),
 ]
+
+
+def _hhmm(value: Any) -> str | None:
+    """"7:5"、"07:05:00" → "07:05"；不合法就 None。"""
+    try:
+        h, m = str(value).split(":")[:2]
+        h, m = int(h), int(m)
+    except (ValueError, TypeError):
+        return None
+    return f"{h:02d}:{m:02d}" if 0 <= h < 24 and 0 <= m < 60 else None
 
 
 def guess_icon(name: str) -> str:

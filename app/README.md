@@ -10,10 +10,13 @@
 ## 功能
 
 - **自動找插座**：每分鐘在區網找一次，新插座自動出現；換了 IP 也會跟著更新。多孔排插（HS107、KP303）每一孔各算一個
-- **開關**：點插座卡片。右上角 ⋯ 改名稱、房間、常開、夜間關閉、估算瓦數
-- **房間**：「分配房間」一個一個點選；或拖拉插座到別的房間（手機按住一下再拖）；「整理房間」模式下可以直接拖、拉房間右上角的把手排房間順序；插座拖到另一個插座的左／右半邊就排在它前／後
-- **全部關閉／房間全關**：按一次就關，提示條上可以「復原」。常開的插座不會被關
-- **夜間排程**：晚上關掉選好的插座，早上只打開晚上被排程關掉的
+- **畫面**：手機一欄、下方分頁列；平板兩欄；電腦左側選單、兩到三欄。分頁：插座／排程／用電／設定
+- **開關**：每個插座右邊一個開關，整列都可以點。名稱下面寫狀態：「開了 2 小時」、開超過設定的時數（預設 6 小時）會變橘色提醒
+- **情境**：插座頁最上面的按鈕，一次設定好多個插座（每個插座選「打開／關閉／不動」）。預設有「出門」「睡覺」「看電影」，在「編輯」裡可以改、新增、排順序
+- **定時關閉**：按插座旁的 ⏱，選 5 分鐘～2 小時或自訂，時間到自動關閉（有設 ntfy 也會通知）。適合澆水、風扇
+- **全部關閉／整間關閉**：按一次就關，提示條上可以「復原」；執行情境也能復原。常開的插座不會被關
+- **編輯**：插座頁右上角「編輯」：點名稱改名、設定常開；名稱下面的選單換房間；⌃ ⌄ 調整插座、房間、情境的順序
+- **排程**：設定時間、哪幾天（每天／平日／週末／自選），要「關閉插座」「打開插座」或「執行情境」。關閉時可以設定之後幾點再打開（只開被它關掉的）。舊版的夜間排程會自動轉成一筆排程
 - **用電與電費**：有計量的插座用實際用電；沒有計量的填上瓦數就用「開著的時間 × 瓦數」估算。電費用台電累進電價（`plughub/tariff.py`），依家裡每月用電落在哪一級計算
 - **手機通知**（選用）：插座斷線超過 10 分鐘、功率過高 1 分鐘，用 [ntfy](https://ntfy.sh) 推播。手機裝 ntfy App、訂閱一個只有你知道的主題名稱，填到 App 的「設定 → 手機通知」
 - **加入主畫面**：iPhone 用 Safari 開 → 分享 →「加入主畫面」；Android 用 Chrome 開 → ⋮ →「加到主畫面」。之後就像一般 App 一樣全螢幕打開
@@ -86,8 +89,12 @@ Matterbridge 管理頁：插座 App「設定 → Google Home → Matterbridge �
 | PATCH | `/api/plugs/{id}` | `name`、`room`、`keep_on`、`night`、`watts` |
 | POST | `/api/off` | `{"room": "...", "standby_only": false}` 關閉並記住；`/api/restore` 復原 |
 | POST／PATCH／DELETE | `/api/rooms`、`/api/rooms/{id}` | 新增、改名、刪除房間 |
-| POST | `/api/order` | `{"plugs": [...], "rooms": [...]}` 順序 |
-| PUT | `/api/schedule`、`/api/settings` | 夜間排程、電價與門檻、ntfy 主題 |
+| POST | `/api/order` | `{"plugs": [...], "rooms": [...], "scenes": [...]}` 順序 |
+| POST／DELETE | `/api/plugs/{id}/timer` | `{"minutes": 10}` 打開、幾分鐘後自動關閉；DELETE 取消 |
+| POST／PUT／DELETE | `/api/scenes`、`/api/scenes/{id}` | 情境：`name`、`icon`、`actions`（插座 → `on`／`off`／`keep`）、`others` |
+| POST | `/api/scenes/{id}/run` | 執行情境，`/api/restore` 復原 |
+| POST／PUT／DELETE | `/api/schedules`、`/api/schedules/{id}` | 排程：`time`、`days`（0 = 星期一）、`action`（`on`／`off`／`scene`）、`plugs`、`scene`、`restore_at`、`enabled` |
+| PUT | `/api/settings` | 電價、提醒門檻（`long_on_hours` 等）、ntfy 主題 |
 | POST | `/api/discover` | 立刻重新找插座 |
 | PUT | `/api/matter` | Google Home 串接外掛回報配對狀態（只接受樹莓派本機） |
 | GET | `/api/matter/qr.svg` | 配對用的 QR code（配對好之後就沒有了） |
