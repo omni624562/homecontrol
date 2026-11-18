@@ -536,6 +536,20 @@ const STYLE = `
     .sheet.wide { width: min(640px, 100%); }
     .grab { display: none; }
   }
+  /* 電腦、橫放平板：編輯面板分左右兩欄，一頁看完 */
+  @media (min-width: 900px) {
+    .sheet.xwide { width: min(1040px, 100%); max-height: min(92vh, 960px); }
+    .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; align-items: start; }
+    .col > :first-child { margin-top: 8px; }
+    .grab { display: none; }
+    .xwide .wheel.r5 { --rows: 3; }
+    .xwide .chip:not(.day) { height: 32px; font-size: 13.5px; padding: 0 12px; }
+    .xwide .group-title { margin: 10px 2px 6px; }
+    .xwide .q { margin-top: 16px; }
+    .xwide .mini { height: 30px; }
+    .xwide .gi { min-height: 46px; padding-top: 8px; padding-bottom: 8px; }
+    .xwide .meta { margin-top: 10px; }
+  }
   @keyframes fade { from { opacity: 0; } }
   @keyframes up { from { transform: translateY(48px); opacity: .5; } }
   @keyframes pop { from { transform: translateY(8px) scale(.98); opacity: 0; } }
@@ -1296,9 +1310,11 @@ class PlugApp extends HTMLElement {
       ${this._sheetHead(deviceIcon(p.name), "插座內建排程", `${p.name}・用 Kasa App 設的，存在插座裡`)}
       <div class="group power"><div class="gi"><div class="gt"><div class="gl">啟用</div></div>
         <button class="sw ${d.enable ? "on" : ""}" data-a="kasa-enable" role="switch" aria-checked="${d.enable}" aria-label="啟用"></button></div></div>
+      <div class="cols"><div class="col">
       <div class="q">什麼時候 <small>插座的排程只到分鐘</small></div>
       ${this._timeModeHtml(d.mode, "kasa-mode")}
       ${d.mode === "clock" ? hmPicker("kasa_time", d.time) : this._offsetHtml(d.mode, d.offset, "kasa-offset")}
+      </div><div class="col">
       <div class="q">哪幾天 <small>${daysText(d.days)}</small></div>
       <div class="chips">${days}</div>
       <div class="q">要做什麼</div>
@@ -1306,6 +1322,7 @@ class PlugApp extends HTMLElement {
       <p class="note">改的是插座裡的設定，Kasa App 也會看到一樣的內容。插座自己執行，不需要樹莓派，但也<b>不會</b>遵守鎖定、常開這些防呆設定。</p>
       <div class="group" style="margin-top:14px"><div class="gi"><div class="gt"><div class="gl">改由家庭中控管理</div><div class="gs">轉成家庭中控的排程：可以設到秒、套用防呆和最長開啟時間，樹莓派離線時一樣由插座接手</div></div>
         <button class="btn sm" data-a="kasa-adopt" data-v="${esc(s.key)}" data-confirm="再按一次轉換">轉換</button></div></div>
+      </div></div>
       <div class="err"></div>
       <div class="actions"><button class="btn danger" data-a="kasa-delete" data-confirm="確定刪除？再按一次">刪除</button><button class="btn primary" data-a="kasa-save">儲存</button></div>`;
   }
@@ -1945,10 +1962,13 @@ class PlugApp extends HTMLElement {
       ${this._sheetHead("mdi:home-outline", "離家模式", "不在家時，讓燈隨機開關，看起來像有人在")}
       <div class="group power"><div class="gi"><div class="gt"><div class="gl">啟用離家模式</div><div class="gs">由插座自己執行，樹莓派離線也照跑</div></div>
         <button class="sw ${d.enabled ? "on" : ""}" data-a="away-toggle" role="switch" aria-checked="${d.enabled}" aria-label="啟用離家模式"></button></div></div>
+      <div class="cols"><div class="col">
       <div class="q">每天這段時間</div>
       <div class="range"><div><div class="rl">開始</div>${hmPicker("away_start", d.start)}</div><div><div class="rl">結束</div>${hmPicker("away_end", d.end)}</div></div>
+      </div><div class="col">
       <div class="q">要隨機開關的插座 <small>常開、鎖定、有最長開啟時間的不會出現</small></div>
       ${chips || `<p class="note">沒有可以用的插座。</p>`}
+      </div></div>
       <div class="err"></div>
       <div class="actions"><button class="btn" data-a="close">取消</button><button class="btn primary" data-a="away-save">儲存</button></div>`;
   }
@@ -2196,14 +2216,16 @@ class PlugApp extends HTMLElement {
     if (html === null || html === undefined) return this._closeSheet();
     const key = `${s.type}|${s.id}|${s.wide ? 1 : 0}`;
     const sheet = this._sheetHost.querySelector(".sheet");
+    const cls = `sheet ${html.includes('class="cols"') ? "wide xwide" : s.wide ? "wide" : ""}`;
     if (sheet && this._sheetKey === key) {
       // 同一個面板：只更新有變的地方
+      if (sheet.className !== cls) sheet.className = cls;
       morph(sheet, `<div class="grab"></div>${html}`);
       this._syncWheels();
       return;
     }
     this._sheetKey = key;
-    this._sheetHost.innerHTML = `<div class="wrap" data-backdrop><div class="sheet ${s.wide ? "wide" : ""}" role="dialog" aria-modal="true"><div class="grab"></div>${html}</div></div>`;
+    this._sheetHost.innerHTML = `<div class="wrap" data-backdrop><div class="${cls}" role="dialog" aria-modal="true"><div class="grab"></div>${html}</div></div>`;
     this._sheetHost.querySelector("[data-backdrop]").addEventListener("click", (e) => {
       if (e.target.matches("[data-backdrop]")) this._closeSheet();
     });
@@ -2249,6 +2271,7 @@ class PlugApp extends HTMLElement {
             : `<div class="group power"><div class="gi"><div class="gt"><div class="gl">電源</div></div><button class="sw ${on ? "on" : ""}" data-a="dev-power" role="switch" aria-checked="${on}" aria-label="電源"></button></div></div>`
       }
       ${callouts}
+      <div class="cols"><div class="col">
       ${timer}
       <div class="q">名稱</div>
       <div class="field"><input class="text" data-plug-name data-enter="plug-save" value="${esc(p.name)}" maxlength="30" aria-label="名稱"><button class="btn" data-a="plug-save">改名</button></div>
@@ -2267,7 +2290,8 @@ class PlugApp extends HTMLElement {
         </div>
         ${p.max_on_s ? this._maxOnEditor(s, p) : ""}
       </div>
-      ${p.max_on_s ? `<p class="note">不管從 App、Google Home、排程、情境或插座上的按鈕打開都算；「整間打開」不會打開它；關不掉時手機會收到緊急通知。插座本身也會倒數，樹莓派停掉照樣會關。</p>` : ""}
+      ${p.max_on_s ? `<p class="note">App、Google Home、排程、情境、插座按鈕打開都算；插座本身也會倒數，樹莓派停掉照樣會關。</p>` : ""}
+      </div><div class="col">
       <div class="q">防呆</div>
       <div class="protect">${PROTECT.map(([k, label, desc]) => `<button class="pr ${p.protect === k ? "sel" : ""}" data-a="protect" data-v="${k}" aria-pressed="${p.protect === k}"><b>${k === "lock" ? ic("mdi:lock") : ""}${label}</b><span>${desc}</span></button>`).join("")}</div>
       <div class="group" style="margin-top:10px">
@@ -2277,6 +2301,7 @@ class PlugApp extends HTMLElement {
         </div>
       </div>
       ${this._hardwareHtml(s, p)}
+      </div></div>
       <div class="err"></div>
       <p class="meta">${esc(p.model)}・${esc(p.host)}</p>`;
   }
@@ -2512,6 +2537,7 @@ class PlugApp extends HTMLElement {
           : "";
     return `
       ${this._sheetHead("mdi:calendar-clock", s.id ? "編輯排程" : "新增排程", "")}
+      <div class="cols"><div class="col">
       <div class="q">什麼時候</div>
       ${this._timeModeHtml(d.time_mode || "clock", "sched-mode")}
       ${(d.time_mode || "clock") === "clock" ? clockPicker("time", d.time) : this._offsetHtml(d.time_mode, d.offset_min || 0, "sched-offset")}
@@ -2522,12 +2548,14 @@ class PlugApp extends HTMLElement {
         <button class="chip" data-a="sched-days" data-v="week">平日</button>
         <button class="chip" data-a="sched-days" data-v="end">週末</button>
       </div>
+      ${this._backupHtml(s)}
+      </div><div class="col">
       <div class="q">要做什麼</div>
       <div class="seg full">${action}</div>
       ${restore}
       <div class="q">${d.action === "scene" ? "哪個情境" : d.action === "on" ? "打開哪些插座" : "關閉哪些插座"}</div>
       ${what}
-      ${this._backupHtml(s)}
+      </div></div>
       <div class="err"></div>
       <div class="actions">
         ${s.id ? `<button class="btn danger" data-a="sched-delete">刪除排程</button>` : `<button class="btn" data-a="close">取消</button>`}
