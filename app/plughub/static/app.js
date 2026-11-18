@@ -478,6 +478,71 @@ const STYLE = `
   .bar span { font-size: 10.5px; color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; height: 14px; }
   .chart.days { gap: 3px; }
   .chart.months .bar div { max-width: 22px; }
+  /* ═════════ 用電 dashboard ═════════ */
+  .dash { display: grid; gap: 16px; grid-template-columns: 1fr; }
+  .dash > .card { margin: 0; }
+  .kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .kpi { background: var(--card); border-radius: var(--r-lg); box-shadow: var(--shadow); padding: 14px 16px; min-width: 0; }
+  .kpi .kl { font-size: 12.5px; color: var(--muted); font-weight: 500; }
+  .kpi .kv { font-size: 28px; font-weight: 700; letter-spacing: -.6px; line-height: 1.2; margin-top: 4px; font-variant-numeric: tabular-nums; display: flex; align-items: center; gap: 2px; }
+  .kpi .kv small { font-size: 14px; font-weight: 500; color: var(--muted); letter-spacing: 0; }
+  .kpi .kv .i { width: 26px; height: 26px; }
+  .kpi .kv.up { color: var(--warn); } .kpi .kv.down { color: var(--ok); }
+  .kpi .ks { font-size: 12px; color: var(--muted); margin-top: 4px; line-height: 1.4; }
+  .readout-line { padding: 0 16px; font-size: 12.5px; color: var(--muted); min-height: 18px; font-variant-numeric: tabular-nums; }
+  .plot { position: relative; height: 150px; margin: 10px 16px 0; border-bottom: 1px solid var(--soft2); }
+  .plot .cols { display: flex; align-items: stretch; gap: 3px; height: 100%; }
+  .plot .slot { flex: 1; display: flex; align-items: flex-end; justify-content: center; min-width: 0; }
+  .plot .slot i { width: 100%; max-width: 24px; border-radius: 4px 4px 0 0; background: color-mix(in srgb, var(--on) 45%, transparent); }
+  .plot .slot.now i { background: var(--on); }
+  .plot .slot.hot i { background: var(--on-text); }
+  .avgline { position: absolute; left: 0; right: 0; border-top: 1px solid var(--muted); opacity: .6; pointer-events: none; }
+  .avgline span { position: absolute; right: 0; bottom: 2px; font-size: 11px; color: var(--text2); background: var(--card); padding: 0 4px; border-radius: 4px; }
+  .xl { display: flex; gap: 3px; margin: 5px 16px 16px; }
+  .xl span { flex: 1; text-align: center; font-size: 10.5px; color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 0; }
+  .hbars { padding: 0 16px 16px; display: grid; gap: 12px; }
+  .hb .hl { display: flex; justify-content: space-between; font-size: 14px; }
+  .hb .hl b { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .hb .ht { height: 8px; border-radius: 4px; background: var(--soft); margin-top: 6px; overflow: hidden; }
+  .hb .ht i { display: block; height: 100%; border-radius: 4px; background: var(--on); }
+  .hb .hs { font-size: 12px; color: var(--muted); margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .ins { display: flex; align-items: center; gap: 10px; padding: 10px 16px; font-size: 14px; line-height: 1.45; position: relative; }
+  .ins + .ins::before { content: ""; position: absolute; left: 52px; right: 0; top: 0; border-top: 1px solid var(--line); }
+  .ins.tap { cursor: pointer; } .ins.tap:hover { background: var(--hover); }
+  .ins > span:nth-child(2) { flex: 1; }
+  .ins > .i { color: var(--faint); width: 18px; height: 18px; }
+  .ii { width: 28px; height: 28px; border-radius: 8px; display: flex; align-items: center; justify-content: center; flex: none; background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--warn); }
+  .ii.unset { background: var(--accent-soft); color: var(--accent-text); }
+  .ii .i { width: 17px; height: 17px; }
+  .d-insights .desc { padding: 0 16px 16px; display: flex; gap: 6px; align-items: center; }
+  .d-insights .desc .i { color: var(--ok); width: 18px; height: 18px; }
+  .heat { display: grid; grid-template-columns: minmax(70px, 120px) repeat(30, 1fr); gap: 2px; padding: 8px 16px 16px; align-items: center; }
+  .heat > span { font-size: 10.5px; color: var(--faint); text-align: center; font-variant-numeric: tabular-nums; height: 14px; }
+  .heat .hname { font-size: 12.5px; color: var(--text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 8px; }
+  .heat > i { height: 18px; border-radius: 3px; background: var(--soft); }
+  .heat > i.on { background: color-mix(in srgb, var(--accent) calc(var(--a) * 100%), var(--soft)); }
+  .heat > i.hot { outline: 2px solid var(--text); outline-offset: 0; }
+  .legend { display: inline-flex; align-items: center; gap: 3px; font-size: 11.5px; color: var(--muted); }
+  .legend i { width: 14px; height: 10px; border-radius: 2px; background: color-mix(in srgb, var(--accent) calc(var(--a) * 100%), var(--soft)); }
+  .dl { font-size: 12px; font-weight: 600; margin-left: 6px; color: var(--muted); }
+  .dl.up { color: var(--warn); } .dl.down { color: var(--ok); }
+  /* 趨勢卡：圖會長高，和旁邊的卡底部切齊 */
+  .d-trend { display: flex; flex-direction: column; }
+  .d-trend .plot { flex: 1 1 150px; height: 150px; }
+  @media (min-width: 720px) {
+    .kpis { grid-template-columns: repeat(4, 1fr); }
+    .dash { grid-template-columns: 1fr 1fr; align-items: start; }
+    .dash > .kpis, .dash > .d-trend, .dash > .d-heat, .dash > .d-rank, .dash > .d-tariff { grid-column: span 2; }
+    .dash > .d-rooms, .dash > .d-insights { align-self: stretch; }
+  }
+  @media (min-width: 1100px) {
+    .dash { grid-template-columns: repeat(12, 1fr); }
+    .dash > .kpis, .dash > .d-heat, .dash > .d-insights { grid-column: span 12; }
+    .dash > .d-trend { grid-column: span 8; align-self: stretch; }
+    .dash > .d-rooms { grid-column: span 4; }
+    .dash > .d-rank { grid-column: span 7; }
+    .dash > .d-tariff { grid-column: span 5; }
+  }
   .hero { display: flex; align-items: flex-end; gap: 16px; padding: 18px 16px 16px; flex-wrap: wrap; }
   .hero .l { font-size: 13px; color: var(--muted); font-weight: 500; }
   .hero .big { font-size: 40px; font-weight: 700; letter-spacing: -1px; line-height: 1.1; font-variant-numeric: tabular-nums; }
@@ -754,6 +819,23 @@ class PlugApp extends HTMLElement {
     root.addEventListener("keydown", (e) => this._onKey(e));
     // 滾輪停下來時讀取中間那一格（scroll 事件不會冒泡，用 capture 接）
     root.addEventListener("scroll", (e) => e.target.classList?.contains("wcol") && this._wheelScroll(e.target), true);
+    // 圖表：滑過長條／格子時，上方那一行顯示讀數；離開圖表就回到預設文字
+    root.addEventListener("pointerover", (e) => {
+      const viz = e.target.closest?.(".viz");
+      if (!viz) return;
+      const line = viz.querySelector(".readout-line");
+      const t = e.target.closest("[data-tip]");
+      if (line) line.textContent = t ? t.dataset.tip : line.dataset.default;
+      viz.querySelectorAll(".hot").forEach((x) => x !== t && x.classList.remove("hot"));
+      t?.classList.add("hot");
+    });
+    root.addEventListener("pointerout", (e) => {
+      const viz = e.target.closest?.(".viz");
+      if (!viz || viz.contains(e.relatedTarget)) return;
+      const line = viz.querySelector(".readout-line");
+      if (line) line.textContent = line.dataset.default;
+      viz.querySelectorAll(".hot").forEach((x) => x.classList.remove("hot"));
+    });
     root.addEventListener("pointerdown", (e) => {
       const grip = e.target.closest?.("[data-drag]");
       if (grip) this._dragStart(e, grip);
@@ -1485,34 +1567,135 @@ class PlugApp extends HTMLElement {
       });
   }
 
+  // 用電 dashboard：KPI、趨勢、依房間、值得注意、每天開機熱力圖、裝置排行、電費設定
   _energyPage() {
     this._loadEnergy();
     const e = this._energy;
     const head = `<div class="ph"><div><h1>用電</h1><div class="sub">${
-      e ? `插座記錄的開機時間 × 瓦數・台電累進電價 ${fmt(e.price, 2)} 元/度（${esc(e.season)}）` : "讀取插座記錄的使用時間…"
+      e ? `估算：插座記錄的開機時間 × 瓦數・台電累進電價 ${fmt(e.price, 2)} 元/度（${esc(e.season)}）` : "讀取插座記錄的使用時間…"
     }</div></div></div>`;
     if (!e) return `${head}<div class="card"><div class="empty">${this._energyErr ? "讀不到插座的使用時間，稍後再試。" : "讀取中…"}</div></div>`;
-    const range = this._energyRange || "days";
-    const series = range === "days" ? e.days : e.months;
     const useKwh = e.plugs.some((p) => p.watts);
+    const money = (v) => `$${fmt(v)}`;
+
+    // ── KPI ──
+    const delta = e.same_period.kwh ? (e.month.kwh - e.same_period.kwh) / e.same_period.kwh : null;
+    const deltaTile =
+      delta == null
+        ? `<div class="kv">—</div><div class="ks">沒有上個月的資料</div>`
+        : `<div class="kv ${delta > 0.02 ? "up" : delta < -0.02 ? "down" : ""}">${ic(delta > 0.02 ? "mdi:chevron-up" : delta < -0.02 ? "mdi:chevron-down" : "mdi:minus")}${fmt(Math.abs(delta) * 100)}%</div>
+           <div class="ks">${delta > 0.02 ? "比上月同期多" : delta < -0.02 ? "比上月同期少" : "和上月同期差不多"}・上月同期 ${money(e.same_period.cost)}</div>`;
+    const kpis = `
+      <div class="kpis">
+        <div class="kpi"><div class="kl">本月至今</div><div class="kv">${money(e.month.cost)}</div><div class="ks">${fmt(e.month.kwh, 1)} 度・${e.day_of_month} 天</div></div>
+        <div class="kpi"><div class="kl">預估本月</div><div class="kv">${money(e.projected.cost)}</div><div class="ks">${fmt(e.projected.kwh, 0)} 度・照目前每天的平均推算</div></div>
+        <div class="kpi"><div class="kl">比上月同期</div>${deltaTile}</div>
+        <div class="kpi"><div class="kl">今天</div><div class="kv">${fmt(e.today.kwh, 1)}<small> 度</small></div><div class="ks">約 ${money(e.today.kwh * e.price)}・到現在為止</div></div>
+      </div>`;
+
+    // ── 趨勢（單一數列：不需要圖例；平均線；滑過顯示讀數）──
+    const range = this._energyRange || "days";
+    const series = range === "days" ? e.days.slice(0, -1).concat(e.days.slice(-1)) : e.months;
     const val = (x) => (useKwh ? x.kwh : x.hours);
     const max = Math.max(0.001, ...series.map(val));
-    const bars = series
+    const full = range === "days" ? series.slice(0, -1) : series.slice(0, -1); // 平均不算還沒過完的今天／本月
+    const avg = full.length ? full.reduce((a, x) => a + val(x), 0) / full.length : 0;
+    const unit = useKwh ? "度" : "小時";
+    const tip = (x, last) => {
+      const when = range === "days" ? `${Number(x.day.slice(5, 7))}/${Number(x.day.slice(8))}${last ? "（今天，還沒過完）" : ""}` : `${x.month.slice(0, 4)} 年 ${Number(x.month.slice(5))} 月${last ? "（本月至今）" : ""}`;
+      return `${when}：${useKwh ? `${fmt(x.kwh, 1)} 度・約 $${fmt(x.cost != null ? x.cost : x.kwh * e.price)}・` : ""}開了 ${fmt(x.hours, 0)} 小時`;
+    };
+    // 每一欄：整欄都是滑過的範圍（比長條大），長條本身最寬 24px、頂端圓角
+    const slots = series
       .map((x, i) => {
         const last = i === series.length - 1;
-        const label = range === "days" ? (last ? "今" : Number(x.day.slice(8))) : `${Number(x.month.slice(5))}月`;
-        const show = range === "months" || last || i % 5 === 4;
-        const tip = range === "days" ? x.day : x.month;
-        return `<div class="bar ${last ? "today" : ""}" title="${tip}：${useKwh ? `${fmt(x.kwh, 1)} 度，` : ""}開了 ${fmt(x.hours, 0)} 小時${x.cost != null ? `・約 $${fmt(x.cost)}` : ""}"><div style="height:${(val(x) / max) * 100}%"></div><span>${show ? label : ""}</span></div>`;
+        return `<div class="slot ${last ? "now" : ""}" data-tip="${esc(tip(x, last))}"><i style="height:${Math.max(val(x) > 0 ? 1.5 : 0, (val(x) / max) * 100)}%"></i></div>`;
       })
       .join("");
-    const known = e.plugs.filter((p) => p.known);
+    const xlabels = series
+      .map((x, i) => {
+        const last = i === series.length - 1;
+        const show = range === "months" || last || i % 5 === 4;
+        return `<span>${show ? (range === "days" ? (last ? "今" : Number(x.day.slice(8))) : `${Number(x.month.slice(5))}月`) : ""}</span>`;
+      })
+      .join("");
+    const avgPct = (avg / max) * 100;
+    const trendDefault = `平均每${range === "days" ? "天" : "月"} ${fmt(avg, 1)} ${unit}・滑過長條看每${range === "days" ? "天" : "月"}`;
+    const trend = `
+      <section class="card d-trend viz">
+        <div class="ch"><div class="n">${useKwh ? "用電" : "開機時數"}（${unit}）</div>
+          <div class="end"><div class="seg">${[["days", "近 30 天"], ["months", "近 12 個月"]]
+            .map(([k, l]) => `<button class="${range === k ? "sel" : ""}" data-a="energy-range" data-v="${k}">${l}</button>`)
+            .join("")}</div></div></div>
+        <div class="readout-line" data-default="${esc(trendDefault)}">${esc(trendDefault)}</div>
+        <div class="plot"><div class="cols">${slots}</div><div class="avgline" style="bottom:${avgPct}%"><span>平均 ${fmt(avg, 1)}</span></div></div>
+        <div class="xl">${xlabels}</div>
+      </section>`;
+
+    // ── 依房間（排序的橫條，單一色）──
+    const rmax = Math.max(0.001, ...e.rooms.map((r) => r.kwh));
+    const rtotal = e.rooms.reduce((a, r) => a + r.kwh, 0) || 1;
+    const rooms = `
+      <section class="card d-rooms">
+        <div class="ch"><div class="n">本月依房間</div></div>
+        <div class="hbars">${e.rooms
+          .map(
+            (r) => `<div class="hb"><div class="hl"><span>${esc(r.name)}</span><b>${fmt(r.kwh, 1)} 度</b></div>
+              <div class="ht"><i style="width:${Math.max(1, (r.kwh / rmax) * 100)}%"></i></div>
+              <div class="hs">${fmt((r.kwh / rtotal) * 100)}%・約 ${money(r.kwh * e.price)}</div></div>`,
+          )
+          .join("")}</div>
+      </section>`;
+
+    // ── 值得注意 ──
+    const iconFor = { always: "mdi:clock-outline", rise: "mdi:chevron-up", unset: "mdi:flash" };
+    const insights = `
+      <section class="card d-insights">
+        <div class="ch"><div class="n">值得注意</div></div>
+        ${
+          e.insights.length
+            ? e.insights
+                .map(
+                  (x) => `<div class="ins ${x.plug ? "tap" : ""}" ${x.plug ? `data-a="dev" data-v="${esc(x.plug)}" role="button" tabindex="0"` : ""}>
+                    <span class="ii ${x.kind}">${ic(iconFor[x.kind] || "mdi:alert-circle-outline")}</span><span>${esc(x.text)}</span>${x.plug ? ic("mdi:chevron-right") : ""}</div>`,
+                )
+                .join("")
+            : `<p class="desc">${ic("mdi:check-circle")} 沒有特別的狀況：沒有整天開著或最近突然開很久的裝置。</p>`
+        }
+      </section>`;
+
+    // ── 每天開機熱力圖（裝置 × 30 天，單一色系由淺到深）──
+    const known = e.plugs.filter((p) => p.known).sort((a, b) => (b.month_min || 0) - (a.month_min || 0));
+    const dayHead = e.days.map((d, i) => `<span>${i === e.days.length - 1 ? "今" : i % 5 === 4 ? Number(d.day.slice(8)) : ""}</span>`).join("");
+    const heatRows = known
+      .map(
+        (p) => `<div class="hname" title="${esc(p.name)}">${esc(p.name)}</div>${p.days
+          .map((m, i) => {
+            const d = e.days[i].day;
+            const h = m / 60;
+            const lvl = m <= 0 ? "" : `style="--a:${Math.max(0.12, Math.min(1, h / 24)).toFixed(2)}"`;
+            return `<i class="${m > 0 ? "on" : ""}" ${lvl} data-tip="${esc(`${p.name}・${Number(d.slice(5, 7))}/${Number(d.slice(8))}：開了 ${fmtMin(m)}`)}"></i>`;
+          })
+          .join("")}`,
+      )
+      .join("");
+    const heatDefault = "每一格是一天，顏色越深開越久・滑過看時數";
+    const heat = `
+      <section class="card d-heat viz">
+        <div class="ch"><div class="n">每天開機時數</div><div class="end"><span class="legend">0${'<i style="--a:.15"></i><i style="--a:.4"></i><i style="--a:.7"></i><i style="--a:1"></i>'}24 小時</span></div></div>
+        <div class="readout-line" data-default="${heatDefault}">${heatDefault}</div>
+        <div class="heat"><div class="hname"></div>${dayHead}${heatRows}</div>
+      </section>`;
+
+    // ── 裝置排行（本月、比上月同期）──
     const totalKwh = known.reduce((a, p) => a + (p.month_kwh || 0), 0) || 1;
     const totalMin = known.reduce((a, p) => a + (p.month_min || 0), 0) || 1;
     const rows = [...e.plugs]
       .sort((a, b) => (b.month_kwh || 0) - (a.month_kwh || 0) || (b.month_min || 0) - (a.month_min || 0))
       .map((p) => {
         const share = p.watts ? (p.month_kwh || 0) / totalKwh : (p.month_min || 0) / totalMin;
+        const ch = p.known && p.same_min > 30 ? (p.month_min - p.same_min) / p.same_min : null;
+        const chTxt = ch == null ? "" : Math.abs(ch) < 0.05 ? `<span class="dl">持平</span>` : `<span class="dl ${ch > 0 ? "up" : "down"}">${ch > 0 ? "▲" : "▼"} ${fmt(Math.abs(ch) * 100)}%</span>`;
         const right = !p.known
           ? `<span class="muted">讀不到</span>`
           : p.watts
@@ -1522,43 +1705,25 @@ class PlugApp extends HTMLElement {
           <div class="row tap erow" data-a="dev" data-v="${esc(p.id)}" role="button" tabindex="0">
             <div class="di">${ic(deviceIcon(p.name))}</div>
             <div class="nm"><div class="a"><span>${esc(p.name)}</span></div>
-              <div class="b">${p.known ? `開了 ${fmtMin(p.month_min)}` : ""}${p.watts ? `・${fmt(p.watts)} W` : ""}</div>
+              <div class="b">${p.known ? `開了 ${fmtMin(p.month_min)}` : ""}${p.watts ? `・${fmt(p.watts)} W` : ""} ${chTxt}</div>
               <div class="share"><i style="width:${Math.max(1, share * 100)}%"></i></div></div>
             <div class="ev">${right}</div>
           </div>`;
       })
       .join("");
-    const hasLast = !!e.last_month.kwh;
-    return `
-      ${head}
-      <div class="grid">
-        <section class="card">
-          <div class="hero">
-            <div><div class="l">本月約</div><div class="big">$${fmt(e.month.cost)}</div><div class="s">${fmt(e.month.kwh, 1)} 度</div></div>
-            <div class="hside">
-              <div><span>今天</span><b>${fmt(e.today.kwh, 1)} 度</b></div>
-              <div><span>上個月</span><b>${hasLast ? `${fmt(e.last_month.kwh, 0)} 度` : "—"}</b></div>
-              <div><span>上月電費</span><b>${hasLast ? `$${fmt(e.last_month.cost)}` : "—"}</b></div>
-            </div>
-          </div>
-          ${e.unset ? `<div class="hint" style="margin:0 16px 14px">有 ${e.unset} 個裝置沒設定瓦數，沒算進電費。點下面的裝置設定「接的電器」。</div>` : ""}
-          <div class="ch" style="padding-top:4px"><div class="n" style="font-size:15px">${useKwh ? "用電（度）" : "開機時數"}</div>
-            <div class="end"><div class="seg">${[["days", "近 30 天"], ["months", "近 12 個月"]]
-              .map(([k, l]) => `<button class="${range === k ? "sel" : ""}" data-a="energy-range" data-v="${k}">${l}</button>`)
-              .join("")}</div></div></div>
-          <div class="chart ${range}">${bars}</div>
-          <p class="desc">估算：開著的時間 × 設定的瓦數。時間是插座自己記錄的，樹莓派停機時也有記錄；實際用電會依電器狀態而不同。</p>
-        </section>
-        <section class="card">
-          <div class="ch"><div class="ri" style="background:var(--on-soft);color:var(--on-text)">${ic("mdi:chart-bar")}</div><div class="n">本月各裝置</div><div class="c">點一下可以改瓦數</div></div>
-          ${rows}
-        </section>
-        <section class="card">
-          <div class="ch"><div class="ri">${ic("mdi:cash")}</div><div class="n">電費</div></div>
-          ${this._numberRow("household_monthly_kwh", "家裡每月用電", "電費單上的度數（兩個月一期的話除以 2），用來決定電價級距", "度", 10)}
-          <div class="set"><div class="tx"><div class="l">目前電價</div><div class="s">依每月用電和季節自動算出（夏月 6～9 月較貴）</div></div><div class="readout">${fmt(e.price, 2)} 元/度<small>${esc(e.season)}</small></div></div>
-        </section>
-      </div>`;
+    const rank = `
+      <section class="card d-rank">
+        <div class="ch"><div class="n">本月各裝置</div><div class="c">比上月同期・點一下可以改瓦數</div></div>
+        ${rows}
+      </section>`;
+    const tariffCard = `
+      <section class="card d-tariff">
+        <div class="ch"><div class="n">電費設定</div></div>
+        ${this._numberRow("household_monthly_kwh", "家裡每月用電", "電費單上的度數（兩個月一期的話除以 2），用來決定電價級距", "度", 10)}
+        <div class="set"><div class="tx"><div class="l">目前電價</div><div class="s">依每月用電和季節自動算出（夏月 6～9 月較貴）</div></div><div class="readout">${fmt(e.price, 2)} 元/度<small>${esc(e.season)}</small></div></div>
+        <p class="desc">所有金額都是估算：開著的時間 × 設定的瓦數。時間是插座自己記錄的（樹莓派停機時也有記錄），實際用電會依電器狀態而不同。</p>
+      </section>`;
+    return `${head}<div class="dash">${kpis}${trend}${rooms}${insights}${heat}${rank}${tariffCard}</div>`;
   }
 
   _numberRow(key, label, desc, unit, step) {

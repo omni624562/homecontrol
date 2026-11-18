@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import asyncio
+import calendar
 import logging
 import time
 from dataclasses import dataclass, field
@@ -541,9 +542,13 @@ class Hub:
                 _LOGGER.debug("讀 %s 使用時間失敗：%s", self.name(plug), err)
 
     def energy_report(self) -> dict[str, Any]:
-        """用電：插座自己記錄的開機時間 × 瓦數。"""
+        """用電 dashboard：插座自己記錄的開機時間 × 瓦數（估算）。
+
+        本月至今、月底預估、上個月同期、今天；近 30 天、近 12 個月；依房間；各裝置（含每天時數）；值得注意的事。
+        """
         today = date.today()
         household = self.store.data["settings"]["household_monthly_kwh"]
+        price = tariff.price(household, today)
         days = [(today - timedelta(days=29 - i)).isoformat() for i in range(30)]
         months: list[str] = []
         y, m = today.year, today.month
@@ -551,14 +556,24 @@ class Hub:
             months.insert(0, f"{y:04d}-{m:02d}")
             y, m = (y - 1, 12) if m == 1 else (y, m - 1)
         this_month, last_month = months[-1], months[-2]
+        month_days = calendar.monthrange(today.year, today.month)[1]
+        # 上個月同期：插座的每日紀錄只留大約 30 天，所以用上個月整月 × 天數比例
+        lm_year, lm_month = int(last_month[:4]), int(last_month[5:])
+        lm_len = calendar.monthrange(lm_year, lm_month)[1]
+        same_ratio = min(today.day, lm_len) / lm_len
+        mtd_days = [f"{today.year:04d}-{today.month:02d}-{d:02d}" for d in range(1, today.day + 1)]
+
         tot_days = {d: {"kwh": 0.0, "hours": 0.0} for d in days}
         tot_months = {mm: {"kwh": 0.0, "hours": 0.0, "cost": 0.0} for mm in months}
+        rooms: dict[str, float] = {}
         plugs = []
+        mtd_kwh = same_kwh = 0.0
         for plug in self.ordered():
             meta = self.store.meta(plug.id)
             use = self._usage.get(plug.id)
             watts = meta.watts
             kw = (watts or 0) / 1000
+            room = self.store.room(meta.room)
             if use is None:
                 plugs.append({"id": plug.id, "name": self.name(plug), "watts": watts, "known": False})
                 continue
@@ -572,28 +587,67 @@ class Hub:
                 tot_months[mm]["hours"] += minutes / 60
                 tot_months[mm]["kwh"] += kwh
                 tot_months[mm]["cost"] += kwh * tariff.price(household, date(int(mm[:4]), int(mm[5:]), 1))
-            month_min = use["months"].get(this_month, 0)
+            month_min = sum(use["days"].get(d, 0) for d in mtd_days) or use["months"].get(this_month, 0)
+            same_min = use["months"].get(last_month, 0) * same_ratio
             month_kwh = month_min / 60 * kw
+            mtd_kwh += month_kwh
+            same_kwh += same_min / 60 * kw
+            name = room["name"] if room else "還沒分房間"
+            rooms[name] = rooms.get(name, 0.0) + month_kwh
+            # 最近 7 個「完整的」天（不算今天）和再之前 21 天
+            last7 = [use["days"].get(d, 0) for d in days[-8:-1]]
+            prev21 = [use["days"].get(d, 0) for d in days[-29:-8]]
             plugs.append({
                 "id": plug.id, "name": self.name(plug), "watts": watts, "known": True,
+                "room": name,
                 "today_min": use["days"].get(today.isoformat(), 0),
                 "month_min": month_min,
-                "last_month_min": use["months"].get(last_month, 0),
+                "same_min": round(same_min),
                 "month_kwh": round(month_kwh, 3),
-                "month_cost": round(month_kwh * tariff.price(household, today), 1),
+                "month_cost": round(month_kwh * price, 1),
+                "avg7_h": round(sum(last7) / 7 / 60, 1),
+                "avg21_h": round(sum(prev21) / max(1, len(prev21)) / 60, 1),
                 "days": [use["days"].get(d, 0) for d in days],
             })
-        price = tariff.price(household, today)
+
+        # 值得注意的事（依每月影響的金額排序，最多 4 則）
+        insights = []
+        for pl in plugs:
+            if not pl.get("known"):
+                continue
+            monthly_cost = pl["avg7_h"] * 30 * (pl["watts"] or 0) / 1000 * price
+            if pl["avg7_h"] >= 20:
+                insights.append({"kind": "always", "plug": pl["id"], "weight": monthly_cost,
+                                 "text": f"{pl['name']} 幾乎整天開著" + (f"，每月約 ${monthly_cost:.0f}" if pl["watts"] else "")})
+            elif pl["avg7_h"] >= 2 and pl["avg7_h"] >= pl["avg21_h"] * 1.5 + 1:
+                more = (pl["avg7_h"] - pl["avg21_h"]) / max(pl["avg21_h"], 0.1) * 100
+                insights.append({"kind": "rise", "plug": pl["id"], "weight": monthly_cost,
+                                 "text": f"{pl['name']} 最近 7 天平均每天開 {pl['avg7_h']:g} 小時，"
+                                         + (f"比之前多 {more:.0f}%" if pl["avg21_h"] >= 0.5 else "之前幾乎沒開")})
+        insights.sort(key=lambda x: -x["weight"])
+        insights = insights[:4]
+        unset = [pl["name"] for pl in plugs if not pl["watts"]]
+        if unset:
+            insights.append({"kind": "unset", "plug": None, "weight": 0,
+                             "text": f"{len(unset)} 個裝置沒設瓦數，沒算進電費：{'、'.join(unset[:3])}{'…' if len(unset) > 3 else ''}"})
+
+        projected = mtd_kwh / max(today.day, 1) * month_days
         return {
             "price": price,
             "season": "夏月" if tariff.is_summer(today) else "非夏月",
+            "day_of_month": today.day,
+            "month_days": month_days,
             "today": {"kwh": round(tot_days[days[-1]]["kwh"], 3), "hours": round(tot_days[days[-1]]["hours"], 1)},
-            "month": {k: round(v, 2) for k, v in tot_months[this_month].items()},
+            "month": {"kwh": round(mtd_kwh, 2), "cost": round(mtd_kwh * price, 1)},
+            "projected": {"kwh": round(projected, 1), "cost": round(projected * price, 0)},
+            "same_period": {"kwh": round(same_kwh, 2), "cost": round(same_kwh * tariff.price(household, date(lm_year, lm_month, 1)), 1)},
             "last_month": {k: round(v, 2) for k, v in tot_months[last_month].items()},
             "days": [{"day": d, **{k: round(v, 3) for k, v in tot_days[d].items()}} for d in days],
             "months": [{"month": mm, **{k: round(v, 2) for k, v in tot_months[mm].items()}} for mm in months],
+            "rooms": sorted(({"name": k, "kwh": round(v, 2)} for k, v in rooms.items()), key=lambda r: -r["kwh"]),
             "plugs": plugs,
-            "unset": sum(1 for p in plugs if not p["watts"]),
+            "insights": insights,
+            "unset": len(unset),
             "updated": self._usage_at,
         }
 
