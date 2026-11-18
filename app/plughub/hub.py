@@ -17,7 +17,7 @@ from typing import Any, Callable
 
 from kasa import Device, Discover, Module
 
-from . import tariff
+from . import native, tariff
 from .notify import Notifier
 from .store import Store
 
@@ -63,6 +63,10 @@ class Plug:
     offline_since: float | None = None
     overload_since: float | None = None
     last_tick: float | None = None
+    # 插座本身的資訊（整台插座共用；排插的每個孔都一樣）
+    led: bool | None = None
+    rssi: int | None = None
+    cloud: bool | None = None
 
 
 @dataclass
@@ -70,6 +74,10 @@ class DeviceEntry:
     device: Device
     plugs: list[str] = field(default_factory=list)
     failures: int = 0
+
+
+class Locked(Exception):
+    """插座鎖定了，不能開關。"""
 
 
 class Hub:
@@ -89,6 +97,12 @@ class Hub:
         self._timers_busy = False
         self._failsafe: dict[str, float] = {}  # 插座 ID → 已經寫進插座的關閉時間（0 = 已清除）
         self._failsafe_retry: dict[str, float] = {}
+        # 插座內建排程／離家模式的同步狀態
+        self.native: dict[str, dict[str, Any]] = {}  # 插座 ID → {"ok", "msg", "schedule", "away", "at"}
+        self._native_dirty = True
+        self._native_last = 0.0
+        self._native_rules: dict[str, list[dict[str, Any]]] = {}  # 插座 ID → 寫進插座的排程規則（含 ID）
+        self._lease_busy = False
         self._timer_failed: set[str] = set()  # 定時關閉失敗、已經通知過的插座
         self._offline_notified: set[str] = set()
         self._overload_notified: set[str] = set()
@@ -105,6 +119,7 @@ class Hub:
             asyncio.create_task(self._loop(self.discover, DISCOVER_SECONDS)),
             asyncio.create_task(self._loop(self.poll, POLL_SECONDS)),
             asyncio.create_task(self._schedule_loop()),
+            asyncio.create_task(self._loop(self._native_tick, 5)),
         ]
 
     async def stop(self) -> None:
@@ -248,6 +263,14 @@ class Hub:
             plug.kasa_name = source.alias or plug.kasa_name
             plug.online = True
             plug.offline_since = None
+            try:
+                led = device.modules.get("Led")
+                plug.led = bool(led.led) if led is not None else None
+                feats = device.features
+                plug.rssi = int(feats["rssi"].value) if "rssi" in feats else None
+                plug.cloud = bool(feats["cloud_connection"].value) if "cloud_connection" in feats else None
+            except Exception:  # noqa: BLE001
+                pass
             energy = source.modules.get(Module.Energy)
             if energy is not None:
                 plug.power = _float(getattr(energy, "current_consumption", None))
@@ -323,7 +346,10 @@ class Hub:
 
     # ---- 控制 ----
 
-    async def set_power(self, plug_id: str, on: bool) -> None:
+    async def set_power(self, plug_id: str, on: bool, force: bool = False) -> None:
+        """開關插座。鎖定的插座要 force 才能動（只有使用者在裝置詳細裡明確操作、或定時到了）。"""
+        if not force and self.store.meta(plug_id).protect == "lock":
+            raise Locked(self.name(self.plugs[plug_id]))
         plug = self.plugs[plug_id]
         entry = self.devices[plug.device_key]
         target = entry.device.children[plug.child_index] if plug.child_index is not None else entry.device
@@ -433,8 +459,8 @@ class Hub:
         now = time.time()
         timers = self.store.data["timers"]
         for pid, plug in self.plugs.items():
-            guarded = bool(self.store.meta(pid).max_on_s)
-            want = timers.get(pid, 0.0) if (guarded and plug.is_on and plug.online) else 0.0
+            # 有定時（包括最長開啟時間）的都寫進插座：樹莓派停掉也會關
+            want = timers.get(pid, 0.0) if (plug.is_on and plug.online) else 0.0
             have = self._failsafe.get(pid)
             if have is None and not want:
                 continue  # 從來沒寫過，也不需要
@@ -470,6 +496,116 @@ class Hub:
             self._failsafe.pop(plug_id, None)
             self._failsafe_retry[plug_id] = time.time() + FAILSAFE_RETRY
 
+    # ---- 插座本身的功能：內建排程、離家模式、指示燈、使用時間、重新啟動、雲端 ----
+
+    def mark_native(self) -> None:
+        """排程、情境、插座設定、離家模式變了：下一輪把規則重新寫進插座。"""
+        self._native_dirty = True
+
+    async def _native_tick(self) -> None:
+        # 有變動就同步；沒變動也每 30 分鐘核對一次（插座重開、被 Kasa App 改過）
+        if self._native_dirty or time.time() - self._native_last >= 1800:
+            self._native_dirty = False
+            self._native_last = time.time()
+            await self.native_sync()
+        await self._lease()
+
+    async def _lease(self) -> None:
+        """樹莓派在線：快到時間的「打開」規則先停用，過了再啟用（插座只在樹莓派離線時才動作）。"""
+        if self._lease_busy:
+            return
+        self._lease_busy = True
+        try:
+            now = datetime.now()
+            for pid, rules in self._native_rules.items():
+                plug = self.plugs.get(pid)
+                if not plug or not plug.online:
+                    continue
+                for rule in rules:
+                    want = native.lease_enabled(rule, now)
+                    if bool(rule.get("enable")) == want:
+                        continue
+                    dev, ctx = self._target(pid)
+                    try:
+                        await native.set_rule_enabled(dev, ctx, rule, want)
+                        _LOGGER.info("%s 插座的排程規則 %02d:%02d %s", self.name(plug), rule["smin"] // 60, rule["smin"] % 60,
+                                     "恢復啟用" if want else "暫停（由樹莓派執行）")
+                    except Exception as err:  # noqa: BLE001
+                        _LOGGER.warning("%s 調整插座規則失敗：%s", self.name(plug), err)
+        finally:
+            self._lease_busy = False
+
+    async def native_sync(self) -> None:
+        for key, entry in list(self.devices.items()):
+            dev = entry.device
+            if not native.supported(dev) or not entry.plugs:
+                continue
+            pids = [pid for pid in entry.plugs if self.plugs[pid].online]
+            if not pids:
+                continue
+            try:
+                skew = await native.clock_skew(dev)
+            except Exception as err:  # noqa: BLE001
+                for pid in pids:
+                    self.native[pid] = {"ok": False, "msg": f"讀不到插座時鐘：{err}", "at": time.time()}
+                self._native_dirty = True
+                continue
+            clock_ok = skew <= native.CLOCK_TOLERANCE
+            for pid in pids:
+                plug = self.plugs[pid]
+                ctx = native.context(dev, plug.child_index)
+                rules = native.schedule_rules(self.store, pid) if clock_ok else []
+                away = native.away_rule(self.store, pid) if clock_ok else None
+                try:
+                    known = self.store.data.setdefault("native_rules", {}).get(pid, {})
+                    done = await native.sync_rules(dev, ctx, rules, away, known)
+                    self._native_rules[pid] = done.pop("rules")
+                    self.store.data["native_rules"][pid] = done.pop("known")
+                    self._dirty = True
+                    msg = "" if clock_ok else f"插座時鐘差了 {int(skew)} 秒，先不寫排程"
+                    self.native[pid] = {"ok": clock_ok, "msg": msg, **done, "at": time.time()}
+                except Exception as err:  # noqa: BLE001
+                    _LOGGER.warning("%s 同步插座規則失敗：%s", self.name(plug), err)
+                    self.native[pid] = {"ok": False, "msg": str(err), "at": time.time()}
+                    self._native_dirty = True  # 下一輪再試
+        self.store.save()  # 寫進插座的規則記錄要馬上存（辨認自己的規則靠它）
+        self._dirty = False
+        await self.changed()
+
+    def _target(self, plug_id: str) -> tuple[Any, dict[str, Any]]:
+        plug = self.plugs[plug_id]
+        dev = self.devices[plug.device_key].device
+        return dev, native.context(dev, plug.child_index)
+
+    async def set_led(self, plug_id: str, on: bool) -> None:
+        dev, _ = self._target(plug_id)
+        await asyncio.wait_for(dev.modules["Led"].set_led(on), DEVICE_TIMEOUT)
+        for pid in self.devices[self.plugs[plug_id].device_key].plugs:  # 整台插座共用一個燈
+            self.plugs[pid].led = on
+        await self.changed()
+
+    async def reboot(self, plug_id: str) -> None:
+        dev, _ = self._target(plug_id)
+        await asyncio.wait_for(dev.reboot(), DEVICE_TIMEOUT)
+        self.mark_native()
+
+    async def usage(self, plug_id: str) -> dict[str, Any]:
+        dev, ctx = self._target(plug_id)
+        return await native.usage(dev, ctx)
+
+    async def cloud_unbind_all(self) -> dict[str, int]:
+        ok = failed = 0
+        for entry in self.devices.values():
+            if not native.supported(entry.device):
+                continue
+            try:
+                await native.cloud_unbind(entry.device)
+                ok += 1
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning("斷開雲端失敗：%s", err)
+                failed += 1
+        return {"ok": ok, "failed": failed}
+
     async def _run_timers_once(self) -> None:
         self._timers_busy = True
         try:
@@ -489,7 +625,7 @@ class Hub:
             plug = self.plugs[pid]
             guarded = bool(self.store.meta(pid).max_on_s)
             try:
-                await self.set_power(pid, False)
+                await self.set_power(pid, False, force=True)
             except Exception:  # noqa: BLE001
                 if pid not in self._timer_failed:
                     self._timer_failed.add(pid)
@@ -693,11 +829,17 @@ class Hub:
                 "watts": meta.watts,
                 "mode": self.mode(plug),
                 "keep_on": meta.keep_on,
+                "protect": meta.protect,
+                "matter": meta.matter,
                 "max_on_s": meta.max_on_s,
                 "night": meta.night,
                 "standby": self.is_standby(plug),
                 "on_since": self.store.data["on_since"].get(plug.id) if plug.is_on else None,
                 "timer": self.store.data["timers"].get(plug.id),
+                "led": plug.led,
+                "rssi": plug.rssi,
+                "cloud": plug.cloud,
+                "native": self.native.get(plug.id),
             })
         return {
             "version": self.version,

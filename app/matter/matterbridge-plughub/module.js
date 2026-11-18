@@ -67,7 +67,8 @@ export class PlughubPlatform extends MatterbridgeDynamicPlatform {
         await new Promise((r) => setTimeout(r, 5000));
       }
     }
-    for (const plug of snapshot.plugs) await this.addPlug(plug);
+    // 在插座 App 裡關掉「讓 Google Home 控制」的不加進來
+    for (const plug of snapshot.plugs) if (plug.matter !== false) await this.addPlug(plug);
     this.log.info(`已加入 ${this.devices.size} 個插座`);
     this.listen();
   }
@@ -139,6 +140,21 @@ export class PlughubPlatform extends MatterbridgeDynamicPlatform {
     const seen = new Set();
     for (const plug of snapshot.plugs) {
       seen.add(plug.id);
+      if (plug.matter === false) {
+        // 不給 Google Home 控制：從 Matter 移除
+        const device = this.devices.get(plug.id);
+        if (device) {
+          try {
+            await this.unregisterDevice(device);
+            this.log.info(`不給 Google Home 控制：${plug.name}`);
+          } catch (err) {
+            this.log.warn(`移除 ${plug.name} 失敗：${err.message}`);
+          }
+          this.devices.delete(plug.id);
+          this.state.delete(plug.id);
+        }
+        continue;
+      }
       if (this.devices.has(plug.id)) await this.applyState(plug);
       else {
         // 新找到的插座：直接加進來

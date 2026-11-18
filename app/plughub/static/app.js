@@ -98,6 +98,7 @@ function fmtSec(sec) {
 }
 
 // 倒數：10 分鐘內顯示到秒
+const fmtMin = (m) => (m < 60 ? `${m} 分鐘` : `${Math.floor(m / 60)} 小時${m % 60 ? ` ${m % 60} 分` : ""}`);
 const fmtLeft = (sec) => (sec < 600 ? fmtSec(sec) : fmtDur(sec));
 
 function fmtDur(sec) {
@@ -134,6 +135,24 @@ function durPicker(key, sec, rows = 3) {
   const v = splitSec(sec || 0);
   return `<div class="wheel dur r${rows}">${wheelCol(key, "h", 24, v.h, "小時", "時")}${wheelCol(key, "m", 60, v.m, "分鐘", "分")}${wheelCol(key, "s", 60, v.s, "秒", "秒")}</div>`;
 }
+// 只有時、分（離家模式）
+function hmPicker(key, t) {
+  const [h, m] = String(t || "00:00").split(":").map(Number);
+  return `<div class="wheel r3">${wheelCol(key, "h", 24, h, "時")}<span class="wsep">:</span>${wheelCol(key, "m", 60, m, "分")}</div>`;
+}
+// Wi-Fi 訊號：dBm → 等級
+function signal(rssi) {
+  if (rssi == null) return null;
+  const level = rssi >= -55 ? 4 : rssi >= -67 ? 3 : rssi >= -75 ? 2 : 1;
+  return { level, text: ["", "差", "普通", "良好", "很好"][level] };
+}
+const bars = (level) => `<span class="bars l${level}" aria-hidden="true"><i></i><i></i><i></i><i></i></span>`;
+const PROTECT = [
+  ["", "不需要", "一般的燈、風扇"],
+  ["confirm_off", "關閉前確認", "電腦、電視盒：突然斷電可能遺失資料"],
+  ["confirm", "開關都確認", "電暖器、熨斗、水泵"],
+  ["lock", "鎖定", "路由器、NAS、冰箱：App、Google Home、情境、排程、全部關閉都不能開關"],
+];
 const showT = (t) => (t && t.endsWith(":00") ? t.slice(0, 5) : t || "");
 const clockSec = (epoch) => new Date(epoch * 1000).toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 const clock = (epoch) => new Date(epoch * 1000).toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", hour12: false });
@@ -533,6 +552,39 @@ const STYLE = `
   .group.power .gl { font-weight: 600; }
   .opts.four { grid-template-columns: repeat(4, 1fr); }
   .link.sm { font-size: 13.5px; padding: 10px 2px 8px; display: inline-block; }
+  .lockmark { width: 50px; display: flex; justify-content: center; color: var(--faint); flex: none; }
+  .lockmark .i { width: 20px; height: 20px; }
+  .lead { font-size: 15px; line-height: 1.6; color: var(--text2); margin: 4px 2px 0; }
+  .bul { margin: 10px 0 0; padding-left: 20px; color: var(--text2); font-size: 14px; line-height: 1.75; }
+  .btn.danger.solid { background: var(--danger); color: #fff; }
+  .protect { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .pr { text-align: left; padding: 11px 12px; border-radius: var(--r-md); background: var(--soft); border: 1.5px solid transparent; display: flex; flex-direction: column; gap: 3px; transition: background .15s, border-color .15s; }
+  .pr b { font-size: 14.5px; font-weight: 600; display: flex; align-items: center; gap: 4px; }
+  .pr b .i { width: 15px; height: 15px; }
+  .pr span { font-size: 12px; color: var(--muted); line-height: 1.4; }
+  .pr.sel { background: var(--accent-soft); border-color: var(--accent); }
+  .pr.sel b { color: var(--accent-text); }
+  .gv { font-size: 14px; color: var(--text2); display: inline-flex; align-items: center; gap: 6px; flex: none; font-variant-numeric: tabular-nums; }
+  .gv.muted { color: var(--faint); }
+  .gv.kasa { text-align: right; line-height: 1.5; display: block; }
+  .gv.ok { color: var(--ok); } .gv.warn { color: var(--warn); }
+  .bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 14px; }
+  .bars i { width: 3px; background: var(--soft2); border-radius: 1px; }
+  .bars i:nth-child(1) { height: 25%; } .bars i:nth-child(2) { height: 50%; } .bars i:nth-child(3) { height: 75%; } .bars i:nth-child(4) { height: 100%; }
+  .bars.l1 i:nth-child(-n+1), .bars.l2 i:nth-child(-n+2), .bars.l3 i:nth-child(-n+3), .bars.l4 i { background: var(--text2); }
+  .bars.l1 i:nth-child(1) { background: var(--danger); }
+  .mini { display: flex; align-items: flex-end; gap: 3px; height: 44px; }
+  .mini div { flex: 1; height: 100%; display: flex; align-items: flex-end; }
+  .mini i { width: 100%; min-height: 2px; border-radius: 2px; background: color-mix(in srgb, var(--accent) 35%, transparent); }
+  .mini .today i { background: var(--accent); }
+  .range { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .rl { font-size: 12.5px; color: var(--muted); margin: 0 2px 6px; }
+  .range .wcol { width: 56px; }
+  .tapset { width: 100%; text-align: left; cursor: pointer; }
+  .tapset > .i { color: var(--faint); }
+  .tapset:hover { background: var(--hover); }
+  .desc.foot { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; padding: 10px 18px 14px; border-top: 1px solid var(--line); }
+  .desc.foot .i { width: 16px; height: 16px; color: var(--ok); margin-top: 2px; }
   .meta { font-size: 12px; color: var(--faint); margin: 18px 2px 0; text-align: center; font-variant-numeric: tabular-nums; }
   .callout .btn { background: var(--card); color: var(--text); }
   /* 分組清單（像手機的設定頁） */
@@ -868,7 +920,11 @@ class PlugApp extends HTMLElement {
       <div class="row tap ${on ? "on" : ""} ${this._pending.has(p.id) ? "pending" : ""}" data-a="dev" data-v="${esc(p.id)}" role="button" tabindex="0" aria-label="${name}的詳細資料">
         <div class="di">${ic(deviceIcon(p.name))}</div>
         <div class="nm"><div class="a"><span>${name}</span></div>${sub ? `<div class="b ${cls}">${esc(sub)}</div>` : ""}</div>
-        <button class="sw" data-a="toggle" data-v="${esc(p.id)}" role="switch" aria-checked="${on}" aria-label="${name}"></button>
+        ${
+          p.protect === "lock"
+            ? `<span class="lockmark" title="已鎖定">${ic("mdi:lock")}</span>`
+            : `<button class="sw" data-a="toggle" data-v="${esc(p.id)}" role="switch" aria-checked="${on}" aria-label="${name}"></button>`
+        }
       </div>`;
   }
 
@@ -1111,7 +1167,9 @@ class PlugApp extends HTMLElement {
         <section class="card">
           <div class="ch"><div class="ri">${ic("mdi:calendar-clock")}</div><div class="n">排程</div></div>
           ${rows || empty}
+          ${rows ? `<p class="desc foot">${ic("mdi:shield-check-outline")}排程也會寫進插座本身，樹莓派離線時照樣執行（插座只到分鐘，秒數往後取整；「之後再打開」不會寫進插座）。</p>` : ""}
         </section>
+        ${this._awayCard()}
         ${
           timers.length
             ? `<section class="card">
@@ -1121,6 +1179,19 @@ class PlugApp extends HTMLElement {
             : ""
         }
       </div>`;
+  }
+
+  _awayCard() {
+    const a = this._s.settings.away || {};
+    const n = (a.plugs || []).filter((id) => this._plug(id)).length;
+    return `
+      <section class="card">
+        <div class="ch"><div class="ri">${ic("mdi:home-outline")}</div><div class="n">離家模式</div><div class="end">${a.enabled ? `<span class="badge ok">啟用中</span>` : ""}</div></div>
+        <button class="set tapset" data-a="away-open">
+          <div class="tx"><div class="l">${a.enabled ? `每天 ${esc(a.start)}–${esc(a.end)}，${n} 個插座隨機開關` : "不在家時讓燈隨機開關"}</div><div class="s">看起來像有人在家；由插座自己執行，樹莓派離線也照跑</div></div>
+          ${ic("mdi:chevron-right")}
+        </button>
+      </section>`;
   }
 
   _schedDesc(x) {
@@ -1250,6 +1321,10 @@ class PlugApp extends HTMLElement {
         ${this._googleHtml()}
         <section class="card">
           <div class="ch"><div class="ri">${ic("mdi:magnify")}</div><div class="n">裝置</div></div>
+          <button class="set tapset" data-a="cloud-open">
+            <div class="tx"><div class="l">TP-Link 雲端</div><div class="s">${this._plugs.filter((p) => p.cloud).length} 個插座連著雲端・家庭中控和 Google Home 都不需要它</div></div>
+            ${ic("mdi:chevron-right")}
+          </button>
           <div class="set">
             <div class="tx"><div class="l">找新插座</div><div class="s">每分鐘會自動找一次；剛插上的插座可以按這裡馬上找</div></div>
             <button class="btn" data-a="discover">現在找</button>
@@ -1361,10 +1436,15 @@ class PlugApp extends HTMLElement {
     };
     return {
       tab: (v) => this._go(v),
-      toggle: (v) => this._toggle(v),
+      toggle: (v) => this._guardedToggle(v),
+      "confirm-power": () => {
+        const id = this._sheet.id;
+        this._closeSheet();
+        this._toggle(id);
+      },
       offline: (v) => this._showToast(`${this._plug(v)?.name || "插座"}連不上：檢查插頭有沒有插好、Wi-Fi 有沒有訊號`),
-      timer: (v) => this._openSheet({ type: "device", id: v, live: true }),
-      dev: (v) => this._openSheet({ type: "device", id: v, live: true }),
+      timer: (v) => this._openDevice(v),
+      dev: (v) => this._openDevice(v),
       "all-off": () => this._turnOff({}),
       "room-off": (v) => this._turnOff({ room: v }),
       "room-on": async (v) => {
@@ -1386,7 +1466,7 @@ class PlugApp extends HTMLElement {
         this._render();
         window.scrollTo(0, 0);
       },
-      "plug-edit": (v) => this._openSheet({ type: "device", id: v, live: true }),
+      "plug-edit": (v) => this._openDevice(v),
       "room-edit": (v) => this._openSheet({ type: "room", id: v, name: this._room(v)?.name || "" }),
       "room-new": () => this._openSheet({ type: "room", id: null, name: "" }),
       "scene-edit": (v) => this._openSceneEditor(v),
@@ -1429,7 +1509,49 @@ class PlugApp extends HTMLElement {
         this._sheet.customTimer = !this._sheet.customTimer;
         this._renderSheet();
       },
-      "dev-power": (v) => this._toggle(this._sheet.id),
+      "dev-power": (v) => this._guardedToggle(this._sheet.id),
+      protect: (v) => this._safe(() => api("PATCH", `/api/plugs/${this._sheet.id}`, { protect: v })),
+      "matter-toggle": (v, t) => {
+        const next = !t.classList.contains("on");
+        t.classList.toggle("on", next);
+        this._safe(() => api("PATCH", `/api/plugs/${this._sheet.id}`, { matter: next }));
+      },
+      "led-toggle": (v, t) => {
+        const next = !t.classList.contains("on");
+        t.classList.toggle("on", next);
+        this._safe(() => api("PATCH", `/api/plugs/${this._sheet.id}`, { led: next }));
+      },
+      reboot: (v, t) =>
+        sure(t) &&
+        this._safe(async () => {
+          await api("POST", `/api/plugs/${this._sheet.id}/reboot`);
+          this._showToast("插座重新啟動中，大約 30 秒後恢復");
+        }),
+      "away-open": () => this._openAway(),
+      "away-toggle": () => {
+        this._sheet.draft.enabled = !this._sheet.draft.enabled;
+        this._renderSheet();
+      },
+      "away-plug": (v) => {
+        const d = this._sheet.draft;
+        d.plugs = d.plugs.includes(v) ? d.plugs.filter((x) => x !== v) : [...d.plugs, v];
+        this._renderSheet();
+      },
+      "away-save": () =>
+        this._safe(async () => {
+          const d = this._sheet.draft;
+          if (d.enabled && !d.plugs.length) return this._sheetError("請至少選一個插座");
+          await api("PUT", "/api/away", d);
+          this._closeSheet();
+        }),
+      "cloud-open": () => this._openSheet({ type: "cloud" }),
+      "cloud-unbind": (v, t) =>
+        sure(t) &&
+        this._safe(async () => {
+          const res = await api("POST", "/api/cloud/unbind", { confirm: "斷開" });
+          this._closeSheet();
+          this._showToast(res.failed ? `斷開 ${res.ok} 台，${res.failed} 台沒有回應` : `已斷開 ${res.ok} 台插座的 TP-Link 雲端`);
+        }),
       "energy-more": () => {
         this._energyMore = !this._energyMore;
         this._render();
@@ -1544,6 +1666,95 @@ class PlugApp extends HTMLElement {
 
   // ───────────── 動作 ─────────────
 
+  // 有防呆設定的先確認；鎖定的打開裝置詳細說明
+  _guardedToggle(id) {
+    const p = this._plug(id);
+    if (!p || !p.online) return;
+    const on = this._isOn(p);
+    if (p.protect === "lock") return this._openDevice(id);
+    if (p.protect === "confirm" || (p.protect === "confirm_off" && on)) return this._openSheet({ type: "confirm", id });
+    this._toggle(id);
+  }
+
+  _openDevice(id) {
+    this._openSheet({ type: "device", id, live: true });
+    // 插座自己記錄的使用時間（另外讀，不擋住面板）
+    api("GET", `/api/plugs/${id}/usage`)
+      .then((u) => {
+        if (this._sheet?.id === id) {
+          this._sheet.usage = u;
+          this._renderSheet();
+        }
+      })
+      .catch(() => {
+        if (this._sheet?.id === id) {
+          this._sheet.usage = false;
+          this._renderSheet();
+        }
+      });
+  }
+
+  _confirmSheet(s) {
+    const p = this._plug(s.id);
+    if (!p) return null;
+    const on = this._isOn(p);
+    return `
+      ${this._sheetHead(deviceIcon(p.name), on ? `關閉「${p.name}」？` : `打開「${p.name}」？`, this._room(p.room)?.name || "")}
+      <p class="lead">這個裝置設定了「${PROTECT.find(([k]) => k === p.protect)?.[1] || "確認"}」，避免誤按。</p>
+      <div class="actions">
+        <button class="btn" data-a="close">取消</button>
+        <button class="btn ${on ? "danger solid" : "primary"}" data-a="confirm-power">${on ? "關閉" : "打開"}</button>
+      </div>`;
+  }
+
+  _awaySheet(s) {
+    const d = s.draft;
+    const chips = this._groups()
+      .map((g) => {
+        const list = g.plugs.filter((p) => !p.keep_on && !p.max_on_s && p.protect !== "lock");
+        if (!list.length) return "";
+        return `<div class="group-title">${esc(g.name)}</div><div class="chips">${list
+          .map((p) => `<button class="chip ${d.plugs.includes(p.id) ? "sel" : ""}" data-a="away-plug" data-v="${esc(p.id)}">${d.plugs.includes(p.id) ? ic("mdi:check") : ""}${esc(p.name)}</button>`)
+          .join("")}</div>`;
+      })
+      .join("");
+    return `
+      ${this._sheetHead("mdi:home-outline", "離家模式", "不在家時，讓燈隨機開關，看起來像有人在")}
+      <div class="group power"><div class="gi"><div class="gt"><div class="gl">啟用離家模式</div><div class="gs">由插座自己執行，樹莓派離線也照跑</div></div>
+        <button class="sw ${d.enabled ? "on" : ""}" data-a="away-toggle" role="switch" aria-checked="${d.enabled}" aria-label="啟用離家模式"></button></div></div>
+      <div class="q">每天這段時間</div>
+      <div class="range"><div><div class="rl">開始</div>${hmPicker("away_start", d.start)}</div><div><div class="rl">結束</div>${hmPicker("away_end", d.end)}</div></div>
+      <div class="q">要隨機開關的插座 <small>常開、鎖定、有最長開啟時間的不會出現</small></div>
+      ${chips || `<p class="note">沒有可以用的插座。</p>`}
+      <div class="err"></div>
+      <div class="actions"><button class="btn" data-a="close">取消</button><button class="btn primary" data-a="away-save">儲存</button></div>`;
+  }
+
+  _openAway() {
+    const a = this._s.settings.away || {};
+    const lights = this._plugs.filter((p) => deviceIcon(p.name) === "mdi:lightbulb" && !p.keep_on && !p.max_on_s && p.protect !== "lock").map((p) => p.id);
+    this._openSheet({
+      type: "away",
+      wide: true,
+      draft: { enabled: !!a.enabled, start: a.start || "18:00", end: a.end || "23:00", plugs: a.plugs?.length ? [...a.plugs] : lights },
+    });
+  }
+
+  _cloudSheet() {
+    const plugs = this._plugs.filter((p) => p.online);
+    const on = plugs.filter((p) => p.cloud).length;
+    return `
+      ${this._sheetHead("mdi:cloud-outline", "TP-Link 雲端", `${on}／${plugs.length} 個插座連著雲端`)}
+      <p class="lead">家庭中控和 Google Home（Matter）都在家裡直接控制插座，<b>不需要</b> TP-Link 雲端。斷開後：</p>
+      <ul class="bul">
+        <li>插座不再和 TP-Link 的伺服器連線，隱私比較好</li>
+        <li>Kasa App 在外面不能控制，家裡同一個 Wi-Fi 還可以</li>
+        <li>家庭中控、Google Home、排程、插座內建的排程都不受影響</li>
+        <li>想恢復的話，要用 Kasa App 重新設定插座</li>
+      </ul>
+      <div class="actions"><button class="btn" data-a="close">先不要</button><button class="btn danger solid" data-a="cloud-unbind">斷開所有插座</button></div>`;
+  }
+
   _toggle(id) {
     const p = this._plug(id);
     if (!p || !p.online) return;
@@ -1624,6 +1835,13 @@ class PlugApp extends HTMLElement {
   // 時間選擇器改值：幾點（"HH:MM:SS"）或多久（秒）
   _tpSet(key, unit, n) {
     const s = this._sheet;
+    if (key === "away_start" || key === "away_end") {
+      const k = key === "away_start" ? "start" : "end";
+      const parts = (s.draft[k] || "00:00").split(":");
+      parts[unit === "h" ? 0 : 1] = pad2(n);
+      s.draft[k] = parts.join(":");
+      return;
+    }
     if (key === "time" || key === "restore_at") {
       const parts = hms(s.draft[key]).split(":");
       parts["hms".indexOf(unit)] = pad2(n);
@@ -1744,7 +1962,7 @@ class PlugApp extends HTMLElement {
   _renderSheet() {
     const s = this._sheet;
     if (!s) return;
-    const builders = { device: this._deviceSheet, timer: this._deviceSheet, plug: this._deviceSheet, room: this._roomSheet, scene: this._sceneSheet, sched: this._schedSheet, watts: this._wattsSheet };
+    const builders = { confirm: this._confirmSheet, away: this._awaySheet, cloud: this._cloudSheet, device: this._deviceSheet, timer: this._deviceSheet, plug: this._deviceSheet, room: this._roomSheet, scene: this._sceneSheet, sched: this._schedSheet, watts: this._wattsSheet };
     const html = builders[s.type]?.call(this, s);
     if (html === null || html === undefined) return this._closeSheet();
     const key = `${s.type}|${s.id}|${s.wide ? 1 : 0}`;
@@ -1785,7 +2003,7 @@ class PlugApp extends HTMLElement {
     // 定時：有最長時間（澆水）就給短的選項
     const choices = p.max_on_s ? [...new Set([...SHORT_OPTIONS.filter((x) => x < max), max])].slice(-4) : TIMER_OPTIONS.slice(0, 4);
     const opts = choices.map((x) => `<button class="opt" data-a="timer-set" data-v="${x}">${fmtSec(x)}</button>`).join("");
-    const timer = p.online
+    const timer = p.online && p.protect !== "lock"
       ? `<div class="q">${on ? "定時關閉" : "打開，並在多久後關閉"}</div>
          <div class="opts four">${opts}</div>
          <button class="link sm" data-a="timer-more">${s.customTimer ? "收起" : "自訂時間…"}</button>
@@ -1794,7 +2012,13 @@ class PlugApp extends HTMLElement {
     const roomOpts = [`<option value="">還沒分房間</option>`, ...this._rooms.map((r) => `<option value="${esc(r.id)}" ${p.room === r.id ? "selected" : ""}>${esc(r.name)}</option>`)].join("");
     return `
       ${this._sheetHead(deviceIcon(p.name), p.name, `${room}・${status}`, on ? "background:var(--on-soft);color:var(--on)" : "")}
-      ${p.online ? `<div class="group power"><div class="gi"><div class="gt"><div class="gl">電源</div></div><button class="sw ${on ? "on" : ""}" data-a="dev-power" role="switch" aria-checked="${on}" aria-label="電源"></button></div></div>` : ""}
+      ${
+        !p.online
+          ? ""
+          : p.protect === "lock"
+            ? `<div class="group power"><div class="gi"><div class="gt"><div class="gl">電源・${on ? "開著" : "關著"}</div><div class="gs">已鎖定，要開關請先把下面的「防呆」改掉</div></div><span class="lockmark">${ic("mdi:lock")}</span></div></div>`
+            : `<div class="group power"><div class="gi"><div class="gt"><div class="gl">電源</div></div><button class="sw ${on ? "on" : ""}" data-a="dev-power" role="switch" aria-checked="${on}" aria-label="電源"></button></div></div>`
+      }
       ${callouts}
       ${timer}
       <div class="q">名稱</div>
@@ -1814,9 +2038,49 @@ class PlugApp extends HTMLElement {
         </div>
         ${p.max_on_s ? this._maxOnEditor(s, p) : ""}
       </div>
-      ${p.max_on_s ? `<p class="note">不管從 App、Google Home、排程、情境或插座上的按鈕打開都算；「整間打開」不會打開它；關不掉時手機會收到緊急通知。</p>` : ""}
+      ${p.max_on_s ? `<p class="note">不管從 App、Google Home、排程、情境或插座上的按鈕打開都算；「整間打開」不會打開它；關不掉時手機會收到緊急通知。插座本身也會倒數，樹莓派停掉照樣會關。</p>` : ""}
+      <div class="q">防呆</div>
+      <div class="protect">${PROTECT.map(([k, label, desc]) => `<button class="pr ${p.protect === k ? "sel" : ""}" data-a="protect" data-v="${k}" aria-pressed="${p.protect === k}"><b>${k === "lock" ? ic("mdi:lock") : ""}${label}</b><span>${desc}</span></button>`).join("")}</div>
+      <div class="group" style="margin-top:10px">
+        <div class="gi">
+          <div class="gt"><div class="gl">讓 Google Home 控制</div><div class="gs">關掉後，語音說「全部關掉」也不會動到它</div></div>
+          <button class="sw ${p.matter !== false ? "on" : ""}" data-a="matter-toggle" role="switch" aria-checked="${p.matter !== false}" aria-label="讓 Google Home 控制"></button>
+        </div>
+      </div>
+      ${this._hardwareHtml(s, p)}
       <div class="err"></div>
       <p class="meta">${esc(p.model)}・${esc(p.host)}</p>`;
+  }
+
+  // 插座本身：指示燈、訊號、使用時間、內建排程、雲端、重新啟動
+  _hardwareHtml(s, p) {
+    if (!p.online) return "";
+    const sig = signal(p.rssi);
+    const shared = this._plugs.filter((x) => x.host === p.host).length > 1;
+    const u = s.usage;
+    const usage =
+      u === undefined
+        ? `<span class="gv muted">讀取中…</span>`
+        : u === false
+          ? `<span class="gv muted">讀不到</span>`
+          : `<span class="gv">今天 ${fmtMin(u.today)}・本月 ${fmtMin(u.month)}</span>`;
+    const maxDay = u && u.days ? Math.max(1, ...u.days.map((d) => d.minutes)) : 1;
+    const chart = u && u.days ? `<div class="gi col"><div class="mini">${u.days.map((d, i) => `<div title="${d.day}：${fmtMin(d.minutes)}" class="${i === u.days.length - 1 ? "today" : ""}"><i style="height:${(d.minutes / maxDay) * 100}%"></i></div>`).join("")}</div></div>` : "";
+    const n = p.native;
+    const nativeText = !n ? "等待同步…" : !n.ok ? n.msg || "同步失敗，稍後再試" : n.schedule ? `已寫入 ${n.schedule} 條，樹莓派離線時照樣執行` : "目前沒有排程要寫入";
+    return `
+      <div class="q">插座本身</div>
+      <div class="group">
+        <div class="gi"><div class="gt"><div class="gl">指示燈</div>${shared ? `<div class="gs">整條排插共用一個燈</div>` : ""}</div>
+          <button class="sw ${p.led ? "on" : ""}" data-a="led-toggle" role="switch" aria-checked="${!!p.led}" aria-label="指示燈"></button></div>
+        <div class="gi"><span class="gl">Wi-Fi 訊號</span>${sig ? `<span class="gv">${bars(sig.level)}${sig.text}・${p.rssi} dBm</span>` : `<span class="gv muted">—</span>`}</div>
+        <div class="gi"><span class="gl">使用時間<small>插座自己記錄的</small></span>${usage}</div>
+        ${chart}
+        <div class="gi"><span class="gl">內建排程<small>${esc(nativeText)}</small></span>${n && !n.ok ? `<span class="gv warn">${ic("mdi:alert-circle-outline")}</span>` : n ? `<span class="gv ok">${ic("mdi:check-circle")}</span>` : ""}</div>
+        ${(n?.kasa || []).length ? `<div class="gi"><span class="gl">Kasa App 設的排程<small>插座自己會執行，家庭中控不會動它；要改請用 Kasa App</small></span><span class="gv kasa">${n.kasa.map((r) => `${r.sact ? "開" : "關"} ${pad2(Math.floor(r.smin / 60))}:${pad2(r.smin % 60)}${r.wday.every(Boolean) ? "" : ` ${r.wday.map((v, i) => (v ? "日一二三四五六"[i] : "")).join("")}`}${r.enable ? "" : "（停用）"}`).join("<br>")}</span></div>` : ""}
+        <div class="gi"><span class="gl">TP-Link 雲端</span><span class="gv">${p.cloud ? "連線中" : p.cloud === false ? "未連線" : "—"}</span></div>
+        <div class="gi"><span class="gl">重新啟動插座<small>插座卡住時用；${shared ? "整條排插都會重開，" : ""}可能短暫斷電</small></span><button class="btn sm" data-a="reboot">重新啟動</button></div>
+      </div>`;
   }
 
   _maxOnEditor(s, p) {

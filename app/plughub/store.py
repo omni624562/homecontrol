@@ -28,6 +28,8 @@ DEFAULTS: dict[str, Any] = {
         "overload_watts": 1500.0,  # 超過這個瓦數持續 1 分鐘就通知
         "ntfy_topic": "",  # 有填就用 ntfy 推播通知
         "long_on_hours": 6.0,  # 開超過這麼久就在畫面上提醒（常開的不算）
+        # 離家模式：這段時間裡，選的插座由插座自己隨機開關（假裝有人在家）
+        "away": {"enabled": False, "start": "18:00", "end": "23:00", "plugs": []},
     },
     # 關閉時記住關了哪些，之後可以還原：
     #   {"night": [插座 ID...]}（被關掉的）或 {"undo": {插座 ID: 原本開著嗎}}
@@ -56,6 +58,10 @@ class PlugMeta:
     # 最長開啟時間（分鐘）：澆水、電暖器這類開太久會出事的。不管從哪裡打開
     # （App、Google Home、排程、情境、插座上的按鈕），時間到一定關掉，不能取消。
     max_on_s: float | None = None  # 秒
+    # 防呆："" = 不需要、"confirm_off" = 關閉前確認、"confirm" = 開關都確認、"lock" = 鎖定
+    # 鎖定：App、Google Home、情境、排程、全部關閉都不能開關，要先在裝置詳細解鎖
+    protect: str = ""
+    matter: bool = True  # 讓 Google Home（Matter）控制
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "PlugMeta":

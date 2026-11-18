@@ -14,6 +14,9 @@ POST /api/scenes            {"name", "icon", "actions", "others"}；PUT/DELETE /
 POST /api/scenes/{id}/run   執行情境（可以 /api/restore 復原）
 POST /api/schedules         新增排程；PUT/DELETE /api/schedules/{id}
 PUT  /api/settings
+PUT  /api/away              離家模式 {"enabled", "start", "end", "plugs"}
+GET  /api/plugs/{id}/usage  插座自己記錄的使用時間；POST /api/plugs/{id}/reboot 重新啟動
+POST /api/cloud/unbind      斷開所有插座的 TP-Link 雲端（要帶 {"confirm": "斷開"}）
 POST /api/discover          立刻重新找插座
 PUT  /api/matter            Google Home 串接外掛回報配對狀態（只接受樹莓派本機）
 GET  /api/matter/qr.svg     配對用的 QR code
@@ -38,9 +41,9 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from .hub import Hub
+from .hub import Hub, Locked
 from .notify import Notifier
-from .store import Store
+from .store import Store, _hms
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -106,7 +109,9 @@ async def events(request: Request) -> StreamingResponse:
 async def set_power(plug_id: str, body: dict = Body(...)) -> dict[str, Any]:
     _plug(plug_id)
     try:
-        await hub.set_power(plug_id, bool(body.get("on")))
+        await hub.set_power(plug_id, bool(body.get("on")), force=bool(body.get("force")))
+    except Locked as err:
+        raise HTTPException(423, f"「{err}」已鎖定，要先在裝置詳細解鎖") from err
     except Exception as err:  # noqa: BLE001
         raise HTTPException(502, f"插座沒有回應：{err}") from err
     return {"ok": True}
@@ -147,9 +152,13 @@ async def update_plug(plug_id: str, body: dict = Body(...)) -> dict[str, Any]:
         if room is not None and not store.room(room):
             raise HTTPException(400, "沒有這個房間")
         meta.room = room
-    for key in ("keep_on", "night"):
+    for key in ("keep_on", "night", "matter"):
         if key in body:
             setattr(meta, key, bool(body[key]))
+    if "protect" in body:
+        if body["protect"] not in ("", "confirm_off", "confirm", "lock"):
+            raise HTTPException(400, "防呆設定不對")
+        meta.protect = body["protect"]
     if "max_on_s" in body:
         value = body["max_on_s"]
         if value in (None, "", 0):
@@ -173,7 +182,13 @@ async def update_plug(plug_id: str, body: dict = Body(...)) -> dict[str, Any]:
     if "watts" in body:
         watts = body["watts"]
         meta.watts = float(watts) if watts not in (None, "", 0) and float(watts) > 0 else None
+    if "led" in body:
+        try:
+            await hub.set_led(plug_id, bool(body["led"]))
+        except Exception as err:  # noqa: BLE001
+            raise HTTPException(502, f"插座沒有回應：{err}") from err
     store.save()
+    hub.mark_native()  # 常開／最長開啟時間會影響寫進插座的排程
     return await _done()
 
 
@@ -276,6 +291,7 @@ def _scene_body(body: dict) -> tuple[str, str, dict[str, str], str]:
 @app.post("/api/scenes")
 async def add_scene(body: dict = Body(...)) -> dict[str, Any]:
     scene = store.save_scene(None, *_scene_body(body))
+    hub.mark_native()
     await hub.changed()
     return scene
 
@@ -285,6 +301,7 @@ async def update_scene(scene_id: str, body: dict = Body(...)) -> dict[str, Any]:
     if not store.scene(scene_id):
         raise HTTPException(404, "沒有這個情境")
     scene = store.save_scene(scene_id, *_scene_body(body))
+    hub.mark_native()
     await hub.changed()
     return scene
 
@@ -295,6 +312,7 @@ async def delete_scene(scene_id: str) -> dict[str, Any]:
     for sched in store.schedules:  # 用到這個情境的排程先停用
         if sched["action"] == "scene" and sched.get("scene") == scene_id:
             store.save_schedule(sched["id"], {"enabled": False, "scene": None})
+    hub.mark_native()
     return await _done()
 
 
@@ -313,6 +331,7 @@ async def run_scene(scene_id: str) -> dict[str, Any]:
 @app.post("/api/schedules")
 async def add_schedule(body: dict = Body(...)) -> dict[str, Any]:
     sched = store.save_schedule(None, body)
+    hub.mark_native()
     await hub.changed()
     return sched
 
@@ -323,6 +342,7 @@ async def update_schedule(sched_id: str, body: dict = Body(...)) -> dict[str, An
         sched = store.save_schedule(sched_id, body)
     except KeyError:
         raise HTTPException(404, "沒有這個排程") from None
+    hub.mark_native()
     await hub.changed()
     return sched
 
@@ -330,7 +350,63 @@ async def update_schedule(sched_id: str, body: dict = Body(...)) -> dict[str, An
 @app.delete("/api/schedules/{sched_id}")
 async def delete_schedule(sched_id: str) -> dict[str, Any]:
     store.delete_schedule(sched_id)
+    hub.mark_native()
     return await _done()
+
+
+# ---- 插座本身的功能 ----
+
+
+@app.get("/api/plugs/{plug_id}/usage")
+async def plug_usage(plug_id: str) -> dict[str, Any]:
+    """插座自己記錄的使用時間（每天開了幾分鐘）。"""
+    _plug(plug_id)
+    try:
+        return await hub.usage(plug_id)
+    except Exception as err:  # noqa: BLE001
+        raise HTTPException(502, f"插座沒有回應：{err}") from err
+
+
+@app.post("/api/plugs/{plug_id}/reboot")
+async def plug_reboot(plug_id: str) -> dict[str, Any]:
+    _plug(plug_id)
+    try:
+        await hub.reboot(plug_id)
+    except Exception as err:  # noqa: BLE001
+        raise HTTPException(502, f"插座沒有回應：{err}") from err
+    return {"ok": True}
+
+
+@app.put("/api/away")
+async def set_away(body: dict = Body(...)) -> dict[str, Any]:
+    """離家模式：{"enabled", "start": "HH:MM", "end": "HH:MM", "plugs": [...]}"""
+    away = dict(store.data["settings"].get("away") or {})
+    if "enabled" in body:
+        away["enabled"] = bool(body["enabled"])
+    for key in ("start", "end"):
+        if key in body:
+            hms = _hms(body[key])
+            if not hms:
+                raise HTTPException(400, "時間格式不對")
+            away[key] = hms[:5]
+    if "plugs" in body:
+        away["plugs"] = [str(x) for x in body["plugs"] if str(x) in hub.plugs]
+    if away.get("start") == away.get("end"):
+        raise HTTPException(400, "開始和結束時間不能一樣")
+    store.data["settings"]["away"] = away
+    store.save()
+    hub.mark_native()
+    return await _done()
+
+
+@app.post("/api/cloud/unbind")
+async def cloud_unbind(body: dict = Body(...)) -> dict[str, Any]:
+    """把所有插座和 TP-Link 雲端斷開。要帶 {"confirm": "斷開"} 才會做。"""
+    if body.get("confirm") != "斷開":
+        raise HTTPException(400, "需要確認")
+    result = await hub.cloud_unbind_all()
+    await hub.changed()
+    return result
 
 
 # ---- 設定 ----
