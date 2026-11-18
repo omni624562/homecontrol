@@ -102,6 +102,9 @@ class Hub:
         self._native_dirty = True
         self._native_last = 0.0
         self._native_rules: dict[str, list[dict[str, Any]]] = {}  # 插座 ID → 寫進插座的排程規則（含 ID）
+        # 插座自己記錄的使用時間（每天、每月的分鐘數），每 30 分鐘讀一次
+        self._usage: dict[str, dict[str, dict[str, int]]] = {}
+        self._usage_at = 0.0
         self._lease_busy = False
         self._timer_failed: set[str] = set()  # 定時關閉失敗、已經通知過的插座
         self._offline_notified: set[str] = set()
@@ -260,6 +263,16 @@ class Hub:
             plug = self.plugs[pid]
             source = device.children[plug.child_index] if plug.child_index is not None else device
             self._set_is_on(plug, bool(source.is_on))
+            # 「開了多久」用插座自己記錄的（樹莓派重開也不會歸零）
+            try:
+                since = getattr(source, "on_since", None)
+                if source.is_on and since is not None:
+                    ts = since.timestamp()
+                    if abs(self.store.data["on_since"].get(plug.id, 0) - ts) > 90:
+                        self.store.data["on_since"][plug.id] = ts
+                        self._dirty = True
+            except Exception:  # noqa: BLE001
+                pass
             plug.kasa_name = source.alias or plug.kasa_name
             plug.online = True
             plug.offline_since = None
@@ -509,6 +522,78 @@ class Hub:
             self._native_last = time.time()
             await self.native_sync()
         await self._lease()
+        if time.time() - self._usage_at >= 1800:
+            await self.refresh_usage()
+
+    async def refresh_usage(self) -> None:
+        self._usage_at = time.time()
+        for pid, plug in list(self.plugs.items()):
+            if not plug.online:
+                continue
+            entry = self.devices.get(plug.device_key)
+            if entry is None or not native.supported(entry.device):
+                continue
+            try:
+                self._usage[pid] = await native.usage_history(entry.device, native.context(entry.device, plug.child_index))
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug("讀 %s 使用時間失敗：%s", self.name(plug), err)
+
+    def energy_report(self) -> dict[str, Any]:
+        """用電：插座自己記錄的開機時間 × 瓦數。"""
+        today = date.today()
+        household = self.store.data["settings"]["household_monthly_kwh"]
+        days = [(today - timedelta(days=29 - i)).isoformat() for i in range(30)]
+        months: list[str] = []
+        y, m = today.year, today.month
+        for _ in range(12):
+            months.insert(0, f"{y:04d}-{m:02d}")
+            y, m = (y - 1, 12) if m == 1 else (y, m - 1)
+        this_month, last_month = months[-1], months[-2]
+        tot_days = {d: {"kwh": 0.0, "hours": 0.0} for d in days}
+        tot_months = {mm: {"kwh": 0.0, "hours": 0.0, "cost": 0.0} for mm in months}
+        plugs = []
+        for plug in self.ordered():
+            meta = self.store.meta(plug.id)
+            use = self._usage.get(plug.id)
+            watts = meta.watts
+            kw = (watts or 0) / 1000
+            if use is None:
+                plugs.append({"id": plug.id, "name": self.name(plug), "watts": watts, "known": False})
+                continue
+            for d in days:
+                minutes = use["days"].get(d, 0)
+                tot_days[d]["hours"] += minutes / 60
+                tot_days[d]["kwh"] += minutes / 60 * kw
+            for mm in months:
+                minutes = use["months"].get(mm, 0)
+                kwh = minutes / 60 * kw
+                tot_months[mm]["hours"] += minutes / 60
+                tot_months[mm]["kwh"] += kwh
+                tot_months[mm]["cost"] += kwh * tariff.price(household, date(int(mm[:4]), int(mm[5:]), 1))
+            month_min = use["months"].get(this_month, 0)
+            month_kwh = month_min / 60 * kw
+            plugs.append({
+                "id": plug.id, "name": self.name(plug), "watts": watts, "known": True,
+                "today_min": use["days"].get(today.isoformat(), 0),
+                "month_min": month_min,
+                "last_month_min": use["months"].get(last_month, 0),
+                "month_kwh": round(month_kwh, 3),
+                "month_cost": round(month_kwh * tariff.price(household, today), 1),
+                "days": [use["days"].get(d, 0) for d in days],
+            })
+        price = tariff.price(household, today)
+        return {
+            "price": price,
+            "season": "夏月" if tariff.is_summer(today) else "非夏月",
+            "today": {"kwh": round(tot_days[days[-1]]["kwh"], 3), "hours": round(tot_days[days[-1]]["hours"], 1)},
+            "month": {k: round(v, 2) for k, v in tot_months[this_month].items()},
+            "last_month": {k: round(v, 2) for k, v in tot_months[last_month].items()},
+            "days": [{"day": d, **{k: round(v, 3) for k, v in tot_days[d].items()}} for d in days],
+            "months": [{"month": mm, **{k: round(v, 2) for k, v in tot_months[mm].items()}} for mm in months],
+            "plugs": plugs,
+            "unset": sum(1 for p in plugs if not p["watts"]),
+            "updated": self._usage_at,
+        }
 
     async def _lease(self) -> None:
         """樹莓派在線：快到時間的「打開」規則先停用，過了再啟用（插座只在樹莓派離線時才動作）。"""

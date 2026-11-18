@@ -471,7 +471,23 @@ const STYLE = `
   .bar { flex: 1; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 6px; }
   .bar div { width: 100%; max-width: 28px; background: color-mix(in srgb, var(--on) 35%, transparent); border-radius: 5px 5px 2px 2px; min-height: 2px; }
   .bar.today div { background: var(--on); }
-  .bar span { font-size: 10.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
+  .bar span { font-size: 10.5px; color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; height: 14px; }
+  .chart.days { gap: 3px; }
+  .chart.months .bar div { max-width: 22px; }
+  .hero { display: flex; align-items: flex-end; gap: 16px; padding: 18px 16px 16px; flex-wrap: wrap; }
+  .hero .l { font-size: 13px; color: var(--muted); font-weight: 500; }
+  .hero .big { font-size: 40px; font-weight: 700; letter-spacing: -1px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .hero .s { font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .hero .hside { margin-left: auto; display: grid; gap: 4px; min-width: 150px; }
+  .hero .hside div { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; }
+  .hero .hside span { color: var(--muted); }
+  .hero .hside b { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .erow .share { height: 4px; border-radius: 2px; background: var(--soft); margin-top: 6px; overflow: hidden; }
+  .erow .share i { display: block; height: 100%; background: var(--on); border-radius: 2px; }
+  .ev { text-align: right; flex: none; display: flex; flex-direction: column; align-items: flex-end; font-variant-numeric: tabular-nums; }
+  .ev b { font-size: 15px; font-weight: 600; }
+  .ev small { font-size: 12.5px; color: var(--muted); }
+  .ev .muted { color: var(--faint); font-size: 13px; }
 
   /* ═════════ 設定列 ═════════ */
   .set { display: flex; align-items: center; gap: 14px; padding: 13px 16px; position: relative; }
@@ -1348,52 +1364,94 @@ class PlugApp extends HTMLElement {
     ].join("");
   }
 
+  // 用電：插座自己記錄的開機時間 × 瓦數（/api/energy），打開這頁時讀、5 分鐘更新一次
+  _loadEnergy(force = false) {
+    if (this._energyLoading || (!force && this._energy && Date.now() - this._energyAt < 300000)) return;
+    this._energyLoading = true;
+    api("GET", "/api/energy")
+      .then((e) => {
+        this._energy = e;
+        this._energyAt = Date.now();
+      })
+      .catch(() => (this._energyErr = true))
+      .finally(() => {
+        this._energyLoading = false;
+        this._render();
+      });
+  }
+
   _energyPage() {
-    const s = this._s;
-    const sum = s.summary;
-    const hist = sum.history || [];
-    const max = Math.max(0.001, ...hist.map((d) => d.kwh));
-    const bars = hist
-      .map((d, i) => {
-        const today = i === hist.length - 1;
-        return `<div class="bar ${today ? "today" : ""}" title="${d.day}：${fmt(d.kwh, 2)} 度"><div style="height:${(d.kwh / max) * 100}%"></div><span>${today ? "今" : Number(d.day.slice(8))}</span></div>`;
+    this._loadEnergy();
+    const e = this._energy;
+    const head = `<div class="ph"><div><h1>用電</h1><div class="sub">${
+      e ? `插座記錄的開機時間 × 瓦數・台電累進電價 ${fmt(e.price, 2)} 元/度（${esc(e.season)}）` : "讀取插座記錄的使用時間…"
+    }</div></div></div>`;
+    if (!e) return `${head}<div class="card"><div class="empty">${this._energyErr ? "讀不到插座的使用時間，稍後再試。" : "讀取中…"}</div></div>`;
+    const range = this._energyRange || "days";
+    const series = range === "days" ? e.days : e.months;
+    const useKwh = e.plugs.some((p) => p.watts);
+    const val = (x) => (useKwh ? x.kwh : x.hours);
+    const max = Math.max(0.001, ...series.map(val));
+    const bars = series
+      .map((x, i) => {
+        const last = i === series.length - 1;
+        const label = range === "days" ? (last ? "今" : Number(x.day.slice(8))) : `${Number(x.month.slice(5))}月`;
+        const show = range === "months" || last || i % 5 === 4;
+        const tip = range === "days" ? x.day : x.month;
+        return `<div class="bar ${last ? "today" : ""}" title="${tip}：${useKwh ? `${fmt(x.kwh, 1)} 度，` : ""}開了 ${fmt(x.hours, 0)} 小時${x.cost != null ? `・約 $${fmt(x.cost)}` : ""}"><div style="height:${(val(x) / max) * 100}%"></div><span>${show ? label : ""}</span></div>`;
       })
       .join("");
-    const plugs = this._plugs;
-    const rows = plugs
+    const known = e.plugs.filter((p) => p.known);
+    const totalKwh = known.reduce((a, p) => a + (p.month_kwh || 0), 0) || 1;
+    const totalMin = known.reduce((a, p) => a + (p.month_min || 0), 0) || 1;
+    const rows = [...e.plugs]
+      .sort((a, b) => (b.month_kwh || 0) - (a.month_kwh || 0) || (b.month_min || 0) - (a.month_min || 0))
       .map((p) => {
-        if (p.mode === "metered") {
-          return `<div class="row"><div class="di">${ic(deviceIcon(p.name))}</div><div class="nm"><div class="a"><span>${esc(p.name)}</span></div><div class="b">有計量・現在 ${fmtWatts(p.power)}</div></div></div>`;
-        }
-        return `<div class="row"><div class="di">${ic(deviceIcon(p.name))}</div><div class="nm"><div class="a"><span>${esc(p.name)}</span></div></div>
-          <select class="pick" style="max-width:150px" data-c="watts" data-v="${esc(p.id)}" aria-label="${esc(p.name)} 接的電器">${this._wattOptions(p)}</select></div>`;
+        const share = p.watts ? (p.month_kwh || 0) / totalKwh : (p.month_min || 0) / totalMin;
+        const right = !p.known
+          ? `<span class="muted">讀不到</span>`
+          : p.watts
+            ? `<b>${fmt(p.month_kwh, 1)} 度</b><small>$${fmt(p.month_cost)}</small>`
+            : `<span class="pill quiet">設定瓦數</span>`;
+        return `
+          <div class="row tap erow" data-a="dev" data-v="${esc(p.id)}" role="button" tabindex="0">
+            <div class="di">${ic(deviceIcon(p.name))}</div>
+            <div class="nm"><div class="a"><span>${esc(p.name)}</span></div>
+              <div class="b">${p.known ? `開了 ${fmtMin(p.month_min)}` : ""}${p.watts ? `・${fmt(p.watts)} W` : ""}</div>
+              <div class="share"><i style="width:${Math.max(1, share * 100)}%"></i></div></div>
+            <div class="ev">${right}</div>
+          </div>`;
       })
       .join("");
-    const noMeter = plugs.every((p) => p.mode !== "metered");
-    const setCount = plugs.filter((p) => p.mode === "metered" || p.watts).length;
+    const hasLast = !!e.last_month.kwh;
     return `
-      <div class="ph"><div><h1>用電</h1><div class="sub">台電累進電價・${esc(sum.season)} ${fmt(sum.price, 2)} 元/度</div></div></div>
+      ${head}
       <div class="grid">
         <section class="card">
-          <div class="ch"><div class="ri" style="background:var(--on-soft);color:var(--on-text)">${ic("mdi:chart-bar")}</div><div class="n">用了多少電</div></div>
-          <div class="stats">
-            <div class="stat"><div class="l">現在</div><div class="v">${sum.power === null ? "—" : fmtWatts(sum.power)}</div></div>
-            <div class="stat"><div class="l">今天</div><div class="v">${fmt(sum.energy_today, 2)}<small>度</small></div><div class="l">約 $${fmt(sum.cost_today, 1)}</div></div>
-            <div class="stat"><div class="l">本月</div><div class="v">${fmt(sum.energy_month, 1)}<small>度</small></div><div class="l">約 $${fmt(sum.cost_month)}</div></div>
+          <div class="hero">
+            <div><div class="l">本月約</div><div class="big">$${fmt(e.month.cost)}</div><div class="s">${fmt(e.month.kwh, 1)} 度</div></div>
+            <div class="hside">
+              <div><span>今天</span><b>${fmt(e.today.kwh, 1)} 度</b></div>
+              <div><span>上個月</span><b>${hasLast ? `${fmt(e.last_month.kwh, 0)} 度` : "—"}</b></div>
+              <div><span>上月電費</span><b>${hasLast ? `$${fmt(e.last_month.cost)}` : "—"}</b></div>
+            </div>
           </div>
-          <div class="chart">${bars}</div>
-          ${noMeter ? `<p class="desc">你的插座量不到用電。在「估算用電」幫插座選接的是什麼電器，就會用「開著的時間 × 瓦數」估算。</p>` : ""}
+          ${e.unset ? `<div class="hint" style="margin:0 16px 14px">有 ${e.unset} 個裝置沒設定瓦數，沒算進電費。點下面的裝置設定「接的電器」。</div>` : ""}
+          <div class="ch" style="padding-top:4px"><div class="n" style="font-size:15px">${useKwh ? "用電（度）" : "開機時數"}</div>
+            <div class="end"><div class="seg">${[["days", "近 30 天"], ["months", "近 12 個月"]]
+              .map(([k, l]) => `<button class="${range === k ? "sel" : ""}" data-a="energy-range" data-v="${k}">${l}</button>`)
+              .join("")}</div></div></div>
+          <div class="chart ${range}">${bars}</div>
+          <p class="desc">估算：開著的時間 × 設定的瓦數。時間是插座自己記錄的，樹莓派停機時也有記錄；實際用電會依電器狀態而不同。</p>
         </section>
         <section class="card">
-          <div class="ch"><div class="ri">${ic("mdi:flash")}</div><div class="n">估算用電</div><div class="c">${setCount}／${plugs.length} 個已設定</div></div>
-          <p class="desc">量不到用電的插座，告訴它接的是什麼電器，就能用「開著的時間 × 瓦數」估算。</p>
-          ${this._energyMore ? rows : ""}
-          <button class="add" data-a="energy-more">${this._energyMore ? "收起" : "設定每個插座接的電器"}</button>
+          <div class="ch"><div class="ri" style="background:var(--on-soft);color:var(--on-text)">${ic("mdi:chart-bar")}</div><div class="n">本月各裝置</div><div class="c">點一下可以改瓦數</div></div>
+          ${rows}
         </section>
         <section class="card">
           <div class="ch"><div class="ri">${ic("mdi:cash")}</div><div class="n">電費</div></div>
           ${this._numberRow("household_monthly_kwh", "家裡每月用電", "電費單上的度數（兩個月一期的話除以 2），用來決定電價級距", "度", 10)}
-          <div class="set"><div class="tx"><div class="l">目前電價</div><div class="s">依每月用電和季節自動算出</div></div><div class="readout">${fmt(sum.price, 2)} 元/度<small>${esc(sum.season)}</small></div></div>
+          <div class="set"><div class="tx"><div class="l">目前電價</div><div class="s">依每月用電和季節自動算出（夏月 6～9 月較貴）</div></div><div class="readout">${fmt(e.price, 2)} 元/度<small>${esc(e.season)}</small></div></div>
         </section>
       </div>`;
   }
@@ -1716,8 +1774,8 @@ class PlugApp extends HTMLElement {
           this._closeSheet();
           this._showToast(res.failed ? `斷開 ${res.ok} 台，${res.failed} 台沒有回應` : `已斷開 ${res.ok} 台插座的 TP-Link 雲端`);
         }),
-      "energy-more": () => {
-        this._energyMore = !this._energyMore;
+      "energy-range": (v) => {
+        this._energyRange = v;
         this._render();
       },
       "timer-custom": () => {

@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import asyncio
+import calendar
 import logging
 import time
 from datetime import date, datetime, timedelta
@@ -335,6 +336,27 @@ async def usage(device: Any, ctx: dict[str, Any], days: int = 14) -> dict[str, A
               for i in range(days)]
     month_total = sum(v for k, v in per_day.items() if k.startswith(f"{today.year:04d}-{today.month:02d}"))
     return {"today": per_day.get(today.isoformat(), 0), "month": month_total, "days": series}
+
+
+async def usage_history(device: Any, ctx: dict[str, Any]) -> dict[str, dict[str, int]]:
+    """插座自己記錄的使用時間：這個月和上個月的每天、今年和去年的每月（分鐘）。"""
+    today = date.today()
+    prev = today.replace(day=1) - timedelta(days=1)
+    days: dict[str, int] = {}
+    for y, m in {(today.year, today.month), (prev.year, prev.month)}:
+        body = await query(device, ctx, "schedule", "get_daystat", {"year": y, "month": m})
+        for d in body.get("day_list", []):
+            minutes = int(d.get("time", 0))
+            if 0 <= minutes <= 1440:  # 插座時鐘重置過會留下不合理的數字，不採用
+                days[f"{d['year']:04d}-{d['month']:02d}-{d['day']:02d}"] = minutes
+    months: dict[str, int] = {}
+    for y in {today.year, today.year - 1}:
+        body = await query(device, ctx, "schedule", "get_monthstat", {"year": y})
+        for mm in body.get("month_list", []):
+            minutes = int(mm.get("time", 0))
+            if 0 <= minutes <= calendar.monthrange(mm["year"], mm["month"])[1] * 1440:
+                months[f"{mm['year']:04d}-{mm['month']:02d}"] = minutes
+    return {"days": days, "months": months}
 
 
 # ---------- 雲端 ----------

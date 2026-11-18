@@ -15,6 +15,7 @@ POST /api/scenes/{id}/run   執行情境（可以 /api/restore 復原）
 POST /api/schedules         新增排程；PUT/DELETE /api/schedules/{id}
 PUT  /api/settings
 PUT  /api/away              離家模式 {"enabled", "start", "end", "plugs"}
+GET  /api/energy             用電（插座自己記錄的開機時間 × 瓦數）
 GET  /api/plugs/{id}/usage  插座自己記錄的使用時間；POST /api/plugs/{id}/reboot 重新啟動
 PUT/DELETE /api/kasa-rules  直接修改／刪除插座裡 Kasa App 設的排程
 POST /api/kasa-rules/adopt  Kasa App 設的排程改由家庭中控管理
@@ -357,6 +358,14 @@ async def delete_schedule(sched_id: str) -> dict[str, Any]:
 
 
 # ---- 插座本身的功能 ----
+
+
+@app.get("/api/energy")
+async def energy() -> dict[str, Any]:
+    """用電頁的資料：插座自己記錄的開機時間 × 瓦數，近 30 天、近 12 個月、各裝置。"""
+    if time.time() - hub._usage_at > 600:
+        await hub.refresh_usage()
+    return hub.energy_report()
 
 
 @app.get("/api/plugs/{plug_id}/usage")
