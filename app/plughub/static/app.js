@@ -819,6 +819,8 @@ const STYLE = `
   .set.sugg .sun { display: inline-flex; align-items: center; gap: 2px; }
   .set.sugg .sun .i { width: 15px; height: 15px; }
   .netwarn.past { color: var(--muted); }
+  .mapside .ch .x { width: 32px; height: 32px; border-radius: 50%; background: var(--soft); color: var(--muted); display: flex; align-items: center; justify-content: center; }
+  .mapside .ch .x .i { width: 18px; height: 18px; }
   .netdev .l { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
   .netdev .tag, .set .tag { display: inline-flex; align-items: center; gap: 3px; font-size: 11.5px; font-weight: 500; color: var(--muted); background: var(--soft); border-radius: 6px; padding: 2px 7px 2px 5px; }
   .set .tag .i { width: 13px; height: 13px; }
@@ -2249,6 +2251,7 @@ class PlugApp extends HTMLElement {
       api("GET", "/api/sensing")
         .then((d) => {
           this._mapSense = d;
+          this._mapAutoAps();
           this._render();
         })
         .catch(() => {});
@@ -2256,6 +2259,36 @@ class PlugApp extends HTMLElement {
     sense();
     clearInterval(this._mapTimer);
     this._mapTimer = setInterval(sense, 10000);
+  }
+
+  // 從路由器讀到的每一台（主路由器、節點）自動放上地圖；放在連到它的裝置中間，之後可以拖到實際位置
+  _mapAutoAps() {
+    const fp = this._fp;
+    const nodes = this._mapSense?.net?.nodes || [];
+    if (!fp?.rooms || !nodes.length) return;
+    const done = new Set([...(fp.auto_nodes || []), ...fp.aps.map((a) => a.node).filter(Boolean)]);
+    const todo = nodes.filter((n) => !done.has(n.mac));
+    if (!todo.length) return;
+    const devs = this._mapDevices();
+    // 已經自己擺了、還沒指定是哪一台的基地台：依序對上（主路由器先），不另外加
+    const free = fp.aps.filter((a) => !a.node && fp.items[`ap:${a.id}`]);
+    todo.sort((a, b) => b.main - a.main);
+    todo.forEach((n, i) => {
+      const own = free.shift();
+      if (own) {
+        own.node = n.mac;
+        if (/^Wi-Fi 基地台 \d+$/.test(own.name)) own.name = n.model;
+        return;
+      }
+      const near = devs.filter((d) => d.node === n.mac && fp.items[d.key]).map((d) => fp.items[d.key]);
+      const x = near.length ? near.reduce((t, it) => t + it.x, 0) / near.length : fp.w * (0.3 + 0.4 * i);
+      const y = near.length ? near.reduce((t, it) => t + it.y, 0) / near.length : fp.h * 0.15;
+      const id = `n${n.mac.replace(/:/g, "").slice(-6).toLowerCase()}`;
+      fp.aps.push({ id, name: n.model, node: n.mac, z: AP_Z });
+      fp.items[`ap:${id}`] = { x, y };
+    });
+    fp.auto_nodes = [...done, ...todo.map((n) => n.mac)];
+    this._mapSave();
   }
 
   // 每台插座一個標記（排插算一台）
@@ -2349,7 +2382,7 @@ class PlugApp extends HTMLElement {
       const R = Math.round;
       const rooms = this._fp.rooms.map((r) => ({ ...r, x: R(r.x), y: R(r.y), w: R(r.w), h: R(r.h) }));
       const items = Object.fromEntries(Object.entries(this._fp.items).map(([k, v]) => [k, { x: R(v.x), y: R(v.y), z: v.z ?? null }]));
-      api("PUT", "/api/floorplan", { w, h, meters: this._fp.meters || 12, rooms, items, aps }).catch((err) => this._showToast(`地圖沒有存到：${err.message}`));
+      api("PUT", "/api/floorplan", { w, h, meters: this._fp.meters || 12, rooms, items, aps, auto_nodes: this._fp.auto_nodes || [] }).catch((err) => this._showToast(`地圖沒有存到：${err.message}`));
     }, 400);
   }
 
@@ -2527,9 +2560,9 @@ class PlugApp extends HTMLElement {
         const it = fp.items[d.key];
         const m = motion[d.key];
         const ring = layer === "motion" && m != null && m > 0.15 ? `<circle r="${20 + Math.min(m, 3) * 12}" class="halo" style="--a:${Math.min(1, m / 3).toFixed(2)}"/>` : "";
-        const sel = edit && this._mapSel?.kind === "dev" && this._mapSel.id === d.key;
+        const sel = this._mapSel?.kind === "dev" && this._mapSel.id === d.key;
         const tip = `${d.full}：${d.online ? `訊號 ${sigText(d.rssi)} dBm` : "離線"}${m != null ? `・擾動 ${fmt(m, 1)}` : ""}`;
-        return `<g class="mk ${weak(d.rssi) ? "weak" : ""} ${d.online ? "" : "off"} ${sel ? "sel" : ""}" transform="translate(${it.x} ${it.y}) scale(${k.toFixed(2)})" ${edit ? `data-mdrag="item" data-id="${esc(d.key)}"` : ""} data-tip="${esc(tip)}">
+        return `<g class="mk ${weak(d.rssi) ? "weak" : ""} ${d.online ? "" : "off"} ${sel ? "sel" : ""}" transform="translate(${it.x} ${it.y}) scale(${k.toFixed(2)})" ${edit ? `data-mdrag="item" data-id="${esc(d.key)}"` : `data-a="map-pick" data-v="${esc(d.key)}"`} data-tip="${esc(tip)}">
           ${ring}<circle r="15" class="dot"/><text class="v" y="5">${layer === "motion" ? (m == null ? "·" : fmt(m, 1)) : sigText(d.rssi)}</text>
           ${showNames || sel ? `<text class="n" y="31">${esc(d.name.length > 10 ? `${d.name.slice(0, 9)}…` : d.name)}</text>` : ""}</g>`;
       })
@@ -2538,8 +2571,8 @@ class PlugApp extends HTMLElement {
       .filter((a) => fp.items[`ap:${a.id}`])
       .map((a) => {
         const it = fp.items[`ap:${a.id}`];
-        const sel = edit && this._mapSel?.kind === "ap" && this._mapSel.id === a.id;
-        return `<g class="ap ${sel ? "sel" : ""}" transform="translate(${it.x} ${it.y}) scale(${k.toFixed(2)})" ${edit ? `data-mdrag="item" data-id="ap:${esc(a.id)}"` : ""} data-tip="${esc(a.name)}">
+        const sel = this._mapSel?.kind === "ap" && this._mapSel.id === a.id;
+        return `<g class="ap ${sel ? "sel" : ""}" transform="translate(${it.x} ${it.y}) scale(${k.toFixed(2)})" ${edit ? `data-mdrag="item" data-id="ap:${esc(a.id)}"` : `data-a="map-pick" data-v="ap:${esc(a.id)}"`} data-tip="${esc(a.name)}">
           <rect x="-17" y="-17" width="34" height="34" rx="9"/><path d="M-9,-2 Q0,-11 9,-2 M-5,2 Q0,-3 5,2" class="w"/><circle cy="6" r="2.5" class="wd"/>
           <text class="n" y="33">${esc(a.name.length > 12 ? `${a.name.slice(0, 11)}…` : a.name)}</text></g>`;
       })
@@ -2571,23 +2604,25 @@ class PlugApp extends HTMLElement {
           .join("")}</div><div class="end">${legend}</div></div>`;
     // 編輯：選到的房間／基地台可以改名、刪除；還沒擺上去的裝置
     let side = "";
-    if (edit) {
-      const sel = this._mapSel;
+    const sel = this._mapSel;
+    let picked = "";
+    {
       const zSel = (val, opts) =>
         `<select class="gsel" data-c="map-z" aria-label="高度">${opts.map(([v, l]) => `<option value="${v}" ${Math.abs(v - val) < 0.01 ? "selected" : ""}>${l}（${v} 公尺）</option>`).join("")}${opts.some(([v]) => Math.abs(v - val) < 0.01) ? "" : `<option selected value="${val}">${val} 公尺</option>`}</select>`;
       const ssids = [...new Set(devs.map((d) => d.ssid).filter(Boolean))];
       const nodes = this._mapSense?.net?.nodes || [];
-      let selHtml = `<p class="desc">點房間、裝置或 Wi-Fi 基地台可以選取；拖曳移動，房間拉右下角的小方塊改大小。</p>
+      let selHtml = "";
+      if (edit) selHtml = `<p class="desc">點房間、裝置或 Wi-Fi 基地台可以選取；拖曳移動，房間拉右下角的小方塊改大小。</p>
         <div class="q">地圖的實際寬度 <small>用來算距離</small></div>
         <div class="field"><input class="text num" type="number" min="2" max="100" step="0.5" inputmode="decimal" data-c="map-meters" value="${fp.meters || 12}" aria-label="實際寬度"><span class="unit">公尺</span></div>`;
-      if (sel?.kind === "room") {
+      if (sel?.kind === "room" && edit) {
         const r = fp.rooms.find((x) => x.id === sel.id);
         if (r)
           selHtml = `<div class="q">房間名稱</div><div class="field"><input class="text" data-c="map-name" value="${esc(r.name)}" maxlength="20" aria-label="房間名稱"><button class="btn danger" data-a="map-room-del" data-v="${esc(r.id)}" data-confirm="從地圖移除這個房間？" data-confirm-text="只影響地圖，家庭中控的房間設定不變。" data-confirm-ok="移除">移除</button></div>`;
       } else if (sel?.kind === "ap") {
         const a = fp.aps.find((x) => x.id === sel.id);
         if (a)
-          selHtml = `<div class="q">Wi-Fi 基地台名稱</div><div class="field"><input class="text" data-c="map-name" value="${esc(a.name)}" maxlength="30" aria-label="名稱"><button class="btn danger" data-a="map-ap-del" data-v="${esc(a.id)}" data-confirm="移除這個 Wi-Fi 基地台？" data-confirm-text="只從地圖移除。" data-confirm-ok="移除">移除</button></div>
+          selHtml = `${edit ? `<div class="q">Wi-Fi 基地台名稱</div><div class="field"><input class="text" data-c="map-name" value="${esc(a.name)}" maxlength="30" aria-label="名稱"><button class="btn danger" data-a="map-ap-del" data-v="${esc(a.id)}" data-confirm="移除這個 Wi-Fi 基地台？" data-confirm-text="只從地圖移除。" data-confirm-ok="移除">移除</button></div>` : `<div class="q">${esc(a.name)}</div>`}
             ${
               nodes.length
                 ? `<div class="q">這是哪一台 <small>從路由器讀到的；連在這台的裝置會自動畫線</small></div>
@@ -2611,8 +2646,12 @@ class PlugApp extends HTMLElement {
         if (d)
           selHtml = `<div class="q">${esc(d.full)}</div><p class="desc">訊號 ${sigText(d.rssi)} dBm${linkTxt ? `・${linkTxt}` : ""}</p>
             <div class="q">${d.router ? "放在多高" : "插在多高"}</div>${zSel(fp.items[d.key].z ?? DEV_Z, DEV_HEIGHTS)}
-            <button class="btn sm" data-a="map-unplace" data-v="${esc(d.key)}" style="margin-top:12px">從地圖拿下來</button>`;
+            ${edit ? `<button class="btn sm" data-a="map-unplace" data-v="${esc(d.key)}" style="margin-top:12px">從地圖拿下來</button>` : ""}`;
       }
+      picked = selHtml;
+    }
+    if (edit) {
+      const selHtml = picked;
       const tray = devs.filter((d) => !fp.items[d.key]);
       side = `
         <section class="card mapside">
@@ -2622,7 +2661,10 @@ class PlugApp extends HTMLElement {
     } else {
       const weakDevs = devs.filter((d) => d.online && weak(d.rssi));
       const off = devs.filter((d) => !d.online);
-      side = `
+      const pickCard = picked && (sel?.kind === "dev" || sel?.kind === "ap")
+        ? `<section class="card mapside"><div class="ch"><div class="n">${sel.kind === "ap" ? "Wi-Fi 基地台" : "裝置"}</div><div class="end"><button class="x" data-a="map-unpick" aria-label="關閉">${ic("mdi:close")}</button></div></div><div class="pad">${picked}</div></section>`
+        : "";
+      side = `${pickCard}
         <section class="card mapside">
           <div class="ch"><div class="n">訊號狀況</div></div>
           <div class="pad">
@@ -2637,7 +2679,7 @@ class PlugApp extends HTMLElement {
                   ? ""
                   : `<p class="desc" style="margin-top:10px">按右上角「編輯」可以把你的 Wi-Fi 基地台也擺上去，比較容易看出哪裡離基地台太遠。</p>`
             }
-            <p class="desc" style="margin-top:10px">顏色是用各裝置的訊號強度推算出來的，只是大概的樣子：沒有裝置的地方是猜的。</p>
+            <p class="desc" style="margin-top:10px">點裝置或 Wi-Fi 基地台可以設定它放的高度。顏色是用各裝置的訊號強度推算出來的，只是大概的樣子：沒有裝置的地方是猜的。</p>
           </div>
         </section>`;
     }
@@ -3019,6 +3061,16 @@ class PlugApp extends HTMLElement {
       },
       "map-layer": (v) => {
         this._mapLayer = v;
+        this._render();
+      },
+      "map-pick": (v) => {
+        this._mapSel = v.startsWith("ap:") ? { kind: "ap", id: v.slice(3) } : { kind: "dev", id: v };
+        this._render();
+        // 手機上面板在地圖下面，捲過去
+        if (innerWidth < 900) requestAnimationFrame(() => this._root.querySelector(".mapside")?.scrollIntoView({ behavior: "smooth", block: "nearest" }));
+      },
+      "map-unpick": () => {
+        this._mapSel = null;
         this._render();
       },
       "map-place": (v) => {

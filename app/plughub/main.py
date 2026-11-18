@@ -412,6 +412,8 @@ async def put_floorplan(body: dict = Body(...)) -> dict[str, Any]:
                      for a in (body["aps"] or [])[:10]]
     if "meters" in body:
         fp["meters"] = _num(body["meters"], 2, 100)
+    if "auto_nodes" in body:  # 已經自動放過的路由器（使用者刪掉的不會再出現）
+        fp["auto_nodes"] = [m for m in (_mac(x) for x in (body["auto_nodes"] or [])[:10]) if m]
     fp["w"], fp["h"] = w, h
     store.save()
     return fp
