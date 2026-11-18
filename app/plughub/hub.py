@@ -39,6 +39,10 @@ def fmt_secs(sec: float) -> str:
 SCHEDULE_GRACE = 10  # 排程最多晚幾秒還會補執行
 DISCOVER_SECONDS = 60
 DEVICE_TIMEOUT = 4
+# 插座自己的倒數關閉（保險）：比樹莓派晚這幾秒，平常由樹莓派先關（才會發通知）；
+# 樹莓派當機、斷電時，插座時間到也會自己關
+FAILSAFE_GRACE = 5
+FAILSAFE_RETRY = 30  # 設定失敗（插座沒回應）多久後再試
 OFFLINE_NOTIFY_MINUTES = 10
 OVERLOAD_SECONDS = 60
 STANDBY_MIN_WATTS = 0.2
@@ -83,6 +87,8 @@ class Hub:
         self._schedule_done: dict[str, str] = {}  # 排程 ID（或「ID:restore」）→ 最後執行的「日期 時間」
         self._bg: set[asyncio.Task] = set()
         self._timers_busy = False
+        self._failsafe: dict[str, float] = {}  # 插座 ID → 已經寫進插座的關閉時間（0 = 已清除）
+        self._failsafe_retry: dict[str, float] = {}
         self._timer_failed: set[str] = set()  # 定時關閉失敗、已經通知過的插座
         self._offline_notified: set[str] = set()
         self._overload_notified: set[str] = set()
@@ -420,6 +426,50 @@ class Hub:
             timers[plug_id] = limit
             self._dirty = True
 
+    # ---- 插座自己的倒數關閉（保險）----
+
+    def _sync_failsafes(self) -> None:
+        """有最長開啟時間的插座開著時，把關閉時間也寫進插座本身；關掉後清除。"""
+        now = time.time()
+        timers = self.store.data["timers"]
+        for pid, plug in self.plugs.items():
+            guarded = bool(self.store.meta(pid).max_on_s)
+            want = timers.get(pid, 0.0) if (guarded and plug.is_on and plug.online) else 0.0
+            have = self._failsafe.get(pid)
+            if have is None and not want:
+                continue  # 從來沒寫過，也不需要
+            if have is not None and abs(have - want) < 1:
+                continue
+            if now < self._failsafe_retry.get(pid, 0):
+                continue
+            self._failsafe[pid] = want  # 先記下，避免同一秒重複送
+            self._spawn(self._write_failsafe(pid, want))
+
+    async def _write_failsafe(self, plug_id: str, deadline: float) -> None:
+        plug = self.plugs.get(plug_id)
+        entry = self.devices.get(plug.device_key) if plug else None
+        dev = entry.device if entry else None
+        if dev is None or not hasattr(dev, "sys_info"):  # 只有 Kasa（IOT）插座有這個功能
+            return
+        ctx = {}
+        if plug.child_index is not None:  # 排插的孔：要用插座回報的原始 ID
+            ctx = {"context": {"child_ids": [dev.sys_info["children"][plug.child_index]["id"]]}}
+        try:
+            await asyncio.wait_for(dev.protocol.query({**ctx, "count_down": {"delete_all_rules": {}}}), DEVICE_TIMEOUT)
+            if deadline:
+                delay = max(1, round(deadline - time.time() + FAILSAFE_GRACE))
+                res = await asyncio.wait_for(dev.protocol.query({**ctx, "count_down": {"add_rule": {
+                    "enable": 1, "delay": delay, "act": 0, "name": "homehub-failsafe"}}}), DEVICE_TIMEOUT)
+                err = res.get("count_down", {}).get("add_rule", {}).get("err_code", 0)
+                if err:
+                    raise RuntimeError(f"插座回應錯誤 {err}")
+                _LOGGER.info("%s 插座自己的倒數關閉：%d 秒後", self.name(plug), delay)
+            self._failsafe_retry.pop(plug_id, None)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("%s 設定插座倒數失敗，%d 秒後再試：%s", self.name(plug), FAILSAFE_RETRY, err)
+            self._failsafe.pop(plug_id, None)
+            self._failsafe_retry[plug_id] = time.time() + FAILSAFE_RETRY
+
     async def _run_timers_once(self) -> None:
         self._timers_busy = True
         try:
@@ -529,6 +579,7 @@ class Hub:
             # 定時關閉也每秒檢查（澆水可以設到秒）；上一輪還在關就不重複
             if not self._timers_busy:
                 self._spawn(self._run_timers_once())
+            self._sync_failsafes()
 
     def _due(self, key: str, hms: str, now: datetime) -> bool:
         """排程時間已到（容許晚 SCHEDULE_GRACE 秒，避免卡住時錯過），而且今天這個時間還沒執行過。"""
