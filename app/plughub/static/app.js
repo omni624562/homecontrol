@@ -445,6 +445,7 @@ const STYLE = `
   .sched .d { flex: 1; min-width: 0; }
   .sched .tag { display: inline-flex; align-items: center; gap: 3px; margin-top: 4px; font-size: 11.5px; font-weight: 500; color: var(--muted); background: var(--soft); border-radius: 6px; padding: 2px 7px 2px 5px; }
   .sched .tag .i { width: 13px; height: 13px; }
+  .sched .tag { white-space: nowrap; max-width: 100%; }
   .sched .tag.home { background: var(--accent-soft); color: var(--accent-text); }
   .sched .sun { display: inline-flex; align-items: center; gap: 3px; margin-right: 6px; color: var(--on-text); font-weight: 600; }
   .sched .sun .i { width: 15px; height: 15px; }
@@ -543,19 +544,24 @@ const STYLE = `
   @media (min-width: 900px) {
     .sheet.xwide { width: min(1040px, 100%); max-height: min(92vh, 960px); }
     .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; align-items: start; }
-    .col > :first-child { margin-top: 8px; }
+    .col > .q:first-child { margin-top: 18px; }
     .grab { display: none; }
     .xwide .wheel.r5 { --rows: 3; }
     .xwide .chip:not(.day) { height: 32px; font-size: 13.5px; padding: 0 12px; }
     .xwide .group-title { margin: 10px 2px 6px; }
     .xwide .q { margin-top: 16px; }
     .xwide .mini { height: 30px; }
-    /* 裝置詳細：內容自動分到兩欄，兩邊差不多高 */
-    .cols.flow { display: block; column-count: 2; column-gap: 32px; }
-    .cols.flow > .col { display: contents; }
-    .cols.flow .group, .cols.flow .protect, .cols.flow .opts, .cols.flow .field, .cols.flow .wheel, .cols.flow .note, .cols.flow .chips, .cols.flow .callout { break-inside: avoid; }
-    .cols.flow .q { break-after: avoid; }
-    .cols.flow > .col:first-child > :first-child { margin-top: 8px; }
+    .xwide .srooms { display: grid; grid-template-columns: 1fr 1fr; gap: 0 32px; align-items: start; }
+    .xwide .srooms .group-title.cont { display: flex; }
+    .xwide .srooms .scol > .group-title:first-child { margin-top: 0; }
+    .xwide .srow { padding: 3px 0; }
+    .xwide .srow .di { width: 28px; height: 28px; }
+    .xwide .srow .di .i { width: 16px; height: 16px; }
+    .xwide .srow .nm .a { font-size: 14.5px; }
+    .xwide .srow .seg { padding: 2px; }
+    .xwide .srow .seg button { padding: 4px 9px; font-size: 13px; }
+    .xwide .srooms .group-title { margin: 8px 2px 4px; }
+
     .xwide .gi { min-height: 46px; padding-top: 8px; padding-bottom: 8px; }
     .xwide .meta { margin-top: 10px; }
   }
@@ -592,6 +598,7 @@ const STYLE = `
   .seg.full button { flex: 1; height: 38px; padding: 0 6px; }
   .group-title { display: flex; align-items: center; font-size: 12.5px; font-weight: 600; color: var(--muted); margin: 16px 2px 8px; }
   .group-title .link { margin-left: auto; font-size: 13px; padding: 2px 4px; }
+  .group-title.cont { display: none; }
   /* 主要按鈕固定在下面 */
   .actions { position: sticky; bottom: calc(-20px - env(safe-area-inset-bottom)); z-index: 2; display: flex; gap: 10px; margin: 22px -20px 0; padding: 14px 20px calc(16px + env(safe-area-inset-bottom)); background: var(--card); border-top: 1px solid var(--line); }
   @media (min-width: 720px) { .actions { bottom: -24px; margin: 24px -24px 0; padding: 14px 24px 20px; } }
@@ -615,7 +622,9 @@ const STYLE = `
   .callout span { font-size: 13px; opacity: .85; }
   .callout.timer { background: var(--timer-soft); color: var(--timer); }
   .callout.bad { background: var(--danger-soft); color: var(--danger); }
-  .group.power { margin-top: 2px; }
+  .group.power { margin: 2px 0 6px; }
+  .group + .group, .protect + .group, .group + .protect, .callout + .group, .group.power + .callout { margin-top: 12px; }
+  .callout { margin-top: 12px; }
   .group.power .gl { font-weight: 600; }
   .opts.four { grid-template-columns: repeat(4, 1fr); }
   .link.sm { font-size: 13.5px; padding: 10px 2px 8px; display: inline-block; }
@@ -1259,11 +1268,11 @@ class PlugApp extends HTMLElement {
   _backupTag(x) {
     const home = (text) => `<div class="tag home">${ic("mdi:home-automation")}家庭中控${text ? `・${text}` : ""}</div>`;
     const b = x.backup_status || { total: 0, ok: 0, issues: [] };
-    if (!x.enabled || !b.total) return home(x.backup === false ? "不寫進插座" : "");
-    if (x.backup === false) return home("不寫進插座");
-    if (b.ok === b.total) return home(`插座備援 ${ic("mdi:check")}`);
-    if (b.issues.every((i) => i.pending)) return home("備援同步中…");
-    return `${home("")}<div class="tag warn">${ic("mdi:alert-circle-outline")}插座備援 ${b.ok}／${b.total}</div>`;
+    if (!x.enabled || !b.total) return home(x.backup === false ? "不備援" : "");
+    if (x.backup === false) return home("不備援");
+    if (b.ok === b.total) return home(`備援 ${ic("mdi:check")}`);
+    if (b.issues.every((i) => i.pending)) return home("備援同步中");
+    return `${home("")}<div class="tag warn">${ic("mdi:alert-circle-outline")}備援 ${b.ok}／${b.total}</div>`;
   }
 
   // 插座裡（Kasa App 設的）排程：和家庭中控的排程同樣呈現，可以直接開關、修改
@@ -2326,31 +2335,30 @@ class PlugApp extends HTMLElement {
     const max = p.max_on_s || 86400;
     if (s.timerDraft == null) s.timerDraft = Math.min(600, max);
     const status = !p.online ? "連不上" : on ? "開著" : "關著";
+    // 裝置詳細只看資訊、調整設定；開關在列表上
     const callouts = [
       !p.online && `<div class="callout bad">${ic("mdi:wifi-off")}<div><b>連不上這個插座</b><span>檢查插頭有沒有插好、Wi-Fi 有沒有訊號</span></div></div>`,
+      p.online && p.protect === "lock" && `<div class="callout">${ic("mdi:lock")}<div><b>已鎖定</b><span>App、Google Home、情境、排程都不能開關它；要開關請先把「防呆」改掉</span></div></div>`,
       p.online && on && p.timer && `<div class="callout timer">${ic("mdi:timer-outline")}<div><b>${fmtLeft(p.timer - now)}後自動關閉</b><span>${clockSec(p.timer)} 關閉</span></div>${p.max_on_s ? "" : `<button class="btn sm" data-a="timer-stop">取消</button>`}</div>`,
     ].filter(Boolean).join("");
     // 定時：有最長時間（澆水）就給短的選項
     const choices = p.max_on_s ? [...new Set([...SHORT_OPTIONS.filter((x) => x < max), max])].slice(-4) : TIMER_OPTIONS.slice(0, 4);
     const opts = choices.map((x) => `<button class="opt" data-a="timer-set" data-v="${x}">${fmtSec(x)}</button>`).join("");
-    const timer = p.online && p.protect !== "lock"
+    const timer = p.online && on && p.protect !== "lock"
       ? `<div class="q">${on ? "定時關閉" : "打開，並在多久後關閉"}</div>
          <div class="opts four">${opts}</div>
          <button class="link sm" data-a="timer-more">${s.customTimer ? "收起" : "自訂時間…"}</button>
          ${s.customTimer ? `${durPicker("timer", s.timerDraft)}<button class="btn primary big" style="margin-top:10px" data-a="timer-custom">${on ? "" : "打開，"}${fmtSec(s.timerDraft)}後關閉</button>` : ""}`
       : "";
+    // 防呆：一般放左欄；有最長開啟時間（左欄比較長）時放右欄，兩邊才差不多高
+    const protect = `
+      <div class="q">防呆</div>
+      <div class="protect">${PROTECT.map(([k, label, desc]) => `<button class="pr ${p.protect === k ? "sel" : ""}" data-a="protect" data-v="${k}" aria-pressed="${p.protect === k}"><b>${k === "lock" ? ic("mdi:lock") : ""}${label}</b><span>${desc}</span></button>`).join("")}</div>`;
     const roomOpts = [`<option value="">還沒分房間</option>`, ...this._rooms.map((r) => `<option value="${esc(r.id)}" ${p.room === r.id ? "selected" : ""}>${esc(r.name)}</option>`)].join("");
     return `
       ${this._sheetHead(deviceIcon(p.name), p.name, `${room}・${status}`, on ? "background:var(--on-soft);color:var(--on)" : "")}
-      ${
-        !p.online
-          ? ""
-          : p.protect === "lock"
-            ? `<div class="group power"><div class="gi"><div class="gt"><div class="gl">電源・${on ? "開著" : "關著"}</div><div class="gs">已鎖定，要開關請先把下面的「防呆」改掉</div></div><span class="lockmark">${ic("mdi:lock")}</span></div></div>`
-            : `<div class="group power"><div class="gi"><div class="gt"><div class="gl">電源</div></div><button class="sw ${on ? "on" : ""}" data-a="dev-power" role="switch" aria-checked="${on}" aria-label="電源"></button></div></div>`
-      }
       ${callouts}
-      <div class="cols flow"><div class="col">
+      <div class="cols"><div class="col">
       ${timer}
       <div class="q">名稱</div>
       <div class="field"><input class="text" data-plug-name data-enter="plug-save" value="${esc(p.name)}" maxlength="30" aria-label="名稱"><button class="btn" data-a="plug-save">改名</button></div>
@@ -2370,10 +2378,11 @@ class PlugApp extends HTMLElement {
         ${p.max_on_s ? this._maxOnEditor(s, p) : ""}
       </div>
       ${p.max_on_s ? `<p class="note">App、Google Home、排程、情境、插座按鈕打開都算；插座本身也會倒數，樹莓派停掉照樣會關。</p>` : ""}
+      ${p.max_on_s ? "" : protect}
       </div><div class="col">
-      <div class="q">防呆</div>
-      <div class="protect">${PROTECT.map(([k, label, desc]) => `<button class="pr ${p.protect === k ? "sel" : ""}" data-a="protect" data-v="${k}" aria-pressed="${p.protect === k}"><b>${k === "lock" ? ic("mdi:lock") : ""}${label}</b><span>${desc}</span></button>`).join("")}</div>
-      <div class="group" style="margin-top:10px">
+      ${p.max_on_s ? protect : ""}
+      <div class="q">Google Home</div>
+      <div class="group">
         <div class="gi">
           <div class="gt"><div class="gl">讓 Google Home 控制</div><div class="gs">關掉後，語音說「全部關掉」也不會動到它</div></div>
           <button class="sw ${p.matter !== false ? "on" : ""}" data-a="matter-toggle" role="switch" aria-checked="${p.matter !== false}" aria-label="讓 Google Home 控制"></button>
@@ -2508,44 +2517,61 @@ class PlugApp extends HTMLElement {
   _sceneSheet(s) {
     const d = s.draft;
     const icons = SCENE_ICONS.map((x) => `<button class="chip ${d.icon === x ? "sel" : ""}" data-a="scene-icon" data-v="${x}" aria-label="選這個圖示">${ic(x)}</button>`).join("");
-    const rows = this._groups()
-      .map((g) => {
-        const list = g.plugs
-          .map((p) => {
-            const act = d.actions[p.id] || "keep";
-            const seg = [
-              ["on", "打開"],
-              ["off", "關閉"],
-              ["keep", "不動"],
-            ]
-              .map(([k, label]) => {
-                const dis = k === "off" && p.keep_on;
-                return `<button class="${act === k ? `sel ${k}` : ""}" data-a="scene-act" data-v="${esc(p.id)}" data-d="${k}" ${dis ? 'disabled title="常開的插座不會被關"' : ""}>${label}</button>`;
-              })
-              .join("");
-            return `<div class="srow ${act === "on" ? "on" : ""}"><div class="di">${ic(deviceIcon(p.name))}</div><div class="nm"><div class="a"><span>${esc(p.name)}</span></div>${p.keep_on ? '<div class="b">常開</div>' : ""}</div><div class="seg">${seg}</div></div>`;
-          })
-          .join("");
-        return `<div class="group-title">${esc(g.name)}</div>${list}`;
-      })
-      .join("");
+    const row = (p) => {
+      const act = d.actions[p.id] || "keep";
+      const seg = [
+        ["on", "打開"],
+        ["off", "關閉"],
+        ["keep", "不動"],
+      ]
+        .map(([k, label]) => {
+          const dis = k === "off" && p.keep_on;
+          return `<button class="${act === k ? `sel ${k}` : ""}" data-a="scene-act" data-v="${esc(p.id)}" data-d="${k}" ${dis ? 'disabled title="常開的插座不會被關"' : ""}>${label}</button>`;
+        })
+        .join("");
+      return `<div class="srow ${act === "on" ? "on" : ""}"><div class="di">${ic(deviceIcon(p.name))}</div><div class="nm"><div class="a"><span>${esc(p.name)}</span></div>${p.keep_on ? '<div class="b">常開</div>' : ""}</div><div class="seg">${seg}</div></div>`;
+    };
+    // 插座清單分成兩半（寬螢幕左右兩欄）：在中間切開；切在房間中間時，右欄開頭補「房間（續）」
+    const items = [];
+    for (const g of this._groups()) {
+      items.push({ title: g.name, h: 0.7 });
+      for (const p of g.plugs) items.push({ p, g: g.name, h: 1 });
+    }
+    const total = items.reduce((a, x) => a + x.h, 0);
+    let acc = 0;
+    let cut = items.length;
+    for (let k = 0; k < items.length; k++) {
+      if (acc + items[k].h / 2 > total / 2) {
+        cut = items[k - 1]?.title ? k - 1 : k; // 不要讓房間標題留在左欄最底下
+        break;
+      }
+      acc += items[k].h;
+    }
+    const html = (list) => list.map((x) => (x.title ? `<div class="group-title">${esc(x.title)}</div>` : row(x.p))).join("");
+    const right = items.slice(cut);
+    const cont = right[0] && !right[0].title ? `<div class="group-title cont">${esc(right[0].g)}（續）</div>` : "";
+    const rows = `<div class="scol">${html(items.slice(0, cut))}</div><div class="scol">${cont}${html(right)}</div>`;
     return `
       ${this._sheetHead(d.icon, s.id ? "編輯情境" : "新增情境", "按一下情境按鈕，一次設定好多個插座")}
-      <div class="q">名稱</div>
-      <input class="text" data-c="scene-name" data-autofocus value="${esc(d.name)}" maxlength="20" placeholder="例如：看電影、回家" aria-label="情境名稱">
-      <div class="q">圖示</div>
-      <div class="chips">${icons}</div>
-      <div class="q">按下時，每個插座要：</div>
-      <div class="chips" style="margin-bottom:6px">
-        <button class="chip" data-a="scene-all" data-v="off">全部設成關閉</button>
-        <button class="chip" data-a="scene-all" data-v="keep">全部設成不動</button>
-      </div>
-      ${rows}
-      <div class="q">之後新找到的插座：</div>
-      <div class="seg full">
-        <button class="${d.others === "keep" ? "sel" : ""}" data-a="scene-others" data-v="keep">不動</button>
-        <button class="${d.others === "off" ? "sel off" : ""}" data-a="scene-others" data-v="off">關閉</button>
-      </div>
+      <div class="cols"><div class="col">
+        <div class="q">名稱</div>
+        <input class="text" data-c="scene-name" data-autofocus value="${esc(d.name)}" maxlength="20" placeholder="例如：看電影、回家" aria-label="情境名稱">
+        <div class="q">圖示</div>
+        <div class="chips">${icons}</div>
+      </div><div class="col">
+        <div class="q">按下時，每個插座要：</div>
+        <div class="chips">
+          <button class="chip" data-a="scene-all" data-v="off">全部設成關閉</button>
+          <button class="chip" data-a="scene-all" data-v="keep">全部設成不動</button>
+        </div>
+        <div class="q">之後新找到的插座：</div>
+        <div class="seg full">
+          <button class="${d.others === "keep" ? "sel" : ""}" data-a="scene-others" data-v="keep">不動</button>
+          <button class="${d.others === "off" ? "sel off" : ""}" data-a="scene-others" data-v="off">關閉</button>
+        </div>
+      </div></div>
+      <div class="q">每個插座</div>
+      <div class="srooms">${rows}</div>
       <div class="err"></div>
       <div class="actions">
         ${s.id ? `<button class="btn danger" data-a="scene-delete">刪除情境</button>` : `<button class="btn" data-a="close">取消</button>`}
