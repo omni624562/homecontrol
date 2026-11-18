@@ -366,6 +366,8 @@ async def delete_schedule(sched_id: str) -> dict[str, Any]:
 # ---- 訊號地圖 ----
 
 FLOORPLAN_IMAGE = DATA_DIR / "floorplan.img"
+IMAGE_MAGIC = ((b"\xff\xd8\xff", "image/jpeg"), (b"\x89PNG\r\n\x1a\n", "image/png"), (b"RIFF", "image/webp"))
+IMAGE_HEADERS = {"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "default-src 'none'; sandbox"}
 
 
 def _num(v: Any, lo: float, hi: float) -> float:
@@ -404,15 +406,25 @@ async def put_floorplan(body: dict = Body(...)) -> dict[str, Any]:
 @app.post("/api/floorplan/image")
 async def put_floorplan_image(body: dict = Body(...)) -> dict[str, Any]:
     """平面圖底圖：{"data": "data:image/png;base64,..."}（最大 5 MB）。"""
-    data = str(body.get("data", ""))
-    if not data.startswith("data:image/") or ";base64," not in data:
-        raise HTTPException(400, "請上傳圖片")
     import base64
-    raw = base64.b64decode(data.split(",", 1)[1])
+    import binascii
+    data = str(body.get("data", ""))
+    if ";base64," not in data:
+        raise HTTPException(400, "請上傳圖片")
+    try:
+        raw = base64.b64decode(data.split(",", 1)[1], validate=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(400, "請上傳圖片") from None
     if len(raw) > 5 * 1024 * 1024:
         raise HTTPException(400, "圖片太大（最大 5 MB）")
+    # 只收點陣圖，而且看檔案內容判斷，不相信上傳者說的格式（SVG 之類能夾帶程式碼的一律不收）
+    mime = next((m for sig, m in IMAGE_MAGIC if raw.startswith(sig)), None)
+    if mime == "image/webp" and raw[8:12] != b"WEBP":
+        mime = None
+    if not mime:
+        raise HTTPException(400, "只能上傳 JPEG、PNG 或 WebP 圖片")
     FLOORPLAN_IMAGE.write_bytes(raw)
-    store.data["floorplan"]["image"] = data[5:data.index(";")] + "|" + str(int(time.time()))
+    store.data["floorplan"]["image"] = mime + "|" + str(int(time.time()))
     store.save()
     return store.data["floorplan"]
 
@@ -430,7 +442,10 @@ async def floorplan_image() -> Response:
     img = store.data["floorplan"].get("image")
     if not img or not FLOORPLAN_IMAGE.exists():
         raise HTTPException(404, "沒有平面圖")
-    return FileResponse(FLOORPLAN_IMAGE, media_type=img.split("|")[0], headers={"Cache-Control": "no-cache"})
+    mime = img.split("|")[0]
+    if mime not in {m for _, m in IMAGE_MAGIC}:
+        raise HTTPException(404, "沒有平面圖")
+    return FileResponse(FLOORPLAN_IMAGE, media_type=mime, headers=IMAGE_HEADERS)
 
 
 @app.get("/api/sensing")
