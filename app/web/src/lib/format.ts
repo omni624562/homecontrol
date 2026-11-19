@@ -45,3 +45,10 @@ export function dayLabel(iso: string) {
 
 // 分鐘數：「45 分鐘」「3 小時 20 分」
 export const fmtMin = (m: number) => (m < 60 ? `${Math.round(m)} 分鐘` : `${Math.floor(m / 60)} 小時${Math.round(m % 60) ? ` ${Math.round(m % 60)} 分` : ""}`);
+
+// 公車預估到站：秒 → 「進站中」「4 分」；負的是狀態
+export function busEta(sec: number | null): string {
+  if (sec == null) return "—";
+  if (sec >= 0) return sec < 60 ? "進站中" : `${Math.round(sec / 60)} 分`;
+  return ({ "-1": "未發車", "-2": "不停靠", "-3": "末班已過", "-4": "今日未營運" } as Record<string, string>)[String(sec)] || "—";
+}

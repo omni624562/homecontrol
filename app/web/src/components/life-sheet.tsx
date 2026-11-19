@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Droplets, Home, Loader2, Truck, Zap, ZapOff } from "lucide-react";
+import { Bus, Droplets, Home, Loader2, Truck, Zap, ZapOff } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Sheet } from "@/components/responsive-sheet";
 import { api } from "@/lib/api";
-import { dayLabel, pad2, WEEK } from "@/lib/format";
+import { busEta, dayLabel, pad2, WEEK } from "@/lib/format";
 import { useHub } from "@/lib/hub";
 import type { Outage } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -24,13 +24,15 @@ function range(x: Outage) {
   return `${a.getMonth() + 1}/${a.getDate()}（${WEEK[a.getDay()]}）${t(a)}～${same ? "" : `${b.getMonth() + 1}/${b.getDate()} `}${t(b)}`;
 }
 
-export function LifeSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function LifeSheet({ open, onClose, busFirst }: { open: boolean; onClose: () => void; busFirst?: boolean }) {
   const { state } = useHub();
   const L = state?.calendar.local;
   const [roads, setRoads] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [busNames, setBusNames] = useState<string | null>(null);
   if (!L) return null;
   const g = L.garbage;
+  const B = L.bus;
   const t = g?.truck;
 
   const put = async (body: object, ok?: string) => {
@@ -72,7 +74,7 @@ export function LifeSheet({ open, onClose }: { open: boolean; onClose: () => voi
         ) : undefined
       }
     >
-      <div className="space-y-5">
+      <div className="flex flex-col gap-5">
         <section className="rounded-2xl border p-4">
           <h3 className="mb-3 flex items-center gap-2 font-semibold">
             <Truck className="size-5 text-primary" />
@@ -121,6 +123,60 @@ export function LifeSheet({ open, onClose }: { open: boolean; onClose: () => voi
               </div>
             </div>
           )}
+        </section>
+
+        <section className={cn("rounded-2xl border p-4", busFirst && "order-first")}>
+          <h3 className="mb-3 flex items-center gap-2 font-semibold">
+            <Bus className="size-5 text-primary" />
+            公車
+            {B?.updated && <span className="ml-auto text-xs font-normal text-muted-foreground tabular-nums">{new Date(B.updated * 1000).toTimeString().slice(0, 5)} 更新</span>}
+          </h3>
+          {B && B.routes.length > 0 && (
+            <ul className="mb-4 divide-y">
+              {B.routes.flatMap((rt) =>
+                rt.dirs.map((d) => (
+                  <li key={`${rt.id}:${d.gb}`} className={cn("flex items-center gap-3 py-2.5", !d.stop && "opacity-60")}>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate font-medium">{rt.name}<span className="ml-2 text-sm font-normal text-muted-foreground">往{d.to}</span></div>
+                      <Select value={d.stop?.id || "off"} onValueChange={(v) => put({ bus_pick: { [`${rt.id}:${d.gb}`]: v } })}>
+                        <SelectTrigger size="sm" className="mt-1 h-8 max-w-full border-0 bg-muted/60 px-2 text-sm shadow-none" aria-label={`${rt.name}往${d.to}的站牌`}><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {d.near.map((x) => <SelectItem key={x.id} value={x.id}>{x.name}・{x.m} 公尺</SelectItem>)}
+                          <SelectItem value="off">不顯示這個方向</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {d.stop && (
+                      <div className={cn("shrink-0 text-right text-lg font-bold whitespace-nowrap tabular-nums", d.sec != null && d.sec >= 0 && d.sec < 180 && "text-amber-600 dark:text-amber-400", (d.sec == null || d.sec < 0) && "text-base font-medium text-muted-foreground")}>
+                        {busEta(d.sec)}
+                      </div>
+                    )}
+                  </li>
+                )),
+              )}
+            </ul>
+          )}
+          {B && B.names.length > 0 && !B.routes.length && (
+            <p className="mb-4 text-sm text-muted-foreground">{B.error ? `查詢失敗：${B.error}` : B.updated ? "這些路線在你家 800 公尺內沒有站牌" : "正在下載路線…"}</p>
+          )}
+          {B && B.missing.length > 0 && <p className="mb-3 text-sm text-orange-600">找不到路線：{B.missing.join("、")}</p>}
+          <div className="space-y-2">
+            <Label htmlFor="bus-names">要看的路線</Label>
+            <form
+              className="flex gap-2"
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setSaving(true);
+                await put({ bus_routes: (busNames ?? "").split(/[、,，\s]+/).filter(Boolean) }, "已儲存路線");
+                setSaving(false);
+                setBusNames(null);
+              }}
+            >
+              <Input id="bus-names" value={busNames ?? (B?.names || []).join("、")} onChange={(e) => setBusNames(e.target.value)} placeholder="橘18、F312" className="h-11" />
+              <Button type="submit" className="h-11" disabled={saving || busNames == null}>儲存</Button>
+            </form>
+            <p className="text-xs leading-relaxed text-muted-foreground">新北市的公車。每分鐘更新，站牌預設選離家最近的。</p>
+          </div>
         </section>
 
         <section className="rounded-2xl border p-4">
@@ -179,7 +235,7 @@ export function LifeSheet({ open, onClose }: { open: boolean; onClose: () => voi
           )}
         </section>
         <p className="text-xs leading-relaxed text-muted-foreground">
-          資料來源：新北市環保局（垃圾車路線、即時位置）、台灣自來水公司、臺北自來水事業處、台電（計畫性工作停電）。整份資料下載到樹莓派上比對，不會送出家裡的位置或地址。
+          資料來源：新北市交通局（公車）、新北市環保局（垃圾車路線、即時位置）、台灣自來水公司、臺北自來水事業處、台電（計畫性工作停電）。整份資料下載到樹莓派上比對，不會送出家裡的位置或地址。
         </p>
       </div>
     </Sheet>

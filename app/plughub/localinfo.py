@@ -23,6 +23,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
+from .bus import Bus
+
 _LOGGER = logging.getLogger(__name__)
 
 ROUTES_URL = "https://data.ntpc.gov.tw/api/datasets/edc3ad26-8ae7-4916-a00b-bc6048d19bf8/json?page={page}&size=1000"
@@ -92,6 +94,7 @@ class LocalInfo:
             self._notified = set(json.loads((data_dir / "local_notified.json").read_text("utf-8")))
         except Exception:  # noqa: BLE001
             pass
+        self.bus = Bus(data_dir, lambda: self._settings().setdefault("bus", {}))
         self.arrivals: dict[str, list[dict]] = {}  # 每個清運點最近幾次車子實際到的時間
         try:
             self.arrivals = json.loads((data_dir / "garbage_arrivals.json").read_text("utf-8"))
@@ -165,6 +168,10 @@ class LocalInfo:
             changed |= await self._run("truck", self._trucks)
         elif not self._truck_window() and self.truck:
             self.truck = None
+            changed = True
+        what = self.bus.due()
+        if what:
+            await asyncio.to_thread(self.bus.fetch, what)
             changed = True
         return changed
 
@@ -419,6 +426,7 @@ class LocalInfo:
         horizon = (datetime.now() + timedelta(days=14)).isoformat(timespec="minutes")
         return {
             "garbage": garbage,
+            "bus": self.bus.report(self._m if self.home else None),
             "stops": [{k: x[k] for k in ("lineid", "line", "rank", "name", "time", "m", "days")} for x in self.stops[:25]],
             "outages": [x for x in self.outages if x["start"] <= horizon][:30],
             "roads": self.roads(),

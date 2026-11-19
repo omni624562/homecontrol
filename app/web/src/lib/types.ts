@@ -203,7 +203,18 @@ export interface Outage {
   pressure?: boolean;
 }
 
+export interface BusStop { id: string; name: string; m: number }
+export interface BusDir { gb: string; to: string; stop: BusStop | null; sec: number | null; near: BusStop[] }
+export interface BusInfo {
+  names: string[];
+  routes: { id: string; name: string; base: string; dirs: BusDir[] }[]; // base：設定裡寫的名字（「橘18福隆路」算在「橘18」）
+  missing: string[];
+  error: string | null;
+  updated: number | null;
+}
+
 export interface Local {
+  bus?: BusInfo;
   garbage: {
     stop: GarbageStop;
     today: string[];

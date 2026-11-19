@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Droplets, Gauge, Home as HomeIcon, Loader2, Pencil, Power, Truck, Wifi, WifiOff, Zap } from "lucide-react";
+import { Bus, Droplets, Gauge, Home as HomeIcon, Loader2, Pencil, Power, Truck, Wifi, WifiOff, Zap } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -15,7 +15,7 @@ import { LifeSheet } from "@/components/life-sheet";
 import { RoomCard, type Group } from "@/components/room-card";
 import { WeatherSheet } from "@/components/weather-sheet";
 import { api } from "@/lib/api";
-import { fmt } from "@/lib/format";
+import { busEta, fmt } from "@/lib/format";
 import { useHub, useMedia, useTick } from "@/lib/hub";
 import type { Plug } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -79,7 +79,7 @@ export function HomePage() {
   const [device, setDevice] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<Plug | null>(null);
   const [allOff, setAllOff] = useState(false);
-  const [sheet, setSheet] = useState<"weather" | "life" | null>(null);
+  const [sheet, setSheet] = useState<"weather" | "life" | "bus" | null>(null);
   const [running, setRunning] = useState<string | null>(null);
   // 有人回家：在家人數變多的時候，小人走進門幾秒
   const fun = useFun();
@@ -188,6 +188,12 @@ export function HomePage() {
   const L = state.calendar.local;
   const g = L?.garbage;
   const truck = g?.truck;
+  // 公車：每條路線（含它的支線）最快來的那一班，只列 30 分鐘內的
+  const soon = new Map<string, number>();
+  for (const rt of L?.bus?.routes || [])
+    for (const d of rt.dirs)
+      if (d.stop && d.sec != null && d.sec >= 0 && d.sec <= 1800) soon.set(rt.base, Math.min(soon.get(rt.base) ?? Infinity, d.sec));
+  const buses = [...soon].map(([n, sec]) => `${n} ${busEta(sec)}`);
   const roadOutages = (L?.outages || []).filter((x) => x.hit === "road");
   const people = state.people || [];
   const home = people.filter((x) => x.home).length;
@@ -201,6 +207,7 @@ export function HomePage() {
         <Chip onClick={() => setSheet("life")} icon={Truck} label="垃圾車" moving={!!truck && !truck.none && (truck.stops ?? -1) >= 0}
           sub={truck && !truck.none ? ((truck.stops ?? -1) >= 0 ? `還有 ${truck.stops} 站` : "已經過了") : g.usual ? `約 ${g.usual}` : g.stop.time} />
       )}
+      {(L?.bus?.routes.length ?? 0) > 0 && <Chip onClick={() => setSheet("bus")} icon={Bus} label="公車" sub={buses.join("・") || "30 分內沒車"} />}
       {roadOutages[0] && (
         <Chip onClick={() => setSheet("life")} icon={roadOutages[0].kind === "power" ? Zap : Droplets} tone="warn"
           label={`${new Date(roadOutages[0].start).getMonth() + 1}/${new Date(roadOutages[0].start).getDate()} ${roadOutages[0].kind === "power" ? "停電" : "停水"}`}
@@ -266,7 +273,7 @@ export function HomePage() {
 
       <DeviceSheet id={device} onClose={() => setDevice(null)} />
       <WeatherSheet open={sheet === "weather"} onClose={() => setSheet(null)} />
-      <LifeSheet open={sheet === "life"} onClose={() => setSheet(null)} />
+      <LifeSheet open={sheet === "life" || sheet === "bus"} busFirst={sheet === "bus"} onClose={() => setSheet(null)} />
 
       <AlertDialog open={allOff} onOpenChange={setAllOff}>
         <AlertDialogContent>
