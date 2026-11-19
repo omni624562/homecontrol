@@ -207,7 +207,7 @@ function DeviceBody({ p }: { p: Plug }) {
   const sig = signal(p.rssi);
   // 開了這麼久大約幾度（有設瓦數才算）
   const kwh = (min: number | null) => (min == null ? undefined : p.watts ? `約 ${fmt((min / 60) * (p.watts / 1000), 1)} 度` : "看用電 ›");
-  const nativeText = !n ? "等待同步…" : !n.ok ? n.msg || "同步失敗，稍後再試" : n.schedule ? `已寫入 ${n.schedule} 條，樹莓派離線時照樣執行` : "目前沒有排程要寫入";
+  const nativeText = !n ? "等待同步…" : !n.ok ? n.msg || "同步失敗，稍後再試" : n.schedule ? `這個插座的 ${n.schedule} 條排程也存在插座裡，樹莓派當機時照樣執行` : "這個插座沒有排程；有的話會自動存一份到插座裡，樹莓派當機時照樣執行";
 
   // 網路、韌體有沒有要注意的地方
   const issues: string[] = [];
@@ -222,7 +222,7 @@ function DeviceBody({ p }: { p: Plug }) {
   if (p.max_on_s) chips.push([`最長 ${fmtSec(p.max_on_s)}`, "warn"]);
   if (p.matter === false) chips.push(["Google Home 不控制", ""]);
   if (p.online && p.led === false) chips.push(["指示燈關", ""]);
-  if (n && !n.ok) chips.push(["內建排程同步失敗", "warn"]);
+  if (n && !n.ok) chips.push(["排程備援同步失敗", "warn"]);
 
   return (
     <div className="space-y-5">
@@ -424,8 +424,14 @@ function DeviceBody({ p }: { p: Plug }) {
               </Row>
             )}
             {p.online && (
-              <Row label="內建排程" hint={nativeText} warn={!!n && !n.ok}>
-                {n && !n.ok ? <AlertCircle className="size-5 text-orange-500" /> : n ? <CheckCircle2 className="size-5 text-emerald-500" /> : null}
+              <Row label="排程備援" hint={nativeText} warn={!!n && !n.ok}>
+                {n && !n.ok ? (
+                  <span className="inline-flex items-center gap-1.5 text-sm font-medium whitespace-nowrap text-orange-700 dark:text-orange-400"><AlertCircle className="size-4" />同步失敗</span>
+                ) : n?.schedule ? (
+                  <span className="inline-flex items-center gap-1.5 text-sm font-medium whitespace-nowrap text-emerald-700 dark:text-emerald-400"><CheckCircle2 className="size-4" />已同步</span>
+                ) : n ? (
+                  <span className="text-sm whitespace-nowrap text-muted-foreground">沒有</span>
+                ) : null}
               </Row>
             )}
             {!!n?.kasa?.length && (
