@@ -105,7 +105,8 @@ class Weather:
             if k in d:
                 setattr(self, k, d[k])
         self.home = tuple(d["home"]) if d.get("home") else None  # type: ignore[assignment]
-        self._at = {k: float(v) for k, v in (d.get("_at") or {}).items()}
+        # 測站清單一天選一次就好（要下載全國資料）；觀測、預報、空品重開後馬上重查
+        self._at = {k: float(v) for k, v in (d.get("_at") or {}).items() if k == "resolve"}
 
     def _save_cache(self) -> None:
         try:

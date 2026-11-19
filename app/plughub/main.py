@@ -540,6 +540,16 @@ async def plug_reboot(plug_id: str) -> dict[str, Any]:
     return {"ok": True}
 
 
+@app.delete("/api/plugs/{plug_id}")
+async def plug_forget(plug_id: str) -> dict[str, Any]:
+    """從清單移除連不上的插座（已經不用的）。之後它又連上網路的話會自動再出現。"""
+    plug = _plug(plug_id)
+    if plug.online:
+        raise HTTPException(400, "插座還連得上，不能移除；先把它拔掉")
+    await hub.forget(plug_id)
+    return {"ok": True}
+
+
 @app.put("/api/away")
 async def set_away(body: dict = Body(...)) -> dict[str, Any]:
     """離家模式：{"enabled", "start": "HH:MM", "end": "HH:MM", "plugs": [...]}"""

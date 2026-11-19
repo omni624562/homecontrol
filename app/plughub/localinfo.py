@@ -123,6 +123,16 @@ class LocalInfo:
     def cfg(self) -> dict:
         return self._settings()
 
+    def dump(self) -> dict[str, Any]:
+        """重開後要先顯示的資料（之後會再重新查）。"""
+        return {"outages": self.outages, "truck": self.truck, "updated": self.updated, "errors": self.errors}
+
+    def load(self, d: dict[str, Any]) -> None:
+        self.outages = d.get("outages") or []
+        self.truck = d.get("truck")
+        self.updated = d.get("updated") or {}
+        self.errors = d.get("errors") or {}
+
     def my_stop(self) -> dict | None:
         """選的清運點；沒選就用最近的。"""
         sel = self.cfg.get("stop") or {}

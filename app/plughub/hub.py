@@ -121,7 +121,7 @@ class Hub:
         self._usage_file = store.dir / "usage_cache.json"
         try:
             cached = json.loads(self._usage_file.read_text("utf-8"))
-            self._usage, self._usage_at = cached["plugs"], float(cached["at"])
+            self._usage = cached["plugs"]  # 先用上次的；_usage_at 留 0，啟動後幾秒內就會向插座重讀
         except Exception:  # noqa: BLE001
             pass
         self.sensing = Sensing()
@@ -169,6 +169,107 @@ class Hub:
             for v in known.values():
                 if abs(v.get("first", 0) - first) < 5:
                     v["seed"] = True
+        # 執行中的資料（插座清單、網路裝置、通知紀錄…）存在主機上：重開後先載入，再向各裝置拿最新的
+        self._runtime_file = store.dir / "runtime.json"
+        self._runtime_sig = ""
+        self._restored: dict[str, str] = {}  # 上次看過、這次還沒找到的插座：裝置 MAC → IP
+        self._load_runtime()
+
+    # ---- 重開後還在的資料 ----
+
+    def _runtime(self) -> dict[str, Any]:
+        return {
+            "plugs": [{"id": p.id, "device_key": p.device_key, "kasa_name": p.kasa_name, "model": p.model, "host": p.host,
+                       "child_index": p.child_index, "led": p.led, "rssi": p.rssi, "cloud": p.cloud,
+                       "offline_since": p.offline_since} for p in self.plugs.values()],
+            "dev_info": self.dev_info,
+            "native": self.native,
+            "schedule_done": self._schedule_done,
+            "sched_skipped": {"day": self._today.isoformat(), "items": self.sched_skipped},
+            "timer_failed": sorted(self._timer_failed),
+            "offline_notified": sorted(self._offline_notified),
+            "overload_notified": sorted(self._overload_notified),
+            "outage": self._outage,
+            "traffic_last": self._traffic_last,
+            "habits": self.habits,
+            "habit_days": self.habit_days,
+            "matter": self.matter,
+            "router": {"nodes": self.router.nodes, "clients": self.router.clients, "updated": self.router.updated},
+            "local": self.local.dump(),
+        }
+
+    def _load_runtime(self) -> None:
+        try:
+            d = json.loads(self._runtime_file.read_text("utf-8"))
+        except Exception:  # noqa: BLE001
+            return
+        try:
+            now = time.time()
+            for x in d.get("plugs", []):
+                # 還沒連上之前先當作連不上（開關狀態不知道）；找到之後會換成真的
+                self.plugs[x["id"]] = Plug(x["id"], x["device_key"], x["kasa_name"], x["model"], x["host"], x.get("child_index"),
+                                           online=False, offline_since=x.get("offline_since") or now,
+                                           led=x.get("led"), rssi=x.get("rssi"), cloud=x.get("cloud"))
+                self._restored[x["device_key"]] = x["host"]
+            self.dev_info = d.get("dev_info") or {}
+            self.native = d.get("native") or {}
+            self._schedule_done = d.get("schedule_done") or {}
+            skipped = d.get("sched_skipped") or {}
+            if skipped.get("day") == self._today.isoformat():
+                self.sched_skipped = skipped.get("items") or {}
+            self._timer_failed = set(d.get("timer_failed") or [])
+            self._offline_notified = set(d.get("offline_notified") or [])
+            self._overload_notified = set(d.get("overload_notified") or [])
+            self._outage = d.get("outage") or {}
+            self._traffic_last = {k: int(v) for k, v in (d.get("traffic_last") or {}).items()}
+            self.habits = d.get("habits") or []
+            self.habit_days = d.get("habit_days") or 0
+            if d.get("matter"):
+                self.matter = d["matter"]
+                self.matter_seen = time.monotonic() - 45  # 外掛 45 秒內沒回報就當作沒在執行
+            r = d.get("router") or {}
+            self.router.nodes = r.get("nodes") or []
+            self.router.clients = r.get("clients") or {}
+            self.router.updated = r.get("updated") or 0.0
+            self.local.load(d.get("local") or {})
+            _LOGGER.info("載入上次的資料：%d 個插座、%d 台網路裝置", len(self.plugs), len(self.router.clients))
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("載入上次的資料失敗，當作第一次啟動")
+
+    async def _save_runtime(self) -> None:
+        """有變才寫（少寫 SD 卡）；每分鐘檢查一次，關機時也寫。"""
+        try:
+            text = json.dumps(self._runtime(), ensure_ascii=False, default=str)
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("整理要保存的資料失敗")
+            return
+        # 訊號強度、看到的時間每次都不一樣：不拿來判斷有沒有變，但最久 10 分鐘還是寫一次
+        sig = str(len(text) // 64) + str(sorted(p.id + str(p.online) for p in self.plugs.values()))
+        if sig == self._runtime_sig and time.time() - getattr(self, "_runtime_at", 0) < 600:
+            return
+        self._runtime_sig, self._runtime_at = sig, time.time()
+        tmp = self._runtime_file.with_suffix(".tmp")
+        await asyncio.to_thread(tmp.write_text, text, "utf-8")
+        tmp.replace(self._runtime_file)
+
+    async def forget(self, plug_id: str) -> None:
+        """移除連不上的插座（整台一起：排插的每個孔）。"""
+        key = self.plugs[plug_id].device_key
+        entry = self.devices.pop(key, None)
+        if entry is not None:
+            await _quiet_disconnect(entry.device)
+        for pid in [p.id for p in self.plugs.values() if p.device_key == key]:
+            self.plugs.pop(pid, None)
+        self._restored.pop(key, None)
+        self._runtime_sig = ""
+        await self._save_runtime()
+        await self.changed()
+
+    def _entry(self, plug: Plug) -> DeviceEntry:
+        entry = self.devices.get(plug.device_key)
+        if entry is None:
+            raise TimeoutError(f"{self.name(plug)} 連不上")
+        return entry
 
     # ---- 生命週期 ----
 
@@ -180,6 +281,7 @@ class Hub:
             asyncio.create_task(self._loop(self.poll, POLL_SECONDS)),
             asyncio.create_task(self._schedule_loop()),
             asyncio.create_task(self._loop(self._native_tick, 5)),
+            asyncio.create_task(self._loop(self._save_runtime, 60)),
             asyncio.create_task(self._loop(self._sense_tick, SENSE_INTERVAL)),
             asyncio.create_task(self._loop(self._local_tick, 15)),
             asyncio.create_task(self.router.run()),
@@ -190,6 +292,8 @@ class Hub:
             task.cancel()
         self.store.energy.flush()
         self._save_sensing()
+        self._runtime_sig = ""
+        await self._save_runtime()
         for entry in self.devices.values():
             try:
                 await entry.device.disconnect()
@@ -233,6 +337,20 @@ class Hub:
             found = await Discover.discover(discovery_timeout=4)
         finally:
             self._discovering = False
+        # 上次看過、廣播沒找到的插座：直接用上次的 IP 再試一次
+        seen = {d.mac for d in found.values()}
+        missing = {k: h for k, h in self._restored.items() if k not in self.devices and k not in seen and h not in found}
+
+        async def direct(host: str) -> None:
+            try:
+                dev = await asyncio.wait_for(Discover.discover_single(host, discovery_timeout=3), 5)
+                if dev is not None:
+                    found[host] = dev
+            except Exception:  # noqa: BLE001
+                pass
+
+        if missing:
+            await asyncio.gather(*(direct(h) for h in missing.values()))
         added = False
         for host, device in found.items():
             key = device.mac
@@ -267,6 +385,7 @@ class Hub:
                 self.plugs[pid] = Plug(pid, key, device.alias, device.model, host)
             self._read(entry)
             added = True
+            self._restored.pop(key, None)
             _LOGGER.info("找到插座 %s（%s，%s）", device.alias, device.model, host)
         if added:
             await self.changed()
@@ -501,7 +620,7 @@ class Hub:
         if not force and self.store.meta(plug_id).protect == "lock":
             raise Locked(self.name(self.plugs[plug_id]))
         plug = self.plugs[plug_id]
-        entry = self.devices[plug.device_key]
+        entry = self._entry(plug)
         target = entry.device.children[plug.child_index] if plug.child_index is not None else entry.device
         await asyncio.wait_for(target.turn_on() if on else target.turn_off(), DEVICE_TIMEOUT)
         if plug.is_on != on:
@@ -1225,13 +1344,13 @@ class Hub:
 
     def _target(self, plug_id: str) -> tuple[Any, dict[str, Any]]:
         plug = self.plugs[plug_id]
-        dev = self.devices[plug.device_key].device
+        dev = self._entry(plug).device
         return dev, native.context(dev, plug.child_index)
 
     async def set_led(self, plug_id: str, on: bool) -> None:
         dev, _ = self._target(plug_id)
         await asyncio.wait_for(dev.modules["Led"].set_led(on), DEVICE_TIMEOUT)
-        for pid in self.devices[self.plugs[plug_id].device_key].plugs:  # 整台插座共用一個燈
+        for pid in self._entry(self.plugs[plug_id]).plugs:  # 整台插座共用一個燈
             self.plugs[pid].led = on
         await self.changed()
 
