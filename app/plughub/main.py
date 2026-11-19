@@ -764,6 +764,8 @@ async def local_settings(body: dict = Body(...)) -> dict[str, Any]:
     for k in ("garbage_notify", "outage_notify", "truck_rush"):
         if k in body:
             cfg[k] = bool(body[k])
+    if body.get("truck_rush_style") in ("side", "front", "random"):
+        cfg["truck_rush_style"] = body["truck_rush_style"]
     store.save()
     hub.local._at.pop("truck", None)
     await hub.changed()

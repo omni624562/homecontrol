@@ -221,6 +221,7 @@ export interface Local {
   garbage_notify: boolean;
   outage_notify: boolean;
   truck_rush?: boolean;
+  truck_rush_style?: "side" | "front" | "random";
 }
 
 export interface HubState {

@@ -190,3 +190,47 @@
   animation: truck-rush 4s cubic-bezier(0.3, 0, 0.3, 1) both;
   will-change: transform;
 }
+
+/* 垃圾車從正面衝出來：小變大 → 撞上螢幕（閃一下、震一下）→ 裂痕留幾秒再淡出 */
+@keyframes truck-front {
+  0% { transform: translate(-50%, -50%) scale(0.04); opacity: 0; }
+  8% { opacity: 1; }
+  70% { transform: translate(-50%, -46%) scale(1.1); }
+  100% { transform: translate(-50%, -40%) scale(7); opacity: 1; }
+}
+@keyframes truck-front-gone {
+  to { opacity: 0; }
+}
+@keyframes crash-flash {
+  0% { opacity: 0; }
+  12% { opacity: 0.9; }
+  100% { opacity: 0; }
+}
+@keyframes crash-cracks {
+  0% { opacity: 0; transform: scale(0.6); }
+  6% { opacity: 1; transform: scale(1); }
+  82% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes crash-text {
+  0% { opacity: 0; transform: translateY(12px) scale(0.9); }
+  10% { opacity: 1; transform: none; }
+  85% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes screen-shake {
+  0%, 100% { transform: none; }
+  15% { transform: translate(-10px, 6px) rotate(-0.6deg); }
+  30% { transform: translate(9px, -7px) rotate(0.5deg); }
+  45% { transform: translate(-7px, -4px) rotate(-0.3deg); }
+  60% { transform: translate(6px, 5px); }
+  80% { transform: translate(-3px, 2px); }
+}
+.truck-front {
+  animation: truck-front 1.2s cubic-bezier(0.7, 0, 0.9, 0.4) both, truck-front-gone 0.15s linear 1.2s forwards;
+  will-change: transform;
+}
+.crash-flash { opacity: 0; animation: crash-flash 0.45s ease-out 1.15s both; }
+.crash-cracks { opacity: 0; transform-origin: 50% 50%; animation: crash-cracks 3.3s ease-out 1.2s both; }
+.crash-text { opacity: 0; animation: crash-text 3.2s ease-out 1.3s both; }
+.screen-shake #root { animation: screen-shake 0.5s ease-in-out; }

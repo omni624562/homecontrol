@@ -400,21 +400,29 @@ export function SettingsPage() {
             />
             <LinkRow label="生活資訊" hint="垃圾車、停水停電；選清運點、填你家的路名、通知開關" onClick={() => setSheet("life")} />
             {state.calendar.local?.garbage_supported && (
-              <SRow wrap label="垃圾車快到時衝出來" hint="剩 2 站以內時，一台大垃圾車從畫面中間衝過去（一天一次）">
-                <div className="flex items-center gap-3">
-                  <Button variant="outline" size="sm" onClick={previewTruckRush}>預覽</Button>
-                  <Switch
-                    checked={state.calendar.local.truck_rush !== false}
-                    aria-label="垃圾車快到時衝出來"
-                    onCheckedChange={async (v) => {
+              <SRow wrap label="垃圾車快到時衝出來" hint="剩 2 站以內時，一台大垃圾車衝出來（一天一次）">
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  <Select
+                    value={state.calendar.local.truck_rush === false ? "off" : state.calendar.local.truck_rush_style || "random"}
+                    onValueChange={async (v) => {
                       try {
-                        await api("PUT", "/api/local", { truck_rush: v });
-                        toast.success(v ? "垃圾車快到時會衝出來" : "不會再衝出來了");
+                        await api("PUT", "/api/local", v === "off" ? { truck_rush: false } : { truck_rush: true, truck_rush_style: v });
+                        if (v === "off") toast.success("不會再衝出來了");
+                        else previewTruckRush(v);
                       } catch (e) {
                         toast.error("沒有成功", { description: (e as Error).message });
                       }
                     }}
-                  />
+                  >
+                    <SelectTrigger className="w-44 bg-background" aria-label="垃圾車衝出來的樣式"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="random">隨機</SelectItem>
+                      <SelectItem value="side">從旁邊衝過去</SelectItem>
+                      <SelectItem value="front">從正面衝出來（螢幕裂開）</SelectItem>
+                      <SelectItem value="off">關閉</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button variant="outline" size="sm" disabled={state.calendar.local.truck_rush === false} onClick={() => previewTruckRush(state.calendar.local.truck_rush_style)}>預覽</Button>
                 </div>
               </SRow>
             )}
