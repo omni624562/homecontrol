@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { AlertCircle, Bell, CheckCircle2, CloudSun, KeyRound, MessageCircle, ChevronRight, ExternalLink, Loader2, MessageSquareText, Mic, Search, Wifi, WifiOff } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -395,6 +395,72 @@ function NetCheck({ s }: { s: HubState }) {
   );
 }
 
+const SECTIONS: [string, string][] = [["s-notify", "通知"], ["s-life", "天氣生活"], ["s-ask", "問家裡"], ["s-google", "Google Home"], ["s-dev", "裝置"]];
+
+// 手機：標題下面的快速跳轉；滑動時跟著標出現在看的那一段
+function JumpChips() {
+  const [active, setActive] = useState(SECTIONS[0][0]);
+  const row = useRef<HTMLDivElement>(null);
+  const lock = useRef(0); // 點了之後捲動的這段時間，不要跟著跳來跳去
+  useEffect(() => {
+    let raf = 0;
+    const pick = () => {
+      raf = 0;
+      if (Date.now() < lock.current) return;
+      const line = (row.current?.getBoundingClientRect().bottom ?? 120) + 24;
+      let cur = SECTIONS[0][0];
+      for (const [id] of SECTIONS) {
+        const el = document.getElementById(id);
+        if (el && el.getBoundingClientRect().top <= line) cur = id;
+      }
+      const last = document.getElementById(SECTIONS[SECTIONS.length - 1][0]);
+      if (last && last.getBoundingClientRect().bottom <= window.innerHeight) cur = SECTIONS[SECTIONS.length - 1][0];
+      setActive(cur);
+    };
+    const on = () => { if (!raf) raf = requestAnimationFrame(pick); };
+    window.addEventListener("scroll", on, { passive: true, capture: true });
+    window.addEventListener("resize", on);
+    pick();
+    return () => {
+      window.removeEventListener("scroll", on, { capture: true });
+      window.removeEventListener("resize", on);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, []);
+  // 選到的那顆捲進看得到的地方（只動這一排，不動頁面）
+  useEffect(() => {
+    const btn = row.current?.querySelector<HTMLElement>(`[data-id="${active}"]`);
+    const box = row.current?.parentElement;
+    if (!btn || !box) return;
+    const b = btn.getBoundingClientRect();
+    const c = box.getBoundingClientRect();
+    box.scrollBy({ left: b.left + b.width / 2 - (c.left + c.width / 2), behavior: "smooth" });
+  }, [active]);
+  return (
+    <div ref={row} className="flex gap-2 lg:hidden">
+      {SECTIONS.map(([id, t]) => (
+        <button
+          key={id}
+          type="button"
+          data-id={id}
+          aria-current={active === id ? "true" : undefined}
+          onClick={() => {
+            setActive(id);
+            lock.current = Date.now() + 900;
+            document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+          }}
+          className={cn(
+            "h-9 shrink-0 rounded-full border bg-background px-3.5 text-sm font-medium whitespace-nowrap transition-colors hover:bg-muted active:bg-muted",
+            active === id && "border-primary bg-primary text-primary-foreground hover:bg-primary active:bg-primary",
+          )}
+        >
+          {t}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function SettingsPage() {
   const { state, connected } = useHub();
   const [sheet, setSheet] = useState<"sense" | "cloud" | "weather" | "life" | "line" | "keys" | null>(null);
@@ -413,24 +479,9 @@ export function SettingsPage() {
   const bound = cloudBound(state.plugs).length;
   const weekly = set.weekly !== false;
 
-  const jump = (
-    <div className="flex gap-2 lg:hidden">
-      {[["s-notify", "通知"], ["s-life", "天氣生活"], ["s-ask", "問家裡"], ["s-google", "Google Home"], ["s-dev", "裝置"]].map(([id, t]) => (
-        <button
-          key={id}
-          type="button"
-          onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" })}
-          className="h-9 shrink-0 rounded-full border bg-background px-3.5 text-sm font-medium whitespace-nowrap transition-colors hover:bg-muted active:bg-muted"
-        >
-          {t}
-        </button>
-      ))}
-    </div>
-  );
-
   return (
     <>
-      <PageHeader title="設定" chips={jump} />
+      <PageHeader title="設定" chips={<JumpChips />} />
       <div className="mx-auto grid max-w-7xl items-start gap-4 px-4 py-4 sm:px-6 lg:grid-cols-2 lg:px-8">
         <div className="min-w-0 space-y-4">
           <SCard id="s-notify" icon={Bell} title="提醒與通知">
