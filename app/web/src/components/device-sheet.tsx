@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { DurationPicker } from "@/components/duration-picker";
 import { Sheet } from "@/components/responsive-sheet";
+import { daysText, showT, sunLabel } from "@/components/schedule-bits";
 import { Row, Section } from "@/components/settings-bits";
 import { WattsRows } from "@/components/watts-field";
 import { deviceIcon } from "@/components/icons";
@@ -207,7 +208,19 @@ function DeviceBody({ p }: { p: Plug }) {
   const sig = signal(p.rssi);
   // 開了這麼久大約幾度（有設瓦數才算）
   const kwh = (min: number | null) => (min == null ? undefined : p.watts ? `約 ${fmt((min / 60) * (p.watts / 1000), 1)} 度` : "看用電 ›");
-  const nativeText = !n ? "等待同步…" : !n.ok ? n.msg || "同步失敗，稍後再試" : n.schedule ? `這個插座的 ${n.schedule} 條排程也存在插座裡，樹莓派當機時照樣執行` : "這個插座沒有排程；有的話會自動存一份到插座裡，樹莓派當機時照樣執行";
+  // 存在插座裡的是哪幾個排程（排程頁設的、有打開備援、包含這個插座的）
+  const backed = (state?.schedules || []).filter((x) => x.enabled && x.backup && x.action !== "scene" && x.plugs.includes(p.id));
+  const backedText = backed.map((x) => {
+    const when = x.time_mode && x.time_mode !== "clock" ? sunLabel(x.time_mode === "sunrise" ? 1 : 2, x.offset_min || 0) : showT(x.time);
+    const after = x.duration_s ? `，${fmtSec(x.duration_s)}後${x.action === "on" ? "關" : "開"}` : x.restore_at ? `，${showT(x.restore_at)} ${x.action === "on" ? "關" : "開"}` : "";
+    return `${daysText(x.days)} ${when} ${x.action === "on" ? "開" : "關"}${after}`;
+  });
+  const nativeText = !n ? "等待同步…" : !n.ok ? n.msg || "同步失敗，稍後再試" : n.schedule ? (
+    <>
+      這些排程也存在插座裡，樹莓派當機時照樣執行：
+      {backedText.length ? backedText.map((t) => <span key={t} className="block font-medium text-foreground tabular-nums">・{t}</span>) : <span className="block">共 {n.schedule} 條開關規則</span>}
+    </>
+  ) : "這個插座沒有排程；有的話會自動存一份到插座裡，樹莓派當機時照樣執行";
 
   // 網路、韌體有沒有要注意的地方
   const issues: string[] = [];
