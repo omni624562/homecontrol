@@ -111,12 +111,15 @@ export interface Scene {
   id: string;
   name: string;
   icon: string;
+  actions?: Record<string, "on" | "off" | "keep">;
+  others?: "keep" | "off";
 }
 
 export interface Person {
   id: string;
   name: string;
-  home: boolean;
+  macs: string[];
+  home: boolean | null;
   since?: number;
 }
 
@@ -164,6 +167,7 @@ export interface Weather {
   updated: number | null;
   error: string | null;
   air_key: boolean;
+  air_error?: string | null;
 }
 
 export interface Truck {

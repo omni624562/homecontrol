@@ -1,14 +1,103 @@
-import { Droplets, Gauge, Thermometer, Umbrella, Wind, Sun } from "lucide-react";
+import { useState } from "react";
+import { CloudSun, Droplets, Gauge, KeyRound, Loader2, Thermometer, Umbrella, Wind, Sun } from "lucide-react";
+import { toast } from "sonner";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { Sheet } from "@/components/responsive-sheet";
+import { RainLines } from "@/components/schedule-sheet";
+import { api } from "@/lib/api";
 import { weatherIcon } from "@/components/icons";
 import { dayLabel, fmt, hhmm } from "@/lib/format";
 import { useHub } from "@/lib/hub";
 import { cn } from "@/lib/utils";
 
+function KeyRow({ k, label, has, hint, ph }: { k: "cwa" | "moenv"; label: string; has: boolean; hint: string; ph: string }) {
+  const [v, setV] = useState("");
+  const [busy, setBusy] = useState(false);
+  return (
+    <form
+      className="space-y-2 px-4 py-3.5"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        if (!v.trim()) return;
+        setBusy(true);
+        try {
+          await api("PUT", "/api/weather/keys", { [k]: v.trim() });
+          setV("");
+          toast.success(k === "cwa" ? "已儲存氣象署授權碼，幾秒內會查一次" : "已儲存環境部金鑰");
+        } catch (x) {
+          toast.error("沒有成功", { description: (x as Error).message });
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      <div>
+        <div className="flex items-center gap-2 font-medium">{label}{has && <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300">已設定</Badge>}</div>
+        <div className="text-sm leading-relaxed text-muted-foreground">{hint}</div>
+      </div>
+      <div className="flex gap-2">
+        <Input value={v} onChange={(e) => setV(e.target.value)} placeholder={has ? "要換新的才填" : ph} autoCapitalize="off" autoComplete="off" spellCheck={false} aria-label={label} className="h-11 bg-background" />
+        <Button type="submit" variant="outline" className="h-11" disabled={busy || !v.trim()}>{busy && <Loader2 className="animate-spin" />}儲存</Button>
+      </div>
+    </form>
+  );
+}
+
+// 授權碼、首頁顯示天氣（只存在樹莓派上，不會再傳回瀏覽器）
+function WeatherKeys() {
+  const { state } = useHub();
+  const c = state?.calendar;
+  const w = c?.weather;
+  const on = c?.weather_show !== false;
+  return (
+    <div className="divide-y overflow-hidden rounded-xl border bg-muted/30">
+      <KeyRow k="cwa" label="中央氣象署授權碼" has={!!w} hint="到 opendata.cwa.gov.tw 註冊、登入，右上角「取得授權碼」" ph="CWA- 開頭" />
+      <KeyRow k="moenv" label="環境部 API 金鑰（空氣品質）" has={!!w?.air_key} hint="到 data.moenv.gov.tw 註冊、登入，會員專區「API 金鑰」申請" ph="選填" />
+      <div className="flex items-center gap-3 px-4 py-3.5">
+        <div className="min-w-0 flex-1">
+          <div className="font-medium">首頁顯示天氣</div>
+          <div className="text-sm leading-relaxed text-muted-foreground">每 10 分鐘查一次附近的測站。最近的測站在樹莓派上算，家裡的位置不會送出去，氣象署只會知道查哪個測站和鄉鎮。授權碼只存在樹莓派上</div>
+        </div>
+        <Switch
+          checked={on}
+          aria-label="首頁顯示天氣"
+          onCheckedChange={async (v) => {
+            try {
+              await api("PUT", "/api/settings", { weather: v });
+              toast.success(v ? "首頁會顯示天氣" : "首頁不顯示天氣");
+            } catch (x) {
+              toast.error("沒有成功", { description: (x as Error).message });
+            }
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
 export function WeatherSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { state } = useHub();
   const w = state?.calendar.weather;
-  if (!w) return null;
+  if (!w || w.temp == null)
+    return (
+      <Sheet open={open} onOpenChange={(v) => !v && onClose()} title="天氣" description="中央氣象署、環境部的開放資料" icon={<CloudSun />} wide>
+        <div className="space-y-4">
+          {!w ? (
+            <div className="flex gap-3 rounded-xl border bg-muted/50 p-4">
+              <KeyRound className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
+              <div className="leading-relaxed"><div className="font-semibold">還沒有氣象署授權碼</div><div className="text-sm text-muted-foreground">貼上下面的授權碼就會開始查</div></div>
+            </div>
+          ) : (
+            <p className="py-6 text-center text-muted-foreground">{w.error ? `查不到天氣：${w.error}` : "查詢中，等幾秒…"}</p>
+          )}
+          <WeatherKeys />
+        </div>
+      </Sheet>
+    );
+  const rainSched = (state?.schedules || []).some((x) => x.skip_rain && x.enabled);
   const Now = weatherIcon(w.code, w.obs_text || w.text, w.day);
   const today = w.daily[0];
   const a = w.air;
@@ -95,9 +184,12 @@ export function WeatherSheet({ open, onClose }: { open: boolean; onClose: () => 
           資料來源：中央氣象署{a ? "、環境部" : ""}開放資料
           {w.station && <><br />現在：{w.station}測站（{fmt(w.station_km, 1)} 公里）{obs && ` ${hhmm(obs)} 觀測`}</>}
           {w.rain && <><br />雨量：{w.rain.station}雨量站（{fmt(w.rain.km, 1)} 公里）</>}
-          {a && <><br />空氣：{a.site}測站（{fmt(a.km, 1)} 公里）</>}
-          <br />授權碼和「首頁顯示天氣」開關目前在舊版首頁的天氣面板
+          {w.place && <><br />預報：{w.place}鄉鎮預報</>}
+          {a ? <><br />空氣：{a.site}測站（{fmt(a.km, 1)} 公里）</> : w.air_key && w.air_error ? <><br />空氣：查不到（{w.air_error}）</> : null}
+          {w.error && <><br />最近一次查詢失敗：{w.error}</>}
         </p>
+        {rainSched && <div className="space-y-1.5 rounded-xl border p-4"><div className="mb-1 text-sm font-semibold">下雨不執行的排程</div><RainLines /></div>}
+        <WeatherKeys />
       </div>
     </Sheet>
   );

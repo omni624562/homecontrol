@@ -203,7 +203,7 @@ export function HomePage() {
         chips={chips}
         actions={
           <Button variant="ghost" size="sm" asChild className="text-muted-foreground">
-            <a href="/#plugs"><Pencil />編輯</a>
+            <a href="#edit"><Pencil />編輯</a>
           </Button>
         }
       />

@@ -969,9 +969,33 @@ async def matterbridge_auth(request: Request) -> Response:
 # ---- 網頁 ----
 
 
+# 新版畫面（React，app/web 編譯出來的）是首頁；舊版暫時留在 /old/ 備用
+WEB = Path(__file__).parent / "web"
+
+
 @app.get("/")
 async def index() -> FileResponse:
+    page = WEB / "index.html"
+    if not page.exists():  # 還沒編譯新版：先用舊版
+        page = STATIC / "index.html"
+    return FileResponse(page, headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/old")
+async def old_redirect() -> RedirectResponse:
+    return RedirectResponse("/old/")
+
+
+@app.get("/old/")
+async def old_index() -> FileResponse:
     return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/new")
+@app.get("/new/")
+async def new_redirect() -> RedirectResponse:
+    # 試用期間的網址：書籤改到首頁
+    return RedirectResponse("/")
 
 
 @app.get("/sw.js")
@@ -980,24 +1004,8 @@ async def service_worker() -> FileResponse:
     return FileResponse(STATIC / "sw.js", media_type="text/javascript", headers={"Cache-Control": "no-cache"})
 
 
-# 新版畫面（React）：先放在 /new/，全部頁面換完再換成首頁
-WEB = Path(__file__).parent / "web"
-
-
-@app.get("/new")
-async def new_redirect() -> RedirectResponse:
-    return RedirectResponse("/new/")
-
-
-@app.get("/new/")
-async def new_index() -> FileResponse:
-    if not (WEB / "index.html").exists():
-        raise HTTPException(404, "新版畫面還沒編譯")
-    return FileResponse(WEB / "index.html", headers={"Cache-Control": "no-cache"})
-
-
 if (WEB / "assets").is_dir():
     # 檔名有內容雜湊，可以放心長期快取
-    app.mount("/new/assets", StaticFiles(directory=WEB / "assets"), name="web")
+    app.mount("/assets", StaticFiles(directory=WEB / "assets"), name="web")
 
 app.mount("/static", StaticFiles(directory=STATIC), name="static")

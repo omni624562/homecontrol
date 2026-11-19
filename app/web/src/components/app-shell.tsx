@@ -4,19 +4,18 @@ import { useAsk } from "@/components/ask-sheet";
 import { useHub } from "@/lib/hub";
 import { cn } from "@/lib/utils";
 
-// 新版目前做好的頁面；還沒做好的連回舊版
+// 主選單
 export const TABS = [
-  { key: "plugs", label: "首頁", icon: Home, ready: true },
-  { key: "schedule", label: "排程", icon: Clock, ready: true },
-  { key: "energy", label: "用電", icon: BarChart3, ready: true },
-  { key: "settings", label: "設定", icon: Settings, ready: true },
+  { key: "plugs", label: "首頁", icon: Home },
+  { key: "schedule", label: "排程", icon: Clock },
+  { key: "energy", label: "用電", icon: BarChart3 },
+  { key: "settings", label: "設定", icon: Settings },
 ] as const;
 
-function href(t: (typeof TABS)[number]) {
-  return t.ready ? `#${t.key}` : `/#${t.key}`;
-}
+const href = (t: (typeof TABS)[number]) => `#${t.key}`;
 
-export function AppShell({ tab, children }: { tab: string; children: ReactNode }) {
+export function AppShell({ tab: raw, children }: { tab: string; children: ReactNode }) {
+  const tab = raw === "edit" ? "plugs" : ["map", "net"].includes(raw) ? "settings" : raw;
   const { connected, state } = useHub();
   const ask = useAsk();
   const status = (
@@ -52,7 +51,6 @@ export function AppShell({ tab, children }: { tab: string; children: ReactNode }
             >
               <t.icon className="size-5" />
               {t.label}
-              {!t.ready && <span className="ml-auto text-[11px] font-normal text-muted-foreground/80">舊版</span>}
             </a>
           ))}
         </nav>
