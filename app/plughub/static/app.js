@@ -625,12 +625,13 @@ const STYLE = `
   .scene:active { transform: scale(.97); }
   .scene span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; padding: 0 4px; }
   @media (min-width: 720px) {
-    .scenes { grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); }
+    .scenes { grid-template-columns: repeat(auto-fit, minmax(168px, 1fr)); }
     .scene { flex-direction: row; justify-content: flex-start; padding: 12px 14px; min-height: 64px; font-size: 14.5px; gap: 12px; }
   }
 
   /* ═════════ 卡片與列 ═════════ */
   .grid { columns: 1; column-gap: 16px; }
+  .mas { display: grid; grid-template-columns: repeat(var(--n), minmax(0, 1fr)); gap: 0 16px; align-items: start; }
   @media (min-width: 720px) { .grid { columns: 2; } }
   @media (min-width: 1500px) { .grid.wide { columns: 3; } }
   .card { background: var(--card); border-radius: var(--r-xl); box-shadow: var(--shadow); overflow: hidden; margin: 0 0 16px; break-inside: avoid; }
@@ -1348,7 +1349,7 @@ class PlugApp extends HTMLElement {
       if (grip) this._dragStart(e, grip);
     });
     window.addEventListener("resize", () => {
-      if (this._tab === "map") this._render();
+      if (this._tab === "map" || (this._tab === "plugs" && this._layout === "classic" && this._cols && this._cols !== this._roomCols())) this._render();
       this._measure();
     });
     window.addEventListener("hashchange", () => {
@@ -1609,7 +1610,25 @@ class PlugApp extends HTMLElement {
         <button class="scene danger" data-a="all-off"><div class="si">${ic("mdi:power")}</div><span>全部關閉</span></button>
         ${scenes}
       </div>
-      <div class="grid wide">${this._groups().map((g) => this._roomCard(g)).join("")}</div>`;
+      ${this._masonry(this._groups())}`;
+  }
+
+  // 房間卡片排成幾欄：照高度（插座數）放到目前最矮的那一欄，不會有一欄空著
+  _roomCols() {
+    const w = Math.min(1200, innerWidth - (innerWidth >= 1100 ? 240 : 0) - (innerWidth >= 720 ? 56 : 32));
+    return w >= 1100 ? 3 : w >= 640 ? 2 : 1;
+  }
+
+  _masonry(groups) {
+    const n = Math.min(this._roomCols(), Math.max(1, groups.length));
+    this._cols = this._roomCols();
+    const cols = Array.from({ length: n }, () => ({ h: 0, html: [] }));
+    for (const g of groups) {
+      const c = cols.reduce((a, b) => (b.h < a.h ? b : a));
+      c.html.push(this._roomCard(g));
+      c.h += 1.4 + g.plugs.length; // 標題大約一列多
+    }
+    return `<div class="mas" style="--n:${n}">${cols.map((c) => `<div>${c.html.join("")}</div>`).join("")}</div>`;
   }
 
   // 整間關閉／打開的按鈕
