@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Droplets, Loader2, Truck, Zap, ZapOff } from "lucide-react";
+import { Droplets, Home, Loader2, Truck, Zap, ZapOff } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -53,6 +53,7 @@ export function LifeSheet({ open, onClose }: { open: boolean; onClose: () => voi
           : g.watching
             ? { big: `今天 ${g.stop.time}`, small: "還沒看到這條路線的車子出勤" }
             : { big: `今天 ${g.stop.time}`, small: `${g.today.join("、")}・表定時間前 45 分鐘開始追蹤車子` };
+  const running = !!g && g.today.length > 0 && !!t && !t.none && (t.stops ?? -1) >= 0;
   const days = (d: number[]) => (d.length ? d.map((i) => DN[i]).join("") : "不收");
 
   return (
@@ -73,6 +74,7 @@ export function LifeSheet({ open, onClose }: { open: boolean; onClose: () => voi
                 <div className="text-xl font-semibold">{status.big}</div>
                 <div className="text-sm leading-relaxed text-muted-foreground">{status.small}</div>
               </div>
+              {running && <TruckRoad stops={t!.stops!} />}
               <div className="flex flex-wrap gap-2">
                 {g.next.map((n) => (
                   <div key={n.date} className="rounded-xl bg-muted/60 px-3 py-2 text-sm">
@@ -170,5 +172,32 @@ export function LifeSheet({ open, onClose }: { open: boolean; onClose: () => voi
         </p>
       </div>
     </Sheet>
+  );
+}
+
+// 垃圾車正在開過來：一條小馬路，車子越近越靠右邊的「你家」
+function TruckRoad({ stops }: { stops: number }) {
+  const FAR = 12; // 這麼多站以外都畫在最左邊
+  const pos = Math.max(0, Math.min(1, 1 - stops / FAR));
+  return (
+    <div className="rounded-xl bg-muted/60 px-4 pt-3 pb-2" role="img" aria-label={`垃圾車正在開過來，還有 ${stops} 站`}>
+      <div className="relative h-10">
+        {/* 路面 */}
+        <div className="absolute inset-x-0 bottom-1 h-1.5 rounded-full bg-neutral-300 dark:bg-neutral-700" />
+        <div className="road-run absolute inset-x-2 bottom-[9px] h-[2px] text-neutral-400/70 dark:text-neutral-500" />
+        {/* 你家 */}
+        <div className="absolute right-0 bottom-2.5 flex flex-col items-center text-primary">
+          <Home className="size-6" />
+        </div>
+        {/* 車子：位置變了會滑過去 */}
+        <div className="absolute bottom-2.5 transition-[left] duration-1000 ease-out" style={{ left: `calc(${pos} * (100% - 4.5rem))` }}>
+          <Truck className="truck-run size-7 text-amber-600" />
+        </div>
+      </div>
+      <div className="flex justify-between text-xs text-muted-foreground">
+        <span>{stops > FAR ? `還很遠（${stops} 站）` : stops === 0 ? "到了！" : `還有 ${stops} 站`}</span>
+        <span>你家的清運點</span>
+      </div>
+    </div>
   );
 }

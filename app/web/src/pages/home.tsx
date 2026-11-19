@@ -31,7 +31,7 @@ function Pill({ icon: I, children, tone }: { icon: React.ElementType; children: 
 }
 
 // 首頁上方的小按鈕（天氣、垃圾車、停水停電）
-function Chip({ onClick, icon: I, label, sub, tone }: { onClick: () => void; icon: React.ElementType; label: string; sub?: string; tone?: "warn" }) {
+function Chip({ onClick, icon: I, label, sub, tone, moving }: { onClick: () => void; icon: React.ElementType; label: string; sub?: string; tone?: "warn"; moving?: boolean }) {
   return (
     <button
       onClick={onClick}
@@ -41,7 +41,7 @@ function Chip({ onClick, icon: I, label, sub, tone }: { onClick: () => void; ico
         tone === "warn" && "border-orange-300 dark:border-orange-500/40",
       )}
     >
-      <I className={cn("size-4.5", tone === "warn" ? "text-orange-600" : "text-primary")} />
+      <I className={cn("size-4.5", tone === "warn" ? "text-orange-600" : "text-primary", moving && "truck-run text-amber-600")} />
       <span className="font-medium">{label}</span>
       {sub && <span className="text-muted-foreground">{sub}</span>}
     </button>
@@ -180,7 +180,7 @@ export function HomePage() {
       {state.summary.power != null && <Pill icon={Gauge}>{fmt(state.summary.power)} W</Pill>}
       {r?.configured && <Pill icon={r.ok ? Wifi : WifiOff} tone={r.ok ? undefined : "bad"}>{r.ok ? "網路正常" : "路由器連不上"}</Pill>}
       {g && g.today.length > 0 && (
-        <Chip onClick={() => setSheet("life")} icon={Truck} label="垃圾車"
+        <Chip onClick={() => setSheet("life")} icon={Truck} label="垃圾車" moving={!!truck && !truck.none && (truck.stops ?? -1) >= 0}
           sub={truck && !truck.none ? ((truck.stops ?? -1) >= 0 ? `還有 ${truck.stops} 站` : "已經過了") : g.stop.time} />
       )}
       {roadOutages[0] && (
