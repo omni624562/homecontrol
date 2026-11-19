@@ -232,7 +232,9 @@ class LocalInfo:
 
     def _arrived(self, s: dict, at: datetime) -> None:
         key = f"{s['lineid']}:{s['rank']}"
-        rows = [x for x in self.arrivals.get(key, []) if x["d"] != at.date().isoformat()]
+        rows = self.arrivals.get(key, [])
+        if any(x["d"] == at.date().isoformat() for x in rows):
+            return  # 一天只記第一次到（車子回頭經過、位置飄動都不算）
         rows.append({"d": at.date().isoformat(), "m": at.hour * 60 + at.minute})
         self.arrivals[key] = rows[-10:]
         try:
