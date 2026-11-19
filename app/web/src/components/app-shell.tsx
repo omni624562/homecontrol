@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 // 新版目前做好的頁面；還沒做好的連回舊版
 export const TABS = [
   { key: "plugs", label: "首頁", icon: Home, ready: true },
-  { key: "schedule", label: "排程", icon: Clock, ready: false },
+  { key: "schedule", label: "排程", icon: Clock, ready: true },
   { key: "energy", label: "用電", icon: BarChart3, ready: false },
   { key: "settings", label: "設定", icon: Settings, ready: false },
 ] as const;

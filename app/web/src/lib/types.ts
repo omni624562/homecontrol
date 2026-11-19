@@ -30,6 +30,7 @@ export interface Plug {
     msg: string;
     schedule: number;
     kasa: KasaRule[];
+    kasa_away?: KasaAway[];
   } | null;
   net?: {
     fw?: string;
@@ -49,6 +50,55 @@ export interface KasaRule {
   val: number;
   wday: number[];
   enable: number;
+  repeat?: number;
+  smin?: number;
+}
+
+export interface KasaAway {
+  smin: number;
+  emin: number;
+  wday: number[];
+  enable: number;
+}
+
+export type TimeMode = "clock" | "sunrise" | "sunset";
+
+export interface Schedule {
+  id: string;
+  enabled: boolean;
+  time: string;
+  days: number[];
+  action: "on" | "off" | "scene";
+  scene: string | null;
+  plugs: string[];
+  restore_at: string | null;
+  duration_s: number | null;
+  backup: boolean;
+  time_mode?: TimeMode;
+  offset_min?: number;
+  skip_holiday?: boolean;
+  skip_rain?: boolean;
+  today?: string | null;
+  backup_status?: {
+    total: number;
+    ok: number;
+    issues: { plug: string; reason: string; pending?: boolean }[];
+    rules?: [number, number, number, number[]][];
+  };
+  skip_today?: string | null;
+  skipped?: string | null;
+}
+
+export interface HabitSuggestion {
+  key: string;
+  plug: string;
+  action: "on" | "off";
+  time: string;
+  days: number[];
+  mode: TimeMode;
+  offset_min: number;
+  hits: number;
+  of: number;
 }
 
 export interface Room {
@@ -176,8 +226,15 @@ export interface HubState {
   scenes: Scene[];
   people: Person[];
   summary: { power: number | null; energy_today: number; cost_today: number; cost_month: number };
-  settings: { long_on_hours?: number; [k: string]: unknown };
-  calendar: { holiday: string | null; rain: string | null; weather: Weather | null; weather_show: boolean; local: Local };
+  settings: {
+    long_on_hours?: number;
+    away?: { enabled: boolean; start: string; end: string; plugs: string[] };
+    [k: string]: unknown;
+  };
+  schedules: Schedule[];
+  habits?: { suggestions: HabitSuggestion[]; days: number };
+  sun?: { sunrise: number | null; sunset: number | null; located?: boolean };
+  calendar: { holiday: string | null; day_off?: boolean; rain: string | null; weather: Weather | null; weather_show: boolean; local: Local };
   router?: { configured: boolean; ok: boolean; ssids?: string[] };
   assistant?: unknown;
 }
