@@ -19,7 +19,7 @@ function NCard({ icon: I, title, end, children }: { icon: React.ElementType; tit
   return (
     <Card className="gap-0 overflow-hidden py-0">
       <div className="flex items-center gap-3 border-b bg-muted/60 px-4 py-3 sm:px-5 dark:bg-muted/40">
-        <div className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-sm"><I className="size-5" /></div>
+        <div className="flex size-9 items-center justify-center rounded-lg border bg-background text-foreground/70"><I className="size-5" /></div>
         <h2 className="flex-1 text-lg font-bold tracking-tight">{title}</h2>
         {end}
       </div>

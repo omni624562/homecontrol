@@ -64,7 +64,7 @@ export function PlugRow({ plug: p, onOpen, onToggle }: { plug: Plug; onOpen: () 
           <div
             className={cn(
               "truncate text-[13px] leading-relaxed text-muted-foreground",
-              tone === "warn" && "text-orange-600 dark:text-orange-400",
+              tone === "warn" && "font-medium text-red-600 dark:text-red-400",
               tone === "timer" && "text-violet-600 dark:text-violet-400",
               tone === "bad" && "text-destructive",
             )}

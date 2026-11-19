@@ -37,11 +37,11 @@ export function RoomCard({ g, onOpen, onToggle }: { g: Group; onOpen: (p: Plug) 
   return (
     <Card className="mb-4 gap-0 overflow-hidden py-0 break-inside-avoid">
       <div className="flex items-center gap-3 border-b bg-muted/60 px-4 py-3 dark:bg-muted/40">
-        <div className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-sm">
+        <div className="flex size-9 items-center justify-center rounded-lg border bg-background text-foreground/70">
           <Icon className="size-5" />
         </div>
         <h2 className="text-lg font-bold tracking-tight">{g.name}</h2>
-        <span className={cn("rounded-full px-2 py-0.5 text-xs font-medium tabular-nums", on.length ? "bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300" : "bg-background text-muted-foreground")}>
+        <span className={cn("rounded-full px-2 py-0.5 text-xs font-medium tabular-nums", on.length ? "bg-background text-foreground" : "bg-background text-muted-foreground")}>
           {on.length}／{g.plugs.length} 開著
         </span>
         {g.id && (canOff || canOn) && (

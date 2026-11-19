@@ -44,7 +44,7 @@ export function Rain() {
 export function Steam() {
   return (
     <span aria-hidden className="pointer-events-none absolute -top-2 left-1/2 flex -translate-x-1/2 gap-[3px]">
-      {[0, 0.5, 0.25].map((d, i) => <i key={i} className="steam block h-2.5 w-[2px] rounded-full bg-orange-400/80" style={{ animationDelay: `${d}s` }} />)}
+      {[0, 0.5, 0.25].map((d, i) => <i key={i} className="steam block h-2.5 w-[2px] rounded-full bg-red-500/80" style={{ animationDelay: `${d}s` }} />)}
     </span>
   );
 }

@@ -101,7 +101,7 @@ function RoomBox({ id, name, icon, plugs, onOpen, onEdit, sortable }: { id: stri
     <div ref={s.setNodeRef} style={{ transform: CSS.Translate.toString(s.transform), transition: s.transition }} className={cn(s.isDragging && "opacity-30")}>
       <Card className={cn("gap-0 overflow-hidden py-0 transition-shadow", drop.isOver && "ring-2 ring-primary")}>
         <div className="flex items-center gap-3 border-b bg-muted/60 px-4 py-2.5 dark:bg-muted/40">
-          <div className={cn("flex size-9 items-center justify-center rounded-lg shadow-sm", id === NONE ? "bg-muted-foreground/20 text-muted-foreground" : "bg-primary text-primary-foreground")}><I className="size-5" /></div>
+          <div className={cn("flex size-9 items-center justify-center rounded-lg shadow-sm", id === NONE ? "bg-muted-foreground/20 text-muted-foreground" : "border bg-background text-foreground/70")}><I className="size-5" /></div>
           <h2 className="flex-1 truncate text-lg font-bold tracking-tight">{name}</h2>
           {onEdit && <Button variant="outline" size="sm" className="bg-background" onClick={onEdit}><Pencil />改名</Button>}
           {sortable && <Grip label={name} attrs={s.attributes} listeners={s.listeners} setRef={s.setActivatorNodeRef} />}
@@ -225,7 +225,7 @@ export function EditPage() {
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={onStart} onDragEnd={onEnd} onDragCancel={() => setActive(null)}>
           <Card className="gap-0 overflow-hidden py-0">
             <div className="flex items-center gap-3 border-b bg-muted/60 px-4 py-2.5 dark:bg-muted/40">
-              <div className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-sm"><Star className="size-5" /></div>
+              <div className="flex size-9 items-center justify-center rounded-lg border bg-background text-foreground/70"><Star className="size-5" /></div>
               <h2 className="flex-1 text-lg font-bold tracking-tight">情境</h2>
             </div>
             <div className="divide-y">
@@ -236,7 +236,7 @@ export function EditPage() {
                   const I = mdiIcon(sc.icon, Star);
                   return (
                     <SortRow key={id} id={k("scene", id)} label={sc.name}>
-                      <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary"><I className="size-5" /></span>
+                      <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted text-foreground/70"><I className="size-5" /></span>
                       <button onClick={() => setScene(id)} className="min-w-0 flex-1 text-left focus-visible:outline-none focus-visible:underline">
                         <span className="block truncate font-medium hover:text-primary">{sc.name}</span>
                         <span className="block text-sm text-muted-foreground">{sceneSummary(sc.actions)}</span>

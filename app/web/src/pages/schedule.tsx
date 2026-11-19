@@ -42,7 +42,7 @@ async function call(fn: () => Promise<unknown>, ok?: string) {
 function CardHead({ icon: I, title, tone, end }: { icon: React.ElementType; title: string; tone?: "timer"; end?: ReactNode }) {
   return (
     <div className="mb-2 flex items-center gap-3 border-b bg-muted/60 px-4 py-3 sm:px-5 dark:bg-muted/40">
-      <div className={cn("flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-sm", tone === "timer" && "bg-amber-500 text-white")}>
+      <div className={cn("flex size-9 items-center justify-center rounded-lg border bg-background text-foreground/70", tone === "timer" && "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-400")}>
         <I className="size-5" />
       </div>
       <h2 className="flex-1 text-lg font-bold tracking-tight">{title}</h2>

@@ -24,7 +24,7 @@ import { cn } from "@/lib/utils";
 function Pill({ icon: I, children, tone }: { icon: React.ElementType; children: React.ReactNode; tone?: "ok" | "bad" }) {
   return (
     <span className={cn("inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-transparent bg-muted/70 px-3 text-sm whitespace-nowrap text-muted-foreground",
-      tone === "ok" && "text-emerald-700 dark:text-emerald-400", tone === "bad" && "text-orange-700 dark:text-orange-400")}>
+      tone === "ok" && "text-foreground [&_svg]:text-emerald-600", tone === "bad" && "text-orange-700 dark:text-orange-400")}>
       <I className="size-4" />
       {children}
     </span>
@@ -42,7 +42,7 @@ function Chip({ onClick, icon: I, label, sub, tone, moving }: { onClick: () => v
         tone === "warn" && "border-orange-300 dark:border-orange-500/40",
       )}
     >
-      <I className={cn("size-4.5", tone === "warn" ? "text-orange-600" : "text-primary", moving && "truck-run text-amber-600")} />
+      <I className={cn("size-4.5", tone === "warn" ? "text-orange-600" : "text-foreground/60", moving && "truck-run text-amber-600")} />
       <span className="font-medium">{label}</span>
       {sub && <span className="text-muted-foreground">{sub}</span>}
     </button>
@@ -244,9 +244,9 @@ export function HomePage() {
                 key={sc.id}
                 onClick={() => runScene(sc.id, sc.name)}
                 disabled={running === sc.id}
-                className="flex h-16 items-center gap-3 rounded-xl border bg-card px-4 text-left font-semibold shadow-xs transition-all hover:border-primary/40 hover:bg-primary/5 hover:shadow-sm active:scale-[.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+                className="flex h-16 items-center gap-3 rounded-xl border bg-card px-4 text-left font-semibold shadow-xs transition-all hover:border-foreground/20 hover:bg-muted/60 hover:shadow-sm active:scale-[.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
               >
-                <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-foreground/70">
                   {running === sc.id ? <Loader2 className="size-5 animate-spin" /> : <I className="size-5" />}
                 </span>
                 <span className="truncate">{sc.name}</span>
