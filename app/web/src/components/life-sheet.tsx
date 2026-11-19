@@ -113,7 +113,7 @@ export function LifeSheet({ open, onClose }: { open: boolean; onClose: () => voi
               <div className="flex items-center justify-between gap-4">
                 <div>
                   <Label htmlFor="g-notify">快到時通知</Label>
-                  <p className="text-xs text-muted-foreground">剩 3 站時推播（要先設定 ntfy）</p>
+                  <p className="text-xs text-muted-foreground">剩 3 站時推播（要先在設定頁設好 LINE 通知）</p>
                 </div>
                 <Switch id="g-notify" checked={L.garbage_notify} onCheckedChange={(v) => put({ garbage_notify: v })} />
               </div>
@@ -148,7 +148,7 @@ export function LifeSheet({ open, onClose }: { open: boolean; onClose: () => voi
           <div className="mt-4 flex items-center justify-between gap-4">
             <div>
               <Label htmlFor="o-notify">有你家的路時通知</Label>
-              <p className="text-xs text-muted-foreground">新公告一出來就推播（要先設定 ntfy）</p>
+              <p className="text-xs text-muted-foreground">新公告一出來就推播（要先在設定頁設好 LINE 通知）</p>
             </div>
             <Switch id="o-notify" checked={L.outage_notify} onCheckedChange={(v) => put({ outage_notify: v })} />
           </div>

@@ -244,6 +244,7 @@ export interface HubState {
   calendar: { holiday: string | null; day_off?: boolean; rain: string | null; weather: Weather | null; weather_show: boolean; local: Local };
   router?: { configured: boolean; ok: boolean; error?: string | null; ssids?: string[]; nodes?: { mac: string; model: string; ip: string; main: boolean }[] };
   assistant?: Assistant;
+  notify?: { line: boolean; name: string; error: string | null };
   matter?: { online: boolean; commissioned: boolean; manual_code: string; qr_code: string; fabrics: { vendor: string; label: string }[]; plugs: number; running: boolean };
   net_events?: { start: number; end: number | null; ssid: string; devices: number }[];
 }

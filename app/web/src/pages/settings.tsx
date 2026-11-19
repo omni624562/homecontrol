@@ -113,51 +113,83 @@ function routerLine(s: HubState) {
   return `${(r.nodes || []).map((n) => n.model).join(" + ")}${people.length ? `・${home ? `${home} 人在家` : "大家都出門了"}` : "・看誰在家、陌生裝置通知"}`;
 }
 
-function Ntfy() {
+// 手機通知：LINE 官方的 Messaging API（自己的機器人；權杖只存在樹莓派上）
+function LineNotify() {
   const { state } = useHub();
-  const server = String(state?.settings.ntfy_topic || "");
-  const [v, setV] = useState(server);
-  const [busy, setBusy] = useState(false);
-  useEffect(() => setV(server), [server]);
+  const n = state?.notify;
+  const [v, setV] = useState("");
+  const [busy, setBusy] = useState<"" | "save" | "test" | "del">("");
+  const [use, setUse] = useState<{ used?: number | null; limit?: number | null; error?: string } | null>(null);
+  const on = !!n?.line;
+  useEffect(() => {
+    if (!on) return setUse(null);
+    api<{ used?: number | null; limit?: number | null; error?: string }>("GET", "/api/notify/usage").then(setUse).catch(() => setUse(null));
+  }, [on, n?.name]);
+  const run = async (what: "save" | "test" | "del", fn: () => Promise<unknown>, ok: string) => {
+    setBusy(what);
+    try {
+      await fn();
+      toast.success(ok);
+    } catch (e) {
+      toast.error("沒有成功", { description: (e as Error).message });
+    } finally {
+      setBusy("");
+    }
+  };
   return (
-    <div className="space-y-2 px-4 py-3.5 sm:px-5">
+    <div className="space-y-2.5 px-4 py-3.5 sm:px-5">
       <div>
-        <div className="font-medium">手機通知</div>
-        <div className="text-sm leading-relaxed text-muted-foreground">手機裝 ntfy App，訂閱一個只有你知道的名稱（例如 home-plugs-8f3k），再填到下面。定時關閉、插座斷線時會通知你。</div>
+        <div className="flex flex-wrap items-center gap-2 font-medium">
+          手機通知（LINE）
+          {on && <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300">已設定{n?.name ? `・${n.name}` : ""}</Badge>}
+        </div>
+        <div className="text-sm leading-relaxed text-muted-foreground">
+          {on
+            ? `定時關閉、插座斷線、垃圾車快到時，會用 LINE 傳訊息給加了這個機器人好友的人。${use?.used != null ? `這個月已經傳 ${use.used} 則${use.limit ? `（免費上限 ${use.limit} 則，每個好友各算一則）` : ""}。` : ""}`
+            : "不用另外裝 App：建一個自己的 LINE 機器人，通知會像一般訊息出現在 LINE。"}
+        </div>
+        {(n?.error || use?.error) && <div role="alert" className="mt-1 text-sm text-destructive">上次沒送出去：{n?.error || use?.error}</div>}
       </div>
-      <div className="flex gap-2">
+      {!on && (
+        <ol className="list-decimal space-y-1 rounded-xl border bg-muted/40 py-3 pr-4 pl-9 text-sm leading-relaxed text-muted-foreground">
+          <li>到 <a className="font-medium text-primary underline-offset-4 hover:underline" href="https://manager.line.biz/" target="_blank" rel="noreferrer">LINE 官方帳號管理頁</a> 用自己的 LINE 登入，建立一個官方帳號（免費，名稱例如「我家」）。</li>
+          <li>在那個帳號的「設定 → Messaging API」按「啟用 Messaging API」。同一頁的「回應設定」把自動回應訊息關掉。</li>
+          <li>到 <a className="font-medium text-primary underline-offset-4 hover:underline" href="https://developers.line.biz/console/" target="_blank" rel="noreferrer">LINE Developers</a> 點進這個帳號，在「Messaging API」分頁最下面按 Issue，複製 Channel access token 貼到下面。</li>
+          <li>用手機 LINE 掃同一頁的 QR code，加這個機器人好友。家人也加的話，他們也會收到。</li>
+        </ol>
+      )}
+      <form
+        className="flex flex-wrap gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!v.trim()) return;
+          run("save", async () => { await api("PUT", "/api/notify", { line_token: v.trim() }); setV(""); }, "已儲存，按「測試」傳一則看看");
+        }}
+      >
         <Input
           value={v}
           onChange={(e) => setV(e.target.value)}
-          onBlur={() => v !== server && put({ ntfy_topic: v.trim() }, "已儲存通知主題")}
-          onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-          placeholder="ntfy 主題名稱"
+          placeholder={on ? "要換新的權杖才填" : "貼上 Channel access token"}
+          type="password"
           autoCapitalize="off"
           autoComplete="off"
           spellCheck={false}
-          aria-label="ntfy 主題名稱"
-          className="h-11"
+          aria-label="LINE Channel access token"
+          className="h-11 min-w-0 flex-1 basis-48"
         />
-        <Button
-          variant="outline"
-          className="h-11"
-          disabled={busy}
-          onClick={async () => {
-            setBusy(true);
-            try {
-              await api("PUT", "/api/settings", { ntfy_topic: v.trim() });
-              await api("POST", "/api/test-notify");
-              toast.success("已送出測試通知");
-            } catch (e) {
-              toast.error("沒有成功", { description: (e as Error).message });
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          {busy ? <Loader2 className="animate-spin" /> : <Bell />}測試
-        </Button>
-      </div>
+        <Button type="submit" variant="outline" className="h-11" disabled={!!busy || !v.trim()}>{busy === "save" && <Loader2 className="animate-spin" />}儲存</Button>
+        {on && (
+          <Button type="button" variant="outline" className="h-11" disabled={!!busy} onClick={() => run("test", () => api("POST", "/api/test-notify"), "已傳出測試訊息，看一下 LINE")}>
+            {busy === "test" ? <Loader2 className="animate-spin" /> : <Bell />}測試
+          </Button>
+        )}
+        {on && (
+          <Button type="button" variant="ghost" className="h-11 text-destructive hover:bg-destructive/10 hover:text-destructive" disabled={!!busy} onClick={() => run("del", () => api("PUT", "/api/notify", { line_token: "" }), "已移除 LINE 通知")}>
+            移除
+          </Button>
+        )}
+      </form>
+      <p className="text-xs leading-relaxed text-muted-foreground">權杖只存在樹莓派上，不會再傳回瀏覽器。通知的內容（例如「客廳燈 時間到，已經關閉」）會經過 LINE 的伺服器。</p>
     </div>
   );
 }
@@ -384,7 +416,7 @@ export function SettingsPage() {
                 <SettingNumber k="standby_watts" step={0.5} unit="W" label="待機門檻" />
               </SRow>
             )}
-            <Ntfy />
+            <LineNotify />
             <SRow wrap label="每週摘要" hint="每週日晚上 8 點推播：這週的電費、開最久的電器、新連上網路的裝置、Wi-Fi 斷線次數、用最多網路的裝置">
               <div className="flex items-center gap-3">
                 <WeeklyPreview />

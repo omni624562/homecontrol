@@ -52,7 +52,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .assistant import MODELS as ASSISTANT_MODELS, Assistant
 from .hub import SOURCE, Hub, Locked
-from .notify import Notifier
+from .notify import LineError, Notifier
 from .store import Store, _hms
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -61,7 +61,7 @@ DATA_DIR = Path(os.environ.get("PLUGHUB_DATA", "/data"))
 STATIC = Path(__file__).parent / "static"
 
 store = Store(DATA_DIR)
-hub = Hub(store, Notifier(lambda: store.data["settings"].get("ntfy_topic", "")))
+hub = Hub(store, Notifier(lambda: store.data["settings"].get("ntfy_topic", ""), store.dir / "secrets.json"))
 assistant = Assistant(hub)
 hub.assistant = assistant
 _LOGGER = logging.getLogger(__name__)
@@ -898,10 +898,39 @@ async def delete_person(pid: str) -> dict[str, Any]:
 
 @app.post("/api/test-notify")
 async def test_notify() -> dict[str, Any]:
-    if not store.data["settings"].get("ntfy_topic"):
-        raise HTTPException(400, "還沒有填通知主題")
-    hub.notifier.send("測試通知", "收到這則通知，就代表手機通知設定好了")
+    n = hub.notifier
+    if n.status()["line"]:
+        try:
+            await asyncio.to_thread(n.push_now, "測試通知", "收到這則訊息，就代表家庭中控的通知設定好了")
+        except LineError as err:
+            raise HTTPException(502, str(err)) from None
+    elif store.data["settings"].get("ntfy_topic"):
+        n.send("測試通知", "收到這則通知，就代表手機通知設定好了")
+    else:
+        raise HTTPException(400, "還沒有設定 LINE 通知")
     return {"ok": True}
+
+
+@app.put("/api/notify")
+async def notify_set(body: dict = Body(...)) -> dict[str, Any]:
+    """{"line_token": LINE 的 Channel access token}（空字串 = 刪除）；只存在樹莓派上，不會回傳。"""
+    token = str(body.get("line_token", "")).strip()
+    if token and not re.fullmatch(r"[A-Za-z0-9+/=]{100,300}", token):
+        raise HTTPException(400, "格式不對：要貼的是 Messaging API 分頁最下面的 Channel access token（很長的一串）")
+    try:
+        out = await asyncio.to_thread(hub.notifier.set_token, token)
+    except LineError as err:
+        raise HTTPException(400, str(err)) from None
+    await hub.changed()
+    return out
+
+
+@app.get("/api/notify/usage")
+async def notify_usage() -> dict[str, Any]:
+    try:
+        return await asyncio.to_thread(hub.notifier.usage)
+    except LineError as err:
+        return {"error": str(err)}
 
 
 # ---- Google Home 串接（Matter） ----
