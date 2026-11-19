@@ -263,13 +263,15 @@ function Body({ id, saved, d, set, onClose }: { id?: string; saved?: Schedule; d
           )}
           {d.action === "off" && (
             <Group>
-              <Row label="之後再打開" hint="只打開被這個排程關掉的" htmlFor="rs">
+              <Row label="關掉之後，到某個時間自動再打開" hint="例如晚上 11 點關、隔天早上 7 點自動打開；不需要就不用開" htmlFor="rs">
                 <Switch id="rs" checked={!!d.restore_at} onCheckedChange={(v) => up({ restore_at: v ? "07:00:00" : null })} />
               </Row>
               {d.restore_at && (
                 <div className="space-y-2 px-4 py-3">
                   <ClockPicker value={d.restore_at} onChange={(t) => up({ restore_at: t })} />
-                  <p className="text-xs text-muted-foreground">{mode === "clock" && d.restore_at <= d.time ? "隔天" : "當天"}這個時間打開；本來就關著的不會被打開</p>
+                  <p className="text-xs leading-relaxed text-muted-foreground">
+                    {mode === "clock" ? `${showT(d.time)} 關掉，` : "關掉之後，"}<b className="font-semibold text-foreground">{mode === "clock" && d.restore_at <= d.time ? "隔天" : "當天"} {showT(d.restore_at)} 自動打開</b>。只會打開被這條排程關掉的；關之前本來就關著的不會動。
+                  </p>
                 </div>
               )}
             </Group>
@@ -309,7 +311,7 @@ function Body({ id, saved, d, set, onClose }: { id?: string; saved?: Schedule; d
               {d.skip_rain && <div className="space-y-1.5 px-4 py-3"><RainLines /></div>}
               <Row
                 label="樹莓派離線時由插座接手"
-                hint={`存一份到插座裡當備援（只到分鐘${d.action === "off" && d.restore_at ? "；「之後再打開」不會存進去" : ""}）`}
+                hint={`存一份到插座裡當備援（只到分鐘${d.action === "off" && d.restore_at ? "；「自動再打開」不會存進去" : ""}）`}
                 htmlFor="bk"
               >
                 <Switch id="bk" checked={!!d.backup} onCheckedChange={(v) => up({ backup: v })} />
