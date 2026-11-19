@@ -10,10 +10,12 @@
 from __future__ import annotations
 
 import asyncio
+import http.client
 import json
 import logging
 import math
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta
@@ -41,9 +43,17 @@ RAIN_POP = 70  # 白天（6–18 點）降雨機率到這麼高也算
 
 
 def _get(url: str, **q: str) -> Any:
+    """抓 JSON；傳到一半斷線（IncompleteRead）或回的不是 JSON（伺服器忙）就再試，最多 3 次。"""
     req = urllib.request.Request(f"{url}?{urllib.parse.urlencode(q)}", headers={"User-Agent": "home-hub/1.0"})
-    with urllib.request.urlopen(req, timeout=60) as res:
-        return json.loads(res.read().decode("utf-8"))
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=60) as res:
+                return json.loads(res.read().decode("utf-8"))
+        except (http.client.IncompleteRead, json.JSONDecodeError, TimeoutError, ConnectionError, urllib.error.URLError):
+            if attempt == 2:
+                raise
+            time.sleep(3 * (attempt + 1))
+    return None
 
 
 def _num(v: Any) -> float | None:
@@ -139,6 +149,7 @@ class Weather:
             self.home = home
             self.reset()
         changed = False
+        t0 = time.time()
         try:
             if self._due("resolve", RESOLVE_EVERY):
                 await asyncio.to_thread(self._resolve)
@@ -153,6 +164,10 @@ class Weather:
             self.error = str(err)[:160].replace(self.key() or "\0", "…")
             if not self.stations:
                 self._at.pop("resolve", None)  # 還沒選好測站：下一輪再試
+            # 失敗的那幾項 2 分鐘後再試，不用等到下一個整點
+            for what, every in (("obs", OBS_EVERY if show else FORECAST_EVERY), ("forecast", FORECAST_EVERY)):
+                if self._at.get(what, 0) >= t0:
+                    self._at[what] = time.time() - every + 120
             _LOGGER.warning("氣象署資料查詢失敗：%s", self.error)
         if show and self.air_key() and self._due("air", AIR_EVERY):
             try:
@@ -161,6 +176,7 @@ class Weather:
                 changed = True
             except Exception as err:  # noqa: BLE001
                 self.air_error = str(err)[:160].replace(self.air_key() or "\0", "…")
+                self._at["air"] = time.time() - AIR_EVERY + 120
                 _LOGGER.warning("環境部空品查詢失敗：%s", self.air_error)
         if changed:
             self.updated = time.time()
