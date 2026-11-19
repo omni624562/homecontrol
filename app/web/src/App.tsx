@@ -3,6 +3,8 @@ import { AppShell } from "@/components/app-shell";
 import { HomePage } from "@/pages/home";
 import { SchedulePage } from "@/pages/schedule";
 import { EnergyPage } from "@/pages/energy";
+import { SettingsPage } from "@/pages/settings";
+import { AskProvider } from "@/components/ask-sheet";
 
 // 新版做好的頁面；其他分頁會連回舊版
 export default function App() {
@@ -13,8 +15,10 @@ export default function App() {
     return () => removeEventListener("hashchange", on);
   }, []);
   return (
-    <AppShell tab={tab}>
-      {tab === "schedule" ? <SchedulePage /> : tab === "energy" ? <EnergyPage /> : <HomePage />}
-    </AppShell>
+    <AskProvider>
+      <AppShell tab={tab}>
+        {tab === "schedule" ? <SchedulePage /> : tab === "energy" ? <EnergyPage /> : tab === "settings" ? <SettingsPage /> : <HomePage />}
+      </AppShell>
+    </AskProvider>
   );
 }

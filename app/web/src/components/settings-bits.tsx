@@ -1,4 +1,9 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { Minus, Plus } from "lucide-react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { api } from "@/lib/api";
+import { useHub } from "@/lib/hub";
 import { cn } from "@/lib/utils";
 
 // 左右兩欄裡的一個區塊
@@ -34,3 +39,41 @@ export const Value = ({ children, tone }: { children: ReactNode; tone?: "warn" |
   </span>
 );
 
+
+// 數字設定：−／＋ 或直接打，離開欄位或按 Enter 就存到 /api/settings
+export function SettingNumber({ k, step, unit, label, min = 0 }: { k: string; step: number; unit: string; label: string; min?: number }) {
+  const { state } = useHub();
+  const server = Number(state?.settings[k] ?? 0);
+  const [v, setV] = useState(String(server));
+  useEffect(() => setV(String(server)), [server]);
+  const save = async (n: number) => {
+    if (!Number.isFinite(n) || n < min) return setV(String(server));
+    const val = Math.round(n * 10) / 10;
+    setV(String(val));
+    try {
+      await api("PUT", "/api/settings", { [k]: val });
+      toast.success(`${label}：${val} ${unit}`);
+    } catch (err) {
+      toast.error("沒有成功", { description: (err as Error).message });
+      setV(String(server));
+    }
+  };
+  return (
+    <div className="flex shrink-0 items-center gap-1">
+      <Button variant="outline" size="icon" className="size-10" aria-label={`${label}減少 ${step}`} onClick={() => save(Number(v) - step)}><Minus /></Button>
+      <input
+        type="number"
+        inputMode="decimal"
+        aria-label={`${label}（${unit}）`}
+        value={v}
+        step={step}
+        onChange={(e) => setV(e.target.value)}
+        onBlur={() => Number(v) !== server && save(Number(v))}
+        onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+        className="h-10 w-20 rounded-md border bg-background text-center text-base tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      />
+      <Button variant="outline" size="icon" className="size-10" aria-label={`${label}增加 ${step}`} onClick={() => save(Number(v) + step)}><Plus /></Button>
+      <span className="ml-1 w-8 text-sm text-muted-foreground">{unit}</span>
+    </div>
+  );
+}

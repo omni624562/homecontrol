@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { AlertCircle, CheckCircle2, ChevronDown, ChevronRight, ChevronUp, Clock, Minus, Plus, Zap } from "lucide-react";
-import { toast } from "sonner";
+import { AlertCircle, CheckCircle2, ChevronDown, ChevronRight, ChevronUp, Clock, Minus, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -9,6 +8,7 @@ import { BarChart, type Bar } from "@/components/bar-chart";
 import { EnergyDeviceSheet } from "@/components/energy-device-sheet";
 import { deviceIcon } from "@/components/icons";
 import { Segmented } from "@/components/schedule-bits";
+import { SettingNumber } from "@/components/settings-bits";
 import { api } from "@/lib/api";
 import { fmt, fmtMin } from "@/lib/format";
 import { useHub, useMedia } from "@/lib/hub";
@@ -63,43 +63,6 @@ function EnergySkeleton() {
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-28 rounded-xl" />)}</div>
       <Skeleton className="h-72 rounded-xl" />
       <div className="grid gap-4 lg:grid-cols-2"><Skeleton className="h-56 rounded-xl" /><Skeleton className="h-56 rounded-xl" /></div>
-    </div>
-  );
-}
-
-// 家裡每月用電（決定電價級距）
-function HouseholdKwh() {
-  const { state } = useHub();
-  const server = Number(state?.settings.household_monthly_kwh ?? 0);
-  const [v, setV] = useState(String(server));
-  useEffect(() => setV(String(server)), [server]);
-  const save = async (n: number) => {
-    if (!Number.isFinite(n) || n < 0) return setV(String(server));
-    const val = Math.round(n * 10) / 10;
-    setV(String(val));
-    try {
-      await api("PUT", "/api/settings", { household_monthly_kwh: val });
-      toast.success("已更新，電價重新計算");
-    } catch (err) {
-      toast.error("沒有成功", { description: (err as Error).message });
-      setV(String(server));
-    }
-  };
-  return (
-    <div className="flex items-center gap-1">
-      <Button variant="outline" size="icon" className="size-10" aria-label="減少 10 度" onClick={() => save(Number(v) - 10)}><Minus /></Button>
-      <input
-        type="number"
-        inputMode="decimal"
-        aria-label="家裡每月用電（度）"
-        value={v}
-        onChange={(e) => setV(e.target.value)}
-        onBlur={() => Number(v) !== server && save(Number(v))}
-        onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-        className="h-10 w-20 rounded-md border bg-background text-center text-base tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      />
-      <Button variant="outline" size="icon" className="size-10" aria-label="增加 10 度" onClick={() => save(Number(v) + 10)}><Plus /></Button>
-      <span className="ml-1 text-sm text-muted-foreground">度</span>
     </div>
   );
 }
@@ -338,7 +301,7 @@ export function EnergyPage() {
                   <div className="font-medium">家裡每月用電</div>
                   <div className="text-sm leading-relaxed text-muted-foreground">電費單上的度數（兩個月一期的話除以 2），用來決定電價級距</div>
                 </div>
-                <HouseholdKwh />
+                <SettingNumber k="household_monthly_kwh" step={10} unit="度" label="家裡每月用電" />
               </div>
               <div className="flex items-center gap-3 px-4 py-3 sm:px-5">
                 <div className="min-w-0 flex-1">

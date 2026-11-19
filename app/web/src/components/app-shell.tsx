@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
-import { BarChart3, Clock, Home, Settings } from "lucide-react";
+import { BarChart3, Clock, Home, MessageSquareText, Settings } from "lucide-react";
+import { useAsk } from "@/components/ask-sheet";
 import { useHub } from "@/lib/hub";
 import { cn } from "@/lib/utils";
 
@@ -8,7 +9,7 @@ export const TABS = [
   { key: "plugs", label: "首頁", icon: Home, ready: true },
   { key: "schedule", label: "排程", icon: Clock, ready: true },
   { key: "energy", label: "用電", icon: BarChart3, ready: true },
-  { key: "settings", label: "設定", icon: Settings, ready: false },
+  { key: "settings", label: "設定", icon: Settings, ready: true },
 ] as const;
 
 function href(t: (typeof TABS)[number]) {
@@ -17,6 +18,7 @@ function href(t: (typeof TABS)[number]) {
 
 export function AppShell({ tab, children }: { tab: string; children: ReactNode }) {
   const { connected, state } = useHub();
+  const ask = useAsk();
   const status = (
     <div className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
       <span className={cn("size-2 rounded-full", connected ? "bg-emerald-500" : "bg-amber-500 animate-pulse")} />
@@ -57,7 +59,19 @@ export function AppShell({ tab, children }: { tab: string; children: ReactNode }
         <div className="mt-auto border-t px-2 pt-4">{status}</div>
       </aside>
 
-      <main className="pb-[calc(5rem+env(safe-area-inset-bottom))] lg:pb-10 lg:pl-60">{children}</main>
+      <main className="pb-[calc(9rem+env(safe-area-inset-bottom))] lg:pb-28 lg:pl-60">{children}</main>
+
+      {/* 問家裡：每一頁右下角都有 */}
+      {state?.assistant && (
+        <button
+          onClick={ask.open}
+          aria-label="問家裡"
+          className="fixed right-4 bottom-[calc(5rem+env(safe-area-inset-bottom))] z-30 inline-flex size-14 items-center justify-center gap-2 rounded-full bg-primary sm:h-12 sm:w-auto sm:px-5 font-medium text-primary-foreground shadow-lg transition-all hover:bg-primary/90 hover:shadow-xl focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ring/40 active:scale-95 lg:right-8 lg:bottom-8"
+        >
+          <MessageSquareText className="size-6 sm:size-5" />
+          <span className="max-sm:hidden">問家裡</span>
+        </button>
+      )}
 
       {/* 手機、平板：下方分頁 */}
       <nav

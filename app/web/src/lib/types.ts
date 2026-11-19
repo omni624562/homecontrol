@@ -235,8 +235,10 @@ export interface HubState {
   habits?: { suggestions: HabitSuggestion[]; days: number };
   sun?: { sunrise: number | null; sunset: number | null; located?: boolean };
   calendar: { holiday: string | null; day_off?: boolean; rain: string | null; weather: Weather | null; weather_show: boolean; local: Local };
-  router?: { configured: boolean; ok: boolean; ssids?: string[] };
-  assistant?: unknown;
+  router?: { configured: boolean; ok: boolean; error?: string | null; ssids?: string[]; nodes?: { mac: string; model: string; ip: string; main: boolean }[] };
+  assistant?: Assistant;
+  matter?: { online: boolean; commissioned: boolean; manual_code: string; qr_code: string; fabrics: { vendor: string; label: string }[]; plugs: number; running: boolean };
+  net_events?: { start: number; end: number | null; ssid: string; devices: number }[];
 }
 
 // /api/energy：插座記錄的開機時間 × 瓦數
@@ -270,4 +272,24 @@ export interface Energy {
   plugs: EnergyPlug[];
   insights: { kind: string; plug?: string; text: string }[];
   updated: number;
+}
+
+export interface Assistant {
+  configured: boolean;
+  model: string;
+  models: { id: string; name: string }[];
+  month_usd: number;
+  month_count: number;
+  cap: number;
+}
+
+export interface AskAction {
+  id: string;
+  kind: "power" | "all_off" | "schedule" | "scene";
+  label: string;
+  plug?: string;
+  on?: boolean;
+  body?: unknown;
+  state?: "done" | "skip" | "err";
+  err?: string;
 }
