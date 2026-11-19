@@ -131,9 +131,9 @@ export function ScheduleSheet({ open, onClose }: { open: SchedOpen; onClose: () 
 }
 
 // 編號的一塊：1 做什麼、2 什麼時候、3 例外和備援
-function Step({ n, title, children }: { n: number; title: string; children: ReactNode }) {
+function Step({ n, title, children, grow }: { n: number; title: string; children: ReactNode; grow?: boolean }) {
   return (
-    <section className="min-w-0 space-y-3 rounded-2xl border bg-card p-3.5 sm:p-4">
+    <section className={cn("min-w-0 space-y-3 rounded-2xl border bg-card p-3.5 sm:p-4", grow && "flex-1")}>
       <h3 className="flex items-center gap-2 text-[15px] font-bold">
         <span className="flex size-6 items-center justify-center rounded-full bg-foreground/85 text-xs font-bold text-background tabular-nums">{n}</span>
         {title}
@@ -235,8 +235,8 @@ function Body({ id, saved, d, set, onClose }: { id?: string; saved?: Schedule; d
         )}
       </div>
 
-      <div className="grid items-start gap-4 md:grid-cols-2">
-        {/* 1. 做什麼 */}
+      <div className="grid gap-4 md:grid-cols-2">
+        {/* 1. 做什麼（兩欄的底對齊：短的那一邊拉長） */}
         <Step n={1} title="做什麼">
           <Segmented label="要做什麼" value={d.action} onChange={(v) => up({ action: v })} options={[["off", "關閉插座"], ["on", "打開插座"], ["scene", "執行情境"]]} />
           {d.action === "scene" ? (
@@ -289,7 +289,7 @@ function Body({ id, saved, d, set, onClose }: { id?: string; saved?: Schedule; d
           )}
         </Step>
 
-        <div className="min-w-0 space-y-4">
+        <div className="flex min-w-0 flex-col gap-4">
           {/* 2. 什麼時候 */}
           <Step n={2} title="什麼時候">
             <TimeModePicker value={mode} onChange={(v) => up({ time_mode: v })} />
@@ -298,7 +298,7 @@ function Body({ id, saved, d, set, onClose }: { id?: string; saved?: Schedule; d
           </Step>
 
           {/* 3. 例外和備援 */}
-          <Step n={3} title="例外和備援">
+          <Step n={3} title="例外和備援" grow>
             <Group>
               <Row label="國定假日不執行" hint="國定假日、補假跳過；颱風假到排程頁按「今天放假」" htmlFor="sk-h">
                 <Switch id="sk-h" checked={!!d.skip_holiday} onCheckedChange={(v) => up({ skip_holiday: v })} />
