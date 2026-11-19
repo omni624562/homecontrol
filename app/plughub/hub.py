@@ -96,6 +96,7 @@ class Hub:
     def __init__(self, store: Store, notifier: Notifier) -> None:
         self.store = store
         self.notifier = notifier
+        self._home_loc: tuple[float, float] | None = None  # 選定的家裡位置（見 location()）
         self.devices: dict[str, DeviceEntry] = {}  # MAC → 裝置
         self.plugs: dict[str, Plug] = {}
         self.version = 0
@@ -196,6 +197,7 @@ class Hub:
             "matter": self.matter,
             "router": {"nodes": self.router.nodes, "clients": self.router.clients, "updated": self.router.updated},
             "local": self.local.dump(),
+            "home_loc": list(self._home_loc) if self._home_loc else None,
         }
 
     def _load_runtime(self) -> None:
@@ -223,6 +225,7 @@ class Hub:
             self._outage = d.get("outage") or {}
             self._traffic_last = {k: int(v) for k, v in (d.get("traffic_last") or {}).items()}
             self.habits = d.get("habits") or []
+            self._home_loc = tuple(d["home_loc"]) if d.get("home_loc") else None
             self.habit_days = d.get("habit_days") or 0
             if d.get("matter"):
                 self.matter = d["matter"]
@@ -1411,16 +1414,32 @@ class Hub:
     # ---- 日出日落 ----
 
     def location(self) -> tuple[float, float] | None:
-        """家裡的經緯度：用插座裡存的（Kasa App 設定時寫進去的）。只在樹莓派上用，不會傳出去。"""
+        """家裡的經緯度：用插座裡存的（Kasa App 設定時寫進去的）。只在樹莓派上用，不會傳出去。
+
+        每個插座存的位置可能不一樣（例如在別的地方設定過），所以用最多插座一樣的那個；
+        一樣多就沿用上次的。選到的會存下來，重開、插座斷線都不會跳到別的地方。
+        """
+        found: list[tuple[float, float]] = []
         for entry in self.devices.values():
             info = getattr(entry.device, "sys_info", None) or {}
             lat, lon = info.get("latitude_i"), info.get("longitude_i")
             if lat is not None and lon is not None and (lat or lon):
-                return lat / 10000, lon / 10000
+                found.append((lat / 10000, lon / 10000))
+                continue
             lat, lon = info.get("latitude"), info.get("longitude")
             if lat is not None and lon is not None and (lat or lon):
-                return float(lat), float(lon)
-        return None
+                found.append((float(lat), float(lon)))
+        if not found:
+            return self._home_loc
+        groups: dict[tuple[float, float], list[tuple[float, float]]] = {}
+        for loc in found:
+            groups.setdefault((round(loc[0], 2), round(loc[1], 2)), []).append(loc)  # 大約 1 公里內算同一個地方
+        prev = self._home_loc
+        prev_key = (round(prev[0], 2), round(prev[1], 2)) if prev else None
+        key = max(groups, key=lambda k: (len(groups[k]), k == prev_key))
+        if key != prev_key or prev is None:
+            self._home_loc = groups[key][0]
+        return self._home_loc
 
     def _sun_min(self, opt: int, day: date) -> int | None:
         loc = self.location()

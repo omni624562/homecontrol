@@ -177,6 +177,8 @@ class LocalInfo:
 
     def _routes(self) -> None:
         rows = _pages(ROUTES_URL)
+        if not rows:
+            raise RuntimeError("新北市的垃圾車路線下載回來是空的")
         near_lines = set()
         for r in rows:
             lat, lon = _f(r.get("latitude")), _f(r.get("longitude"))
@@ -196,7 +198,8 @@ class LocalInfo:
         for v in lines.values():
             v.sort(key=lambda s: s["rank"])
         self.lines = lines
-        (self.dir / "garbage_lines.json").write_text(json.dumps({"lines": lines}, ensure_ascii=False), "utf-8")
+        if lines:  # 沒找到就不要蓋掉上次存的
+            (self.dir / "garbage_lines.json").write_text(json.dumps({"lines": lines}, ensure_ascii=False), "utf-8")
         self._near()
         _LOGGER.info("垃圾車：家附近 %d 條路線、%d 個清運點", len(lines), len(self.stops))
 
