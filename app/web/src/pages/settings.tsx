@@ -18,6 +18,7 @@ import { SenseSheet } from "@/components/sense-sheet";
 import { WeatherKeys, WeatherSheet } from "@/components/weather-sheet";
 import { LifeSheet } from "@/components/life-sheet";
 import { SettingNumber } from "@/components/settings-bits";
+import { previewTruckRush } from "@/components/truck-rush";
 import { api } from "@/lib/api";
 import { pad2 } from "@/lib/format";
 import { useHub } from "@/lib/hub";
@@ -398,6 +399,25 @@ export function SettingsPage() {
               onClick={() => setSheet("weather")}
             />
             <LinkRow label="生活資訊" hint="垃圾車、停水停電；選清運點、填你家的路名、通知開關" onClick={() => setSheet("life")} />
+            {state.calendar.local?.garbage_supported && (
+              <SRow wrap label="垃圾車快到時衝出來" hint="剩 2 站以內時，一台大垃圾車從畫面中間衝過去（一天一次）">
+                <div className="flex items-center gap-3">
+                  <Button variant="outline" size="sm" onClick={previewTruckRush}>預覽</Button>
+                  <Switch
+                    checked={state.calendar.local.truck_rush !== false}
+                    aria-label="垃圾車快到時衝出來"
+                    onCheckedChange={async (v) => {
+                      try {
+                        await api("PUT", "/api/local", { truck_rush: v });
+                        toast.success(v ? "垃圾車快到時會衝出來" : "不會再衝出來了");
+                      } catch (e) {
+                        toast.error("沒有成功", { description: (e as Error).message });
+                      }
+                    }}
+                  />
+                </div>
+              </SRow>
+            )}
             <WeatherKeys />
           </SCard>
           <AskCard />

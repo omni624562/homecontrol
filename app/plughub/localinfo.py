@@ -125,13 +125,16 @@ class LocalInfo:
 
     def dump(self) -> dict[str, Any]:
         """重開後要先顯示的資料（之後會再重新查）。"""
-        return {"outages": self.outages, "truck": self.truck, "updated": self.updated, "errors": self.errors}
+        return {"outages": self.outages, "truck": self.truck, "updated": self.updated, "errors": self.errors,
+                "stops": self.stops, "home": list(self.home) if self.home else None}
 
     def load(self, d: dict[str, Any]) -> None:
         self.outages = d.get("outages") or []
         self.truck = d.get("truck")
         self.updated = d.get("updated") or {}
         self.errors = d.get("errors") or {}
+        self.stops = d.get("stops") or []
+        # home 留空：第一次更新時會照現在的位置重新算附近的清運點
 
     def my_stop(self) -> dict | None:
         """選的清運點；沒選就用最近的。"""
@@ -387,4 +390,5 @@ class LocalInfo:
             "errors": self.errors, "updated": self.updated,
             "garbage_supported": self._place()[0] == "新北市",
             "garbage_notify": self.cfg.get("garbage_notify", True), "outage_notify": self.cfg.get("outage_notify", True),
+            "truck_rush": self.cfg.get("truck_rush", True),
         }

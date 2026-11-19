@@ -177,3 +177,16 @@
   background-image: repeating-linear-gradient(90deg, currentColor 0 14px, transparent 14px 28px);
   animation: road-flow 0.7s linear infinite;
 }
+
+/* 垃圾車快到了：從左邊外面衝進來，在中間頓一下，再衝出右邊 */
+@keyframes truck-rush {
+  0% { transform: translate(-110%, -50%); }
+  28% { transform: translate(calc(50vw - 55%), -50%); }
+  34% { transform: translate(calc(50vw - 50%), -50%); }
+  66% { transform: translate(calc(50vw - 48%), -50%); }
+  100% { transform: translate(110vw, -50%); }
+}
+.truck-rush {
+  animation: truck-rush 4s cubic-bezier(0.3, 0, 0.3, 1) both;
+  will-change: transform;
+}

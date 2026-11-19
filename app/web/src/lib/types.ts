@@ -220,6 +220,7 @@ export interface Local {
   garbage_supported: boolean;
   garbage_notify: boolean;
   outage_notify: boolean;
+  truck_rush?: boolean;
 }
 
 export interface HubState {
