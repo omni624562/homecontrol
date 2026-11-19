@@ -428,9 +428,9 @@ function DeviceBody({ p }: { p: Plug }) {
                 <span className="text-right text-sm leading-relaxed">{n.kasa.map((r, i) => <span key={i} className="block">{ruleText(r)}</span>)}</span>
               </Row>
             )}
-            <div className="px-4 py-3">
-              <div className="mb-2 text-[15px] font-medium">裝置資訊</div>
-              <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-3">
+            <div className="px-4 py-2.5">
+              <div className="mb-1.5 text-[15px] font-medium">裝置資訊</div>
+              <dl className="grid grid-cols-2 gap-x-5 gap-y-1 text-sm sm:grid-cols-3">
                 {([
                   ["Wi-Fi", net?.ssid],
                   ["IP 位址", p.host],
@@ -440,8 +440,8 @@ function DeviceBody({ p }: { p: Plug }) {
                   ["韌體", [net?.fw, fwShort.replace("韌體", "")].filter(Boolean).join("・")],
                   ["TP-Link 雲端", cloudText.replace("TP-Link 雲端", "")],
                 ] as [string, string | undefined][]).filter(([, v]) => v).map(([k, v]) => (
-                  <div key={k} className="min-w-0">
-                    <dt className="text-xs text-muted-foreground">{k}</dt>
+                  <div key={k} className="flex min-w-0 items-baseline gap-2">
+                    <dt className="shrink-0 text-xs text-muted-foreground">{k}</dt>
                     <dd className="truncate tabular-nums" title={v}>{v}</dd>
                   </div>
                 ))}
