@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { AlertCircle, CalendarClock, CheckCircle2, Clock, Copy, Droplets, Info, Loader2, PlugZap, Trash2, Umbrella } from "lucide-react";
+import { AlertCircle, CalendarClock, CheckCircle2, Clock, Copy, Droplets, Info, Loader2, PlugZap, Power, PowerOff, Sparkles, Trash2, Umbrella } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -76,6 +76,28 @@ function initDraft(o: NonNullable<SchedOpen>, existing: Schedule | undefined, ct
   return d;
 }
 
+// 一句話說明這條排程：「每天 15:00 → 關閉 廚房電源」（放在標題列，邊改邊更新）
+function summary(d: Draft, state: ReturnType<typeof useHub>["state"]) {
+  const mode = d.time_mode || "clock";
+  const base = mode === "sunrise" ? state?.sun?.sunrise : state?.sun?.sunset;
+  const when = mode === "clock" ? showT(d.time) : `${sunLabel(mode === "sunrise" ? 1 : 2, d.offset_min || 0)}${base != null ? `（約 ${minText(Math.min(1439, Math.max(0, base + (d.offset_min || 0))))}）` : ""}`;
+  const names = d.plugs.map((x) => state?.plugs.find((p) => p.id === x)?.name).filter(Boolean) as string[];
+  const who = names.length ? `${names.slice(0, 3).join("、")}${names.length > 3 ? ` 等 ${names.length} 個` : ""}` : "（還沒選插座）";
+  const what = d.action === "scene"
+    ? `執行「${(state?.scenes || []).find((x) => x.id === d.scene)?.name || "還沒選情境"}」`
+    : d.action === "on"
+      ? `打開 ${who}${d.duration_s ? `，${fmtSec(d.duration_s)}後關` : ""}`
+      : `關閉 ${who}${d.restore_at ? `，${showT(d.restore_at)} 再打開` : ""}`;
+  return `${d.days.length ? daysText(d.days) : "（還沒選日子）"} ${when} → ${what}`;
+}
+
+// 「下次：明天」
+function nextDay(d: Draft, saved?: Schedule) {
+  const t = nextRun(d, saved);
+  if (!t) return "";
+  return t.startsWith("下次：") ? t.replace(/^(下次：\S+).*$/, "$1") : t;
+}
+
 // 「下次：明天 07:00」
 function nextRun(d: Draft, saved?: Schedule) {
   if (!d.enabled) return "暫停中，不會執行";
@@ -113,7 +135,12 @@ export function ScheduleSheet({ open, onClose, onOpen }: { open: SchedOpen; onCl
       open={!!open && !!draft}
       onOpenChange={(v) => !v && onClose()}
       title={open?.id ? "編輯排程" : open?.copy ? "複製的排程" : "新增排程"}
-      description={draft ? nextRun(draft, existing) : undefined}
+      description={draft ? (
+        <>
+          <span className="font-medium text-foreground">{summary(draft, state)}</span>
+          {nextDay(draft, existing) && <span className="whitespace-nowrap">・{nextDay(draft, existing)}</span>}
+        </>
+      ) : undefined}
       icon={<CalendarClock />}
       wide="xl"
       aside={
@@ -208,18 +235,6 @@ function Body({ id, saved, d, set, onClose, onCopy, isCopy }: { id?: string; sav
       ).map(([days, list]) => `${days} ${list.join("、")}`).join("；")
     : "";
 
-  // 一句話說明這條排程（邊改邊更新）
-  const sunBase = mode === "sunrise" ? state?.sun?.sunrise : state?.sun?.sunset;
-  const whenText = mode === "clock" ? showT(d.time) : `${sunLabel(mode === "sunrise" ? 1 : 2, d.offset_min || 0)}${sunBase != null ? `（今天約 ${minText(Math.min(1439, Math.max(0, sunBase + (d.offset_min || 0))))}）` : ""}`;
-  const names = d.plugs.map((x) => state?.plugs.find((p) => p.id === x)?.name).filter(Boolean) as string[];
-  const whoText = names.length ? `${names.slice(0, 3).join("、")}${names.length > 3 ? ` 等 ${names.length} 個` : ""}` : "（還沒選插座）";
-  const whatText = d.action === "scene"
-    ? `執行「${scenes.find((x) => x.id === d.scene)?.name || "還沒選情境"}」`
-    : d.action === "on"
-      ? `打開 ${whoText}${d.duration_s ? `，${fmtSec(d.duration_s)}後關` : ""}`
-      : `關閉 ${whoText}${d.restore_at ? `，${showT(d.restore_at)} 再打開` : ""}`;
-  const skips = [d.skip_holiday && "國定假日", d.skip_rain && "下雨"].filter(Boolean).join("、");
-
   return (
     <div className="space-y-4">
       {isCopy && (
@@ -228,23 +243,14 @@ function Body({ id, saved, d, set, onClose, onCopy, isCopy }: { id?: string; sav
           這是複製出來的新排程，原本那條不會變。改好時間或動作再按儲存。
         </div>
       )}
-      <div className="rounded-xl border border-primary/25 bg-primary/5 px-4 py-3 leading-relaxed">
-        <div className="text-[17px] font-semibold">
-          <span className="text-primary">{d.days.length ? daysText(d.days) : "（還沒選日子）"} {whenText}</span>
-          <span className="mx-1.5 text-muted-foreground">→</span>
-          {whatText}
-        </div>
-        {(skips || d.backup) && (
-          <div className="text-sm text-muted-foreground">
-            {[skips && `${skips}不執行`, d.backup && "樹莓派離線時由插座接手"].filter(Boolean).join("・")}
-          </div>
-        )}
-      </div>
-
       <div className="grid gap-4 md:grid-cols-2">
         {/* 1. 做什麼（兩欄的底對齊：短的那一邊拉長） */}
         <Step n={1} title="做什麼">
-          <Segmented label="要做什麼" value={d.action} onChange={(v) => up({ action: v })} options={[["off", "關閉插座"], ["on", "打開插座"], ["scene", "執行情境"]]} />
+          <Segmented label="要做什麼" value={d.action} onChange={(v) => up({ action: v })} options={[
+              ["off", <span className="inline-flex items-center gap-1.5"><PowerOff className="size-4" />關閉插座</span>],
+              ["on", <span className="inline-flex items-center gap-1.5"><Power className="size-4" />打開插座</span>],
+              ["scene", <span className="inline-flex items-center gap-1.5"><Sparkles className="size-4" />執行情境</span>],
+            ]} />
           {d.action === "scene" ? (
             scenes.length ? (
               <div className="flex flex-wrap gap-2">

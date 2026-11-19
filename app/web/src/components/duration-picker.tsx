@@ -4,12 +4,11 @@ import { Button } from "@/components/ui/button";
 // 一格數字：可以直接打，也可以按 −／＋（到頭會繞回來）
 export function NumField({ label, value, top, onChange }: { label: string; value: number; top: number; onChange: (v: number) => void }) {
   return (
-    <div className="flex flex-col items-center gap-1 rounded-xl border bg-background p-2">
-      <span className="text-xs text-muted-foreground">{label}</span>
-      <div className="flex items-center gap-1">
-        <Button type="button" variant="ghost" size="icon" className="size-8" aria-label={`${label}減一`} onClick={() => onChange(value > 0 ? value - 1 : top)}>
-          <Minus />
-        </Button>
+    <div className="flex h-11 items-center justify-between rounded-xl border bg-background px-0.5">
+      <Button type="button" variant="ghost" size="icon" className="size-8 shrink-0" aria-label={`${label}減一`} onClick={() => onChange(value > 0 ? value - 1 : top)}>
+        <Minus />
+      </Button>
+      <label className="flex min-w-0 items-baseline justify-center gap-0.5">
         <input
           inputMode="numeric"
           aria-label={label}
@@ -19,12 +18,13 @@ export function NumField({ label, value, top, onChange }: { label: string; value
             const n = Number(e.target.value.replace(/\D/g, "").slice(-2));
             onChange(Math.min(top, Number.isFinite(n) ? n : 0));
           }}
-          className="w-9 rounded-md bg-transparent text-center text-xl font-semibold tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="w-8 rounded-md bg-transparent text-center text-lg font-semibold tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
-        <Button type="button" variant="ghost" size="icon" className="size-8" aria-label={`${label}加一`} onClick={() => onChange(value < top ? value + 1 : 0)}>
-          <Plus />
-        </Button>
-      </div>
+        <span className="text-xs text-muted-foreground">{label}</span>
+      </label>
+      <Button type="button" variant="ghost" size="icon" className="size-8 shrink-0" aria-label={`${label}加一`} onClick={() => onChange(value < top ? value + 1 : 0)}>
+        <Plus />
+      </Button>
     </div>
   );
 }
@@ -57,10 +57,7 @@ export function ClockPicker({ value, onChange, seconds = true }: { value: string
         <NumField label="秒" value={s} top={59} onChange={(v) => put(h, m, v)} />
       ) : (
         // 只到分鐘：秒那格留著（大小一致），說明為什麼不能設
-        <div className="flex flex-col items-center justify-center gap-1 rounded-xl border border-dashed p-2 text-center text-muted-foreground" aria-hidden>
-          <span className="text-xs">秒</span>
-          <span className="text-sm leading-tight">只到分鐘</span>
-        </div>
+        <div className="flex h-11 items-center justify-center rounded-xl border border-dashed text-sm text-muted-foreground" aria-hidden>只到分鐘</div>
       )}
     </div>
   );

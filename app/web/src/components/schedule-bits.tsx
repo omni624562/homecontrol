@@ -1,5 +1,5 @@
 import { useMemo, type ReactNode } from "react";
-import { Check, Moon, Sun } from "lucide-react";
+import { Check, Clock, Moon, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { pad2 } from "@/lib/format";
 import { useHub } from "@/lib/hub";
@@ -94,8 +94,8 @@ export function ChoiceChip({ selected, onClick, children, disabled, title, size 
 export function DayPicker({ days, onChange, presets = true }: { days: number[]; onChange: (d: number[]) => void; presets?: boolean }) {
   const toggle = (i: number) => onChange(days.includes(i) ? days.filter((x) => x !== i) : [...days, i].sort());
   return (
-    <div className="space-y-2">
-      <div className="grid grid-cols-7 gap-1.5" role="group" aria-label="星期">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+      <div className="flex gap-1.5" role="group" aria-label="星期">
         {DAYS.map((d, i) => (
           <button
             key={i}
@@ -104,7 +104,7 @@ export function DayPicker({ days, onChange, presets = true }: { days: number[]; 
             aria-label={`星期${d}`}
             onClick={() => toggle(i)}
             className={cn(
-              "h-11 rounded-xl border bg-background text-[15px] font-medium transition-all hover:bg-muted active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              "size-9 rounded-full border bg-background text-sm font-medium transition-all hover:bg-muted active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               days.includes(i) && "border-primary bg-primary text-primary-foreground hover:bg-primary/90",
             )}
           >
@@ -113,8 +113,7 @@ export function DayPicker({ days, onChange, presets = true }: { days: number[]; 
         ))}
       </div>
       {presets && (
-        <div className="flex items-center gap-1 text-sm text-muted-foreground">
-          快速選：
+        <div className="ml-auto flex items-center">
           {([["每天", [0, 1, 2, 3, 4, 5, 6]], ["平日", [0, 1, 2, 3, 4]], ["週末", [5, 6]]] as [string, number[]][]).map(([l, v]) => (
             <Button key={l} type="button" variant="link" size="sm" className={cn("h-8 px-1.5", days.join() === v.join() && "font-bold underline")} onClick={() => onChange(v)}>
               {l}
@@ -134,7 +133,7 @@ export function TimeModePicker({ value, onChange }: { value: TimeMode; onChange:
       value={value}
       onChange={onChange}
       options={[
-        ["clock", "固定時間"],
+        ["clock", <span className="inline-flex items-center gap-1.5"><Clock className="size-4" />固定時間</span>],
         ["sunrise", <span className="inline-flex items-center gap-1.5"><Sun className="size-4" />日出</span>],
         ["sunset", <span className="inline-flex items-center gap-1.5"><Moon className="size-4" />日落</span>],
       ]}
