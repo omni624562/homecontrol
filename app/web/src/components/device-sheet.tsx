@@ -92,9 +92,24 @@ function DeviceIcon({ p }: { p: Plug }) {
   return <I className={cn(p.online && isOn(p) && "text-amber-600")} />;
 }
 
+// 副標題：區域＋連到哪個 Wi-Fi、IP、訊號（細節在「進階」）
 function DeviceSub({ p }: { p: Plug }) {
   const { state } = useHub();
-  return <>{state?.rooms.find((r) => r.id === p.room)?.name || "還沒分區域"}</>;
+  const sig = p.online ? signal(p.rssi) : null;
+  const weak = p.rssi != null && p.rssi < -70;
+  return (
+    <span className="flex flex-wrap items-center gap-x-1.5">
+      <span>{state?.rooms.find((r) => r.id === p.room)?.name || "還沒分區域"}</span>
+      {p.online && (p.net?.ssid || p.host) && (
+        <span className={cn("inline-flex items-center gap-1 whitespace-nowrap tabular-nums", weak && "font-medium text-orange-700 dark:text-orange-400")}>
+          <span aria-hidden>・</span>{sig && <Bars level={sig.level} />}
+          <span className="whitespace-nowrap">{p.net?.ssid || p.host}</span>
+          {/* 手機放不下：IP 和訊號文字只在寬一點的畫面顯示（進階裡也有） */}
+          <span className="hidden whitespace-nowrap sm:inline">{[p.net?.ssid ? p.host : "", sig ? `訊號${sig.text}` : ""].filter(Boolean).map((x) => `・${x}`).join("")}</span>
+        </span>
+      )}
+    </span>
+  );
 }
 
 // 標題列右邊的狀態：開著多久、還有多久關、關著、連不上
@@ -187,7 +202,6 @@ function DeviceBody({ p }: { p: Plug }) {
   const weakKey = net?.key_type != null && net.key_type < 3 && !onRouter;
   const ups = net?.fw_updates || [];
   const shared = (state?.plugs || []).filter((x) => x.host === p.host).length > 1;
-  const sig = signal(p.rssi);
   const nativeText = !n ? "等待同步…" : !n.ok ? n.msg || "同步失敗，稍後再試" : n.schedule ? `已寫入 ${n.schedule} 條，樹莓派離線時照樣執行` : "目前沒有排程要寫入";
 
   // 網路、韌體有沒有要注意的地方
@@ -330,23 +344,10 @@ function DeviceBody({ p }: { p: Plug }) {
         </div>
       </Section>
 
-      {/* 狀態：沒事的時候各一行；有狀況才展開說明 */}
+      {/* 狀態：網路的位置在標題列、細節在進階；這裡只有要注意的事和使用時間 */}
       {p.online && (
         <Section title="狀態">
           <Group>
-            <div className="space-y-0.5 px-4 py-2.5">
-              <div className="flex items-center gap-3">
-                <span className="flex-1 text-[15px] font-medium">網路</span>
-                {!issues.length && (
-                  <span className="flex items-center gap-2 text-sm text-emerald-700 dark:text-emerald-400">
-                    {sig && <Bars level={sig.level} />}{sig ? `訊號${sig.text}・` : ""}{fwShort}<CheckCircle2 className="size-4" />
-                  </span>
-                )}
-              </div>
-              <div className="text-xs leading-relaxed text-muted-foreground">
-                {[net?.ssid, p.host, net ? (onRouter ? "WPA2 以上" : keyName(net.key_type)) : "", p.rssi != null ? `${p.rssi} dBm` : "", cloudText].filter(Boolean).join("・")}
-              </div>
-            </div>
             {issues.length > 0 && (
               <div className="space-y-1.5 px-4 py-3">
                 {issues.map((x) => (
@@ -424,6 +425,13 @@ function DeviceBody({ p }: { p: Plug }) {
             {!!n?.kasa?.length && (
               <Row label="Kasa App 設的排程" hint="插座自己會執行；在「排程」頁可以修改">
                 <span className="text-right text-sm leading-relaxed">{n.kasa.map((r, i) => <span key={i} className="block">{ruleText(r)}</span>)}</span>
+              </Row>
+            )}
+            {p.online && (
+              <Row label={<span className="whitespace-nowrap">網路</span>}>
+                <span className="text-right text-sm text-muted-foreground tabular-nums">
+                  {[p.host, net ? (onRouter ? "WPA2 以上" : keyName(net.key_type)) : "", p.rssi != null ? `${p.rssi} dBm` : "", fwShort, cloudText].filter(Boolean).join("・")}
+                </span>
               </Row>
             )}
             <Row label={<span className="whitespace-nowrap">硬體</span>}>
