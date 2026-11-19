@@ -69,7 +69,7 @@ export function Segmented<T extends string | number>({ value, options, onChange,
 }
 
 // 可以選取的小圓角按鈕
-export function ChoiceChip({ selected, onClick, children, disabled, title }: { selected?: boolean; onClick: () => void; children: ReactNode; disabled?: boolean; title?: string }) {
+export function ChoiceChip({ selected, onClick, children, disabled, title, size }: { selected?: boolean; onClick: () => void; children: ReactNode; disabled?: boolean; title?: string; size?: "sm" }) {
   return (
     <button
       type="button"
@@ -78,7 +78,8 @@ export function ChoiceChip({ selected, onClick, children, disabled, title }: { s
       title={title}
       onClick={onClick}
       className={cn(
-        "inline-flex h-10 items-center gap-1.5 rounded-full border bg-background px-3.5 text-[15px] transition-all",
+        "inline-flex items-center gap-1.5 rounded-full border bg-background transition-all",
+        size === "sm" ? "h-9 px-3 text-sm" : "h-10 px-3.5 text-[15px]",
         "hover:bg-muted active:scale-[.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-45",
         selected && "border-primary bg-primary/10 font-medium text-primary hover:bg-primary/15",
       )}
@@ -112,9 +113,10 @@ export function DayPicker({ days, onChange, presets = true }: { days: number[]; 
         ))}
       </div>
       {presets && (
-        <div className="flex gap-2">
+        <div className="flex items-center gap-1 text-sm text-muted-foreground">
+          快速選：
           {([["每天", [0, 1, 2, 3, 4, 5, 6]], ["平日", [0, 1, 2, 3, 4]], ["週末", [5, 6]]] as [string, number[]][]).map(([l, v]) => (
-            <Button key={l} type="button" variant="outline" size="sm" className="rounded-full" onClick={() => onChange(v)}>
+            <Button key={l} type="button" variant="link" size="sm" className={cn("h-8 px-1.5", days.join() === v.join() && "font-bold underline")} onClick={() => onChange(v)}>
               {l}
             </Button>
           ))}
@@ -146,24 +148,25 @@ export function SunOffset({ mode, offset, onChange }: { mode: TimeMode; offset: 
   const opt = mode === "sunrise" ? 1 : 2;
   const base = opt === 1 ? state?.sun?.sunrise : state?.sun?.sunset;
   const clamp = (v: number) => Math.max(-180, Math.min(180, v));
+  const Step = ({ by }: { by: number }) => (
+    <Button type="button" variant="outline" className="h-12 w-12 px-0 text-sm tabular-nums" aria-label={`${by < 0 ? "提早" : "延後"} ${Math.abs(by)} 分鐘`} onClick={() => onChange(clamp(offset + by))}>
+      {by > 0 ? "+" : "−"}{Math.abs(by)}
+    </Button>
+  );
   return (
-    <div className="space-y-2">
-      <div className="flex items-center gap-2">
-        <Button type="button" variant="outline" className="h-12 w-14 text-base" aria-label="提早 5 分鐘" onClick={() => onChange(clamp(offset - 5))}>−5</Button>
-        <div className="flex h-12 flex-1 flex-col items-center justify-center rounded-xl border bg-background" aria-live="polite">
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-1.5">
+        <Step by={-15} /><Step by={-5} />
+        <div className="flex h-12 min-w-0 flex-1 flex-col items-center justify-center rounded-xl border bg-background" aria-live="polite">
           <span className="inline-flex items-center gap-1.5 font-semibold"><SunIcon opt={opt} className="size-4 text-amber-600" />{sunLabel(opt, offset)}</span>
-          <span className="text-xs text-muted-foreground">{base != null ? `今天約 ${minText(Math.min(1439, Math.max(0, base + offset)))}` : "還不知道家裡的位置，算不出今天幾點"}</span>
+          <span className="text-xs text-muted-foreground">{base != null ? `今天約 ${minText(Math.min(1439, Math.max(0, base + offset)))}` : "還不知道家裡的位置"}</span>
         </div>
-        <Button type="button" variant="outline" className="h-12 w-14 text-base" aria-label="延後 5 分鐘" onClick={() => onChange(clamp(offset + 5))}>+5</Button>
+        <Step by={5} /><Step by={15} />
       </div>
-      <div className="flex flex-wrap gap-2">
-        {[-30, -15, 0, 15, 30].map((m) => (
-          <ChoiceChip key={m} selected={offset === m} onClick={() => onChange(m)}>
-            {m === 0 ? "準時" : `${m < 0 ? "提早" : "延後"} ${Math.abs(m)} 分`}
-          </ChoiceChip>
-        ))}
-      </div>
-      <p className="text-xs leading-relaxed text-muted-foreground">每天跟著日出日落自動調整；寫進插座的備援也用插座內建的日出日落，離線好幾天也準。</p>
+      <p className="text-xs leading-relaxed text-muted-foreground">
+        每天跟著日出日落調整，插座裡的備援也是。
+        {offset !== 0 && <button type="button" className="ml-1 font-medium text-primary hover:underline" onClick={() => onChange(0)}>改回準時</button>}
+      </p>
     </div>
   );
 }
@@ -199,38 +202,31 @@ export function PlugPicker({
   const shown = groups.map((g) => ({ ...g, plugs: g.plugs.filter((p) => !hide?.(p)) })).filter((g) => g.plugs.length);
   if (!shown.length) return <p className="text-sm text-muted-foreground">沒有可以用的插座。</p>;
   return (
-    <div className="space-y-3">
+    <div className="divide-y overflow-hidden rounded-xl border bg-muted/30">
       {shown.map((g) => {
         const ids = g.plugs.filter((p) => !disabled?.(p)).map((p) => p.id);
-        const all = ids.length > 0 && ids.every((id) => selected.includes(id));
+        const n = ids.filter((id) => selected.includes(id)).length;
+        const all = ids.length > 0 && n === ids.length;
+        const can = roomToggle && ids.length > 0;
         return (
-          <div key={g.id} className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium">{g.name}</span>
-              {roomToggle && ids.length > 0 && (
-                <Button
-                  type="button"
-                  variant="link"
-                  size="sm"
-                  className="h-auto px-0"
-                  onClick={() => onChange(all ? selected.filter((id) => !ids.includes(id)) : [...new Set([...selected, ...ids])])}
-                >
-                  {all ? "取消全選" : "全選"}
-                </Button>
-              )}
-            </div>
-            <div className="flex flex-wrap gap-2">
+          <div key={g.id} className="flex items-start gap-2 px-3 py-2">
+            <button
+              type="button"
+              disabled={!can}
+              title={can ? (all ? "取消這一區" : "這一區全選") : undefined}
+              aria-label={`${g.name}${all ? "：取消全選" : "：全選"}`}
+              onClick={() => onChange(all ? selected.filter((id) => !ids.includes(id)) : [...new Set([...selected, ...ids])])}
+              className="mt-0.5 flex h-8 w-[4.5rem] shrink-0 flex-col justify-center rounded-md px-1 text-left leading-tight transition-colors enabled:hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <span className="truncate text-sm font-medium">{g.name}</span>
+              <span className={cn("text-[11px] tabular-nums text-muted-foreground", n > 0 && "font-medium text-primary")}>{n > 0 ? `選了 ${n}` : can ? "全選" : ""}</span>
+            </button>
+            <div className="flex min-w-0 flex-1 flex-wrap gap-1.5">
               {g.plugs.map((p) => {
                 const why = disabled?.(p);
                 const sel = selected.includes(p.id) && !why;
                 return (
-                  <ChoiceChip
-                    key={p.id}
-                    selected={sel}
-                    disabled={!!why}
-                    title={why || undefined}
-                    onClick={() => onChange(sel ? selected.filter((x) => x !== p.id) : [...selected, p.id])}
-                  >
+                  <ChoiceChip key={p.id} size="sm" selected={sel} disabled={!!why} title={why || undefined} onClick={() => onChange(sel ? selected.filter((x) => x !== p.id) : [...selected, p.id])}>
                     {p.name}
                   </ChoiceChip>
                 );

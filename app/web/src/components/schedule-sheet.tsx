@@ -9,10 +9,10 @@ import { Switch } from "@/components/ui/switch";
 import { ClockPicker, DurationPicker } from "@/components/duration-picker";
 import { mdiIcon } from "@/components/icons";
 import { Sheet } from "@/components/responsive-sheet";
-import { ChoiceChip, DayPicker, PlugPicker, Segmented, SunOffset, TimeModePicker, daysText, kasaDays, minText, sunLabel, useRuleMin } from "@/components/schedule-bits";
-import { Group, Row, Section } from "@/components/settings-bits";
+import { ChoiceChip, DayPicker, PlugPicker, Segmented, SunOffset, TimeModePicker, daysText, kasaDays, minText, showT, sunLabel, useRuleMin } from "@/components/schedule-bits";
+import { Group, Row } from "@/components/settings-bits";
 import { api } from "@/lib/api";
-import { fmt, pad2 } from "@/lib/format";
+import { fmt, fmtSec, pad2 } from "@/lib/format";
 import { useHub } from "@/lib/hub";
 import type { HabitSuggestion, Schedule } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -130,6 +130,19 @@ export function ScheduleSheet({ open, onClose }: { open: SchedOpen; onClose: () 
   );
 }
 
+// 編號的一塊：1 做什麼、2 什麼時候、3 例外和備援
+function Step({ n, title, children }: { n: number; title: string; children: ReactNode }) {
+  return (
+    <section className="min-w-0 space-y-3 rounded-2xl border bg-card p-3.5 sm:p-4">
+      <h3 className="flex items-center gap-2 text-[15px] font-bold">
+        <span className="flex size-6 items-center justify-center rounded-full bg-foreground/85 text-xs font-bold text-background tabular-nums">{n}</span>
+        {title}
+      </h3>
+      {children}
+    </section>
+  );
+}
+
 function Body({ id, saved, d, set, onClose }: { id?: string; saved?: Schedule; d: Draft; set: (d: Draft) => void; onClose: () => void }) {
   const { state } = useHub();
   const ruleMin = useRuleMin();
@@ -195,33 +208,108 @@ function Body({ id, saved, d, set, onClose }: { id?: string; saved?: Schedule; d
       ).map(([days, list]) => `${days} ${list.join("、")}`).join("；")
     : "";
 
+  // 一句話說明這條排程（邊改邊更新）
+  const sunBase = mode === "sunrise" ? state?.sun?.sunrise : state?.sun?.sunset;
+  const whenText = mode === "clock" ? showT(d.time) : `${sunLabel(mode === "sunrise" ? 1 : 2, d.offset_min || 0)}${sunBase != null ? `（今天約 ${minText(Math.min(1439, Math.max(0, sunBase + (d.offset_min || 0))))}）` : ""}`;
+  const names = d.plugs.map((x) => state?.plugs.find((p) => p.id === x)?.name).filter(Boolean) as string[];
+  const whoText = names.length ? `${names.slice(0, 3).join("、")}${names.length > 3 ? ` 等 ${names.length} 個` : ""}` : "（還沒選插座）";
+  const whatText = d.action === "scene"
+    ? `執行「${scenes.find((x) => x.id === d.scene)?.name || "還沒選情境"}」`
+    : d.action === "on"
+      ? `打開 ${whoText}${d.duration_s ? `，${fmtSec(d.duration_s)}後關` : ""}`
+      : `關閉 ${whoText}${d.restore_at ? `，${showT(d.restore_at)} 再打開` : ""}`;
+  const skips = [d.skip_holiday && "國定假日", d.skip_rain && "下雨"].filter(Boolean).join("、");
+
   return (
-    <div className="space-y-5">
-      <div className="grid gap-6 md:grid-cols-2">
-        <div className="min-w-0 space-y-5">
-          <Section title="什麼時候">
+    <div className="space-y-4">
+      <div className="rounded-xl border border-primary/25 bg-primary/5 px-4 py-3 leading-relaxed">
+        <div className="text-[17px] font-semibold">
+          <span className="text-primary">{d.days.length ? daysText(d.days) : "（還沒選日子）"} {whenText}</span>
+          <span className="mx-1.5 text-muted-foreground">→</span>
+          {whatText}
+        </div>
+        {(skips || d.backup) && (
+          <div className="text-sm text-muted-foreground">
+            {[skips && `${skips}不執行`, d.backup && "樹莓派離線時由插座接手"].filter(Boolean).join("・")}
+          </div>
+        )}
+      </div>
+
+      <div className="grid items-start gap-4 md:grid-cols-2">
+        {/* 1. 做什麼 */}
+        <Step n={1} title="做什麼">
+          <Segmented label="要做什麼" value={d.action} onChange={(v) => up({ action: v })} options={[["off", "關閉插座"], ["on", "打開插座"], ["scene", "執行情境"]]} />
+          {d.action === "scene" ? (
+            scenes.length ? (
+              <div className="flex flex-wrap gap-2">
+                {scenes.map((sc) => {
+                  const I = mdiIcon(sc.icon);
+                  return (
+                    <ChoiceChip key={sc.id} selected={d.scene === sc.id} onClick={() => up({ scene: sc.id })}>
+                      {d.scene !== sc.id && <I className="size-4" />}{sc.name}
+                    </ChoiceChip>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">還沒有情境，先到首頁的「編輯」新增一個。</p>
+            )
+          ) : (
+            <PlugPicker
+              selected={d.plugs}
+              onChange={(ids) => up({ plugs: ids })}
+              disabled={(p) => (d.action === "off" && p.keep_on ? "常開的插座不會被關" : false)}
+            />
+          )}
+          {d.action === "off" && (
+            <Group>
+              <Row label="之後再打開" hint="只打開被這個排程關掉的" htmlFor="rs">
+                <Switch id="rs" checked={!!d.restore_at} onCheckedChange={(v) => up({ restore_at: v ? "07:00:00" : null })} />
+              </Row>
+              {d.restore_at && (
+                <div className="space-y-2 px-4 py-3">
+                  <ClockPicker value={d.restore_at} onChange={(t) => up({ restore_at: t })} />
+                  <p className="text-xs text-muted-foreground">{mode === "clock" && d.restore_at <= d.time ? "隔天" : "當天"}這個時間打開；本來就關著的不會被打開</p>
+                </div>
+              )}
+            </Group>
+          )}
+          {d.action === "on" && (
+            <Group>
+              <Row label="開多久後自動關閉" hint="例如澆水開 50 秒" htmlFor="du">
+                <Switch id="du" checked={!!d.duration_s} onCheckedChange={(v) => up({ duration_s: v ? 60 : null })} />
+              </Row>
+              {!!d.duration_s && (
+                <div className="space-y-2 px-4 py-3">
+                  <DurationPicker value={d.duration_s} onChange={(v) => up({ duration_s: v || 1 })} />
+                  <p className="text-xs text-muted-foreground">插座有設「最長開啟時間」的話，以比較短的為準</p>
+                </div>
+              )}
+            </Group>
+          )}
+        </Step>
+
+        <div className="min-w-0 space-y-4">
+          {/* 2. 什麼時候 */}
+          <Step n={2} title="什麼時候">
             <TimeModePicker value={mode} onChange={(v) => up({ time_mode: v })} />
             {mode === "clock" ? <ClockPicker value={d.time} onChange={(t) => up({ time: t })} /> : <SunOffset mode={mode} offset={d.offset_min || 0} onChange={(v) => up({ offset_min: v })} />}
-          </Section>
-          <Section title={`哪幾天・${daysText(d.days)}`}>
             <DayPicker days={d.days} onChange={(v) => up({ days: v })} />
-          </Section>
-          <Section title="什麼時候不執行">
+          </Step>
+
+          {/* 3. 例外和備援 */}
+          <Step n={3} title="例外和備援">
             <Group>
-              <Row label="國定假日不執行" hint="平日遇到國定假日、補假就跳過（假日表來自政府公告）；颱風假可以在排程頁按「今天放假」" htmlFor="sk-h">
+              <Row label="國定假日不執行" hint="國定假日、補假跳過；颱風假到排程頁按「今天放假」" htmlFor="sk-h">
                 <Switch id="sk-h" checked={!!d.skip_holiday} onCheckedChange={(v) => up({ skip_holiday: v })} />
               </Row>
-              <Row label="下雨不執行" hint="最近的氣象署雨量站過去 24 小時下超過 3 mm，或氣象署預報白天降雨機率 70% 以上就跳過，適合澆水" htmlFor="sk-r">
+              <Row label="下雨不執行" hint="雨量或降雨機率超過門檻就跳過，適合澆水" htmlFor="sk-r">
                 <Switch id="sk-r" checked={!!d.skip_rain} onCheckedChange={(v) => up({ skip_rain: v })} />
               </Row>
               {d.skip_rain && <div className="space-y-1.5 px-4 py-3"><RainLines /></div>}
-            </Group>
-          </Section>
-          <Section title="備援">
-            <Group>
               <Row
                 label="樹莓派離線時由插座接手"
-                hint={`寫一份到插座裡；平常由樹莓派執行，樹莓派離線時插座照樣會做（只到分鐘${d.action === "off" && d.restore_at ? "；「之後再打開」不會寫進插座" : ""}）`}
+                hint={`存一份到插座裡當備援（只到分鐘${d.action === "off" && d.restore_at ? "；「之後再打開」不會存進去" : ""}）`}
                 htmlFor="bk"
               >
                 <Switch id="bk" checked={!!d.backup} onCheckedChange={(v) => up({ backup: v })} />
@@ -238,62 +326,7 @@ function Body({ id, saved, d, set, onClose }: { id?: string; saved?: Schedule; d
                 </div>
               ) : null}
             </Group>
-          </Section>
-        </div>
-
-        <div className="min-w-0 space-y-5">
-          <Section title="要做什麼">
-            <Segmented label="要做什麼" value={d.action} onChange={(v) => up({ action: v })} options={[["off", "關閉插座"], ["on", "打開插座"], ["scene", "執行情境"]]} />
-            {d.action === "off" && (
-              <Group>
-                <Row label="之後再打開" hint="只打開被這個排程關掉的；本來就關著的不會被打開" htmlFor="rs">
-                  <Switch id="rs" checked={!!d.restore_at} onCheckedChange={(v) => up({ restore_at: v ? "07:00:00" : null })} />
-                </Row>
-                {d.restore_at && (
-                  <div className="space-y-2 px-4 py-3">
-                    <ClockPicker value={d.restore_at} onChange={(t) => up({ restore_at: t })} />
-                    <p className="text-xs text-muted-foreground">{mode === "clock" && d.restore_at <= d.time ? "隔天" : "當天"}這個時間打開</p>
-                  </div>
-                )}
-              </Group>
-            )}
-            {d.action === "on" && (
-              <Group>
-                <Row label="開多久後自動關閉" hint="例如澆水開 50 秒；插座有設「最長開啟時間」的話，以比較短的為準" htmlFor="du">
-                  <Switch id="du" checked={!!d.duration_s} onCheckedChange={(v) => up({ duration_s: v ? 60 : null })} />
-                </Row>
-                {!!d.duration_s && (
-                  <div className="px-4 py-3">
-                    <DurationPicker value={d.duration_s} onChange={(v) => up({ duration_s: v || 1 })} />
-                  </div>
-                )}
-              </Group>
-            )}
-          </Section>
-          <Section title={d.action === "scene" ? "哪個情境" : d.action === "on" ? "打開哪些插座" : "關閉哪些插座"}>
-            {d.action === "scene" ? (
-              scenes.length ? (
-                <div className="flex flex-wrap gap-2">
-                  {scenes.map((sc) => {
-                    const I = mdiIcon(sc.icon);
-                    return (
-                      <ChoiceChip key={sc.id} selected={d.scene === sc.id} onClick={() => up({ scene: sc.id })}>
-                        {d.scene !== sc.id && <I className="size-4" />}{sc.name}
-                      </ChoiceChip>
-                    );
-                  })}
-                </div>
-              ) : (
-                <p className="text-sm text-muted-foreground">還沒有情境，先到舊版的「編輯」新增一個。</p>
-              )
-            ) : (
-              <PlugPicker
-                selected={d.plugs}
-                onChange={(ids) => up({ plugs: ids })}
-                disabled={(p) => (d.action === "off" && p.keep_on ? "常開的插座不會被關" : false)}
-              />
-            )}
-          </Section>
+          </Step>
         </div>
       </div>
 
