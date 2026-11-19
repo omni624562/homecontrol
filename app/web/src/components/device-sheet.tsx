@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AlertCircle, CheckCircle2, Loader2, Lock, RotateCcw, Timer, WifiOff, X } from "lucide-react";
+import { AlertCircle, CheckCircle2, ChevronDown, Loader2, Lock, RotateCcw, Timer, Trash2, WifiOff, X } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -78,7 +78,7 @@ export function DeviceSheet({ id, onClose }: { id: string | null; onClose: () =>
       title={p?.name || ""}
       description={p ? <DeviceSub p={p} /> : undefined}
       icon={p ? <DeviceIcon p={p} /> : undefined}
-      wide="xl"
+      wide
     >
       {p && <DeviceBody key={p.id} p={p} />}
     </Sheet>
@@ -97,7 +97,6 @@ function DeviceSub({ p }: { p: Plug }) {
   return (
     <>
       {room}・<span className={cn(p.online && isOn(p) && "font-medium text-amber-700 dark:text-amber-400")}>{!p.online ? "連不上" : isOn(p) ? "開著" : "關著"}</span>
-      <span className="block text-xs text-muted-foreground/80">{[p.model, p.host].filter(Boolean).join("・")}</span>
     </>
   );
 }
@@ -119,6 +118,7 @@ function DeviceBody({ p }: { p: Plug }) {
   const [matter, setMatter] = useLocal(p.matter !== false);
   const [led, setLed] = useLocal(!!p.led);
   const [protect, setProtect] = useLocal<Protect>(p.protect);
+  const [adv, setAdv] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -169,19 +169,52 @@ function DeviceBody({ p }: { p: Plug }) {
   const onRouter = !!net?.ssid && ssids.includes(net.ssid);
   const weakKey = net?.key_type != null && net.key_type < 3 && !onRouter;
   const ups = net?.fw_updates || [];
-  const fwText = net?.fw_check === "unavailable" ? "無法檢查（已斷開雲端）" : ups.length ? `有新版 ${ups[0].version || ""}` : net?.fw_check === "ok" ? "已是最新" : "檢查中…";
   const shared = (state?.plugs || []).filter((x) => x.host === p.host).length > 1;
   const sig = signal(p.rssi);
-  const maxDay = usage && usage.days ? Math.max(1, ...usage.days.map((d) => d.minutes)) : 1;
   const nativeText = !n ? "等待同步…" : !n.ok ? n.msg || "同步失敗，稍後再試" : n.schedule ? `已寫入 ${n.schedule} 條，樹莓派離線時照樣執行` : "目前沒有排程要寫入";
+
+  // 網路、韌體有沒有要注意的地方
+  const issues: string[] = [];
+  if (p.rssi != null && p.rssi < -70) issues.push(`訊號弱（${p.rssi} dBm），容易斷線`);
+  if (otherSsid) issues.push(`連到另一個 Wi-Fi「${net?.ssid}」，其他裝置大多在「${mainSsid}」`);
+  if (weakKey) issues.push(`Wi-Fi 加密是 ${keyName(net?.key_type)}，比較容易被破解，建議改用 WPA2 以上`);
+  if (ups.length) issues.push(`有新韌體 ${ups[0].version || ""}`);
+  const fwShort = net?.fw_check === "unavailable" ? "韌體無法檢查" : net?.fw_check === "ok" ? "韌體最新" : "韌體檢查中";
+  const cloudText = net?.cloud_bound === false ? "雲端已解除綁定" : net?.cloud_bound ? "雲端綁著帳號" : p.cloud ? "雲端連線中" : p.cloud === false ? "雲端未連線" : "";
+  // 「進階」收著的時候，有設定過的用小標籤顯示
+  const chips: [string, "warn" | ""][] = [];
+  if (p.keep_on) chips.push(["常開", ""]);
+  if (p.max_on_s) chips.push([`最長 ${fmtSec(p.max_on_s)}`, "warn"]);
+  if (p.matter === false) chips.push(["Google Home 不控制", ""]);
+  if (p.online && p.led === false) chips.push(["指示燈關", ""]);
+  if (n && !n.ok) chips.push(["內建排程同步失敗", "warn"]);
+  const protectDesc = PROTECT.find(([k]) => k === protect)?.[2];
 
   return (
     <div className="space-y-5">
-      {/* 狀態和開關 */}
       {!p.online ? (
-        <div className="flex items-center gap-3 rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-destructive">
+        <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-destructive">
           <WifiOff className="size-5 shrink-0" />
-          <div><div className="font-semibold">連不上這個插座</div><div className="text-sm leading-relaxed opacity-90">檢查插頭有沒有插好、Wi-Fi 有沒有訊號</div></div>
+          <div className="min-w-0 flex-1 basis-48"><div className="font-semibold">連不上這個插座</div><div className="text-sm leading-relaxed opacity-90">檢查插頭有沒有插好、Wi-Fi 有沒有訊號。已經不用的插座可以從清單移除</div></div>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="outline" size="sm" className="bg-background text-destructive hover:text-destructive" disabled={busy === "forget"}>
+                {busy === "forget" ? <Loader2 className="animate-spin" /> : <Trash2 />}從清單移除
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>從清單移除「{p.name}」？</AlertDialogTitle>
+                <AlertDialogDescription className="leading-relaxed">
+                  {shared ? "整條排插的每個孔都會一起移除。" : ""}名稱、房間這些設定會留著；之後它又連上家裡的網路，會自動再出現。
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>取消</AlertDialogCancel>
+                <AlertDialogAction variant="destructive" onClick={() => run("forget", () => api("DELETE", `/api/plugs/${encodeURIComponent(p.id)}`), "已從清單移除")}>移除</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </div>
       ) : p.protect === "lock" ? (
         <div className="flex items-center gap-3 rounded-2xl border bg-muted/50 p-4">
@@ -190,210 +223,218 @@ function DeviceBody({ p }: { p: Plug }) {
         </div>
       ) : null}
 
-      <div className="grid gap-6 md:grid-cols-2">
-        {/* 左欄：定時、名稱、設定、防呆 */}
-        <div className="min-w-0 space-y-5">
-          {p.online && p.protect !== "lock" && (
-            <Section title={on ? "定時關閉" : "打開，並在多久後關閉"}>
-              {on && p.timer && (
-                <div className="flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-500/30 dark:bg-amber-500/10">
-                  <Timer className="size-4 shrink-0 text-amber-600" />
-                  <div className="min-w-0 flex-1 text-sm leading-relaxed">
-                    <span className="font-medium tabular-nums">{fmtLeft(p.timer - t)}</span>後自動關閉（{clockSec(p.timer)}）
-                  </div>
-                  {!p.max_on_s && (
-                    <Button variant="ghost" size="sm" onClick={stopTimer} disabled={busy === "stop"}>
-                      {busy === "stop" ? <Loader2 className="animate-spin" /> : <X />}取消
-                    </Button>
-                  )}
-                </div>
+      {/* 定時 */}
+      {p.online && p.protect !== "lock" && (
+        <Section title={on ? "定時關閉" : "打開，並在多久後關閉"}>
+          {on && p.timer && (
+            <div className="flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-500/30 dark:bg-amber-500/10">
+              <Timer className="size-4 shrink-0 text-amber-600" />
+              <div className="min-w-0 flex-1 text-sm leading-relaxed">
+                <span className="font-medium tabular-nums">{fmtLeft(p.timer - t)}</span>後自動關閉（{clockSec(p.timer)}）
+              </div>
+              {!p.max_on_s && (
+                <Button variant="ghost" size="sm" onClick={stopTimer} disabled={busy === "stop"}>
+                  {busy === "stop" ? <Loader2 className="animate-spin" /> : <X />}取消
+                </Button>
               )}
-              <div className="grid grid-cols-4 gap-2">
-                {choices.map((s) => (
-                  <Button key={s} variant="outline" className="h-11 px-1 transition-all active:scale-95" disabled={!!busy} onClick={() => setTimer(s)}>
-                    {busy === `t${s}` && <Loader2 className="animate-spin" />}
-                    {fmtSec(s)}
-                  </Button>
+            </div>
+          )}
+          <div className="flex gap-2">
+            {choices.map((s) => (
+              <Button key={s} variant="outline" className="h-11 min-w-0 flex-1 px-1 transition-all active:scale-95" disabled={!!busy} onClick={() => setTimer(s)}>
+                {busy === `t${s}` && <Loader2 className="animate-spin" />}
+                {fmtSec(s)}
+              </Button>
+            ))}
+            <Button variant="ghost" className="h-11 shrink-0 px-2 text-primary" aria-expanded={custom} onClick={() => setCustom((v) => !v)}>
+              {custom ? "收起" : "自訂…"}
+            </Button>
+          </div>
+          {custom && (
+            <div className="space-y-2 rounded-xl bg-muted/40 p-3">
+              <DurationPicker value={draft} onChange={setDraft} max={max} />
+              <Button className="h-11 w-full" disabled={!draft || !!busy} onClick={() => setTimer(draft)}>
+                {busy === `t${draft}` && <Loader2 className="animate-spin" />}
+                {on ? "" : "打開，"}{fmtSec(draft)}後關閉
+              </Button>
+            </div>
+          )}
+        </Section>
+      )}
+
+      {/* 常用的設定 */}
+      <Section title="基本設定">
+        <Group>
+          <form
+            className="flex items-center gap-3 px-4 py-2.5"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (name === p.name) return;
+              setBusy("name");
+              await patch({ name }, "已改名");
+              setBusy(null);
+            }}
+          >
+            <label htmlFor="dev-name" className="min-w-0 flex-1">
+              <span className="block text-[15px] font-medium leading-snug">名稱</span>
+              {p.kasa_name && p.kasa_name !== p.name && <span className="block text-xs leading-relaxed text-muted-foreground">插座本身叫「{p.kasa_name}」；清空再存就改回來</span>}
+            </label>
+            <Input id="dev-name" value={name} maxLength={30} onChange={(e) => setName(e.target.value)} className="h-10 w-44 bg-background sm:w-56" />
+            {name !== p.name && (
+              <Button type="submit" size="sm" disabled={busy === "name"}>{busy === "name" && <Loader2 className="animate-spin" />}改名</Button>
+            )}
+          </form>
+          <Row label="房間">
+            <Select value={p.room || "none"} onValueChange={(v) => patch({ room: v === "none" ? null : v })}>
+              <SelectTrigger className="w-40 bg-background" aria-label="房間"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">還沒分房間</SelectItem>
+                {state?.rooms.map((r) => <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </Row>
+          {p.mode !== "metered" && <WattsRows p={p} />}
+          <Row label="防呆" hint={protectDesc}>
+            <Select value={protect || "none"} onValueChange={(v) => { const k = (v === "none" ? "" : v) as Protect; setProtect(k); patch({ protect: k }); }}>
+              <SelectTrigger className="w-40 bg-background" aria-label="防呆"><SelectValue>{PROTECT.find(([k]) => k === protect)?.[1]}</SelectValue></SelectTrigger>
+              <SelectContent>
+                {PROTECT.map(([k, label, desc]) => (
+                  <SelectItem key={k || "none"} value={k || "none"} textValue={label}>
+                    <span className="block">
+                      <span className="block font-medium">{label}</span>
+                      <span className="block max-w-64 text-xs leading-relaxed whitespace-normal text-muted-foreground">{desc}</span>
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Row>
+        </Group>
+      </Section>
+
+      {/* 狀態：沒事的時候各一行；有狀況才展開說明 */}
+      {p.online && (
+        <Section title="狀態">
+          <Group>
+            <Row label="網路" hint={net?.ssid || undefined}>
+              {issues.length ? null : (
+                <span className="flex items-center gap-2 text-right text-sm text-emerald-700 dark:text-emerald-400">
+                  {sig && <Bars level={sig.level} />}{sig ? `訊號${sig.text}・` : ""}{fwShort}<CheckCircle2 className="size-4" />
+                </span>
+              )}
+            </Row>
+            {issues.length > 0 && (
+              <div className="space-y-1.5 px-4 py-3">
+                {issues.map((x) => (
+                  <div key={x} className="flex gap-2 text-sm leading-relaxed font-medium text-orange-700 dark:text-orange-400"><AlertCircle className="mt-0.5 size-4 shrink-0" />{x}</div>
                 ))}
               </div>
-              <Button variant="link" size="sm" className="h-auto px-0" onClick={() => setCustom((v) => !v)}>
-                <Timer />{custom ? "收起" : "自訂時間…"}
-              </Button>
-              {custom && (
-                <div className="space-y-2 rounded-xl bg-muted/40 p-3">
-                  <DurationPicker value={draft} onChange={setDraft} max={max} />
-                  <Button className="h-11 w-full" disabled={!draft || !!busy} onClick={() => setTimer(draft)}>
-                    {busy === `t${draft}` && <Loader2 className="animate-spin" />}
-                    {on ? "" : "打開，"}{fmtSec(draft)}後關閉
-                  </Button>
-                </div>
-              )}
-            </Section>
+            )}
+            <Row label={<span className="whitespace-nowrap">使用時間</span>}>
+              <span className="flex max-w-[72%] flex-wrap items-center justify-end gap-x-3 text-right text-sm tabular-nums">
+                {usage === null ? <Value tone="muted">讀取中…</Value> : usage === false ? <Value tone="muted">讀不到</Value> : <span>今天 {fmtMin(usage.today)}・本月 {fmtMin(usage.month)}</span>}
+                <a href="#energy" className="font-medium whitespace-nowrap text-primary hover:underline">看用電 ›</a>
+              </span>
+            </Row>
+          </Group>
+        </Section>
+      )}
+
+      {/* 進階：設一次就不太動的 */}
+      <section>
+        <button
+          type="button"
+          aria-expanded={adv}
+          onClick={() => setAdv((v) => !v)}
+          className={cn(
+            "flex w-full flex-wrap items-center gap-2 border bg-background px-4 py-3 text-left font-semibold transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            adv ? "rounded-t-xl" : "rounded-xl",
           )}
-
-          <Section title="名稱" note={p.kasa_name && p.kasa_name !== p.name ? `插座本身的名稱：${p.kasa_name}（清空後改名就改回這個）` : undefined}>
-            <form
-              className="flex gap-2"
-              onSubmit={async (e) => {
-                e.preventDefault();
-                setBusy("name");
-                await patch({ name }, "已改名");
-                setBusy(null);
-              }}
-            >
-              <Input value={name} maxLength={30} onChange={(e) => setName(e.target.value)} aria-label="名稱" className="h-11" />
-              <Button type="submit" variant="secondary" className="h-11" disabled={busy === "name" || name === p.name}>
-                {busy === "name" && <Loader2 className="animate-spin" />}改名
-              </Button>
-            </form>
-          </Section>
-
-          <Section title="設定" note={p.max_on_s ? "App、Google Home、排程、情境、插座按鈕打開都算；插座本身也會倒數，樹莓派停掉照樣會關。" : undefined}>
-            <Group>
-              <Row label="房間">
-                <Select value={p.room || "none"} onValueChange={(v) => patch({ room: v === "none" ? null : v })}>
-                  <SelectTrigger className="w-40 bg-background" aria-label="房間"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">還沒分房間</SelectItem>
-                    {state?.rooms.map((r) => <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </Row>
-              {p.mode !== "metered" && <WattsRows p={p} />}
-              <Row label="常開" hint="全部關閉、情境、排程都不會關它（路由器、冰箱）" htmlFor="keep-on">
-                <Switch id="keep-on" size="lg" checked={keepOn} onCheckedChange={(v) => { setKeepOn(v); patch({ keep_on: v }); }} />
-              </Row>
-              <Row label="最長開啟時間" hint={p.max_on_s ? `開了 ${fmtSec(p.max_on_s)}一定關，不能取消` : "澆水、電暖器這類開太久會出事的"} htmlFor="max-on">
-                <Switch id="max-on" size="lg" checked={!!p.max_on_s} onCheckedChange={(v) => { setMaxDraft(null); patch({ max_on_s: v ? 600 : null }); }} />
-              </Row>
-              {!!p.max_on_s && (
-                <div className="space-y-3 px-4 py-3">
-                  <DurationPicker value={maxDraft ?? p.max_on_s} onChange={setMaxDraft} />
-                  <div className="flex flex-wrap gap-2">
-                    {[30, 60, 300, 600, 1800].map((x) => (
-                      <Button key={x} size="sm" variant={(maxDraft ?? p.max_on_s) === x ? "default" : "outline"} className="rounded-full" onClick={() => { setMaxDraft(null); patch({ max_on_s: x }); }}>
-                        {fmtSec(x)}
-                      </Button>
-                    ))}
-                  </div>
-                  {maxDraft != null && maxDraft !== p.max_on_s && (
-                    <Button className="w-full" disabled={!maxDraft} onClick={async () => { if (await patch({ max_on_s: maxDraft }, "已儲存")) setMaxDraft(null); }}>
-                      儲存：最長 {fmtSec(maxDraft)}
+        >
+          進階
+          <ChevronDown className={cn("size-4 text-muted-foreground transition-transform", adv && "rotate-180")} />
+          <span className="ml-auto flex flex-wrap justify-end gap-1.5 font-normal">
+            {chips.map(([text, tone]) => (
+              <span key={text} className={cn("rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground", tone === "warn" && "bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300")}>{text}</span>
+            ))}
+          </span>
+        </button>
+        {adv && (
+          <div className="divide-y overflow-hidden rounded-b-xl border border-t-0 bg-muted/30">
+            <Row label="常開" hint="全部關閉、情境、排程都不會關它（路由器、冰箱）" htmlFor="keep-on">
+              <Switch id="keep-on" size="lg" checked={keepOn} onCheckedChange={(v) => { setKeepOn(v); patch({ keep_on: v }); }} />
+            </Row>
+            <Row label="最長開啟時間" hint={p.max_on_s ? `開了 ${fmtSec(p.max_on_s)}一定關，不能取消。App、Google Home、排程、情境、插座按鈕打開都算；樹莓派停掉照樣會關` : "澆水、電暖器這類開太久會出事的"} htmlFor="max-on">
+              <Switch id="max-on" size="lg" checked={!!p.max_on_s} onCheckedChange={(v) => { setMaxDraft(null); patch({ max_on_s: v ? 600 : null }); }} />
+            </Row>
+            {!!p.max_on_s && (
+              <div className="space-y-3 px-4 py-3">
+                <DurationPicker value={maxDraft ?? p.max_on_s} onChange={setMaxDraft} />
+                <div className="flex flex-wrap gap-2">
+                  {[30, 60, 300, 600, 1800].map((x) => (
+                    <Button key={x} size="sm" variant={(maxDraft ?? p.max_on_s) === x ? "default" : "outline"} className="rounded-full" onClick={() => { setMaxDraft(null); patch({ max_on_s: x }); }}>
+                      {fmtSec(x)}
                     </Button>
-                  )}
+                  ))}
                 </div>
-              )}
-            </Group>
-          </Section>
-
-          <Section title="防呆">
-            <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="防呆">
-              {PROTECT.map(([k, label, desc]) => (
-                <button
-                  key={k || "none"}
-                  role="radio"
-                  aria-checked={protect === k}
-                  onClick={() => { setProtect(k); patch({ protect: k }); }}
-                  className={cn(
-                    "rounded-xl border p-3 text-left transition-all hover:border-primary/40 hover:bg-primary/5 active:scale-[.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                    protect === k ? "border-primary bg-primary/10 ring-1 ring-primary" : "bg-muted/30",
-                  )}
-                >
-                  <div className={cn("flex items-center gap-1.5 font-semibold", protect === k && "text-primary")}>
-                    {k === "lock" && <Lock className="size-4" />}{label}
-                  </div>
-                  <div className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{desc}</div>
-                </button>
-              ))}
-            </div>
-          </Section>
-        </div>
-
-        {/* 右欄：Google Home、插座本身 */}
-        <div className="min-w-0 space-y-5">
-          <Section title="Google Home">
-            <Group>
-              <Row label="讓 Google Home 控制" hint="關掉後，語音說「全部關掉」也不會動到它" htmlFor="matter">
-                <Switch id="matter" size="lg" checked={matter} onCheckedChange={(v) => { setMatter(v); patch({ matter: v }); }} />
+                {maxDraft != null && maxDraft !== p.max_on_s && (
+                  <Button className="w-full" disabled={!maxDraft} onClick={async () => { if (await patch({ max_on_s: maxDraft }, "已儲存")) setMaxDraft(null); }}>
+                    儲存：最長 {fmtSec(maxDraft)}
+                  </Button>
+                )}
+              </div>
+            )}
+            <Row label="讓 Google Home 控制" hint="關掉後，語音說「全部關掉」也不會動到它" htmlFor="matter">
+              <Switch id="matter" size="lg" checked={matter} onCheckedChange={(v) => { setMatter(v); patch({ matter: v }); }} />
+            </Row>
+            {p.online && (
+              <Row label="指示燈" hint={shared ? "整條排插共用一個燈" : undefined} htmlFor="led">
+                <Switch id="led" size="lg" checked={led} onCheckedChange={(v) => { setLed(v); patch({ led: v }); }} />
               </Row>
-            </Group>
-          </Section>
-
-          {p.online && (
-            <Section title="插座本身">
-              <Group>
-                <Row label="指示燈" hint={shared ? "整條排插共用一個燈" : undefined} htmlFor="led">
-                  <Switch id="led" size="lg" checked={led} onCheckedChange={(v) => { setLed(v); patch({ led: v }); }} />
-                </Row>
-                {net && (
-                  <>
-                    <Row label="Wi-Fi 網路" hint={otherSsid ? `和其他裝置不同（大多數在「${mainSsid}」）` : undefined} warn={otherSsid}>
-                      <Value tone={otherSsid ? "warn" : undefined}>{net.ssid || "—"}</Value>
-                    </Row>
-                    <Row label="加密方式" hint={weakKey ? "比較容易被破解，建議改用 WPA2 以上" : undefined} warn={weakKey}>
-                      <Value tone={weakKey ? "warn" : undefined}>{onRouter ? "WPA2 以上（路由器設定）" : keyName(net.key_type)}</Value>
-                    </Row>
-                    <Row label="韌體" hint={`${net.model || ""} 硬體 ${net.hw || ""}`}>
-                      <Value tone={ups.length ? "warn" : undefined}>{net.fw}・{fwText}</Value>
-                    </Row>
-                  </>
-                )}
-                <Row label="Wi-Fi 訊號">
-                  {sig ? (
-                    <span className="flex items-center gap-2 text-sm tabular-nums"><Bars level={sig.level} />{sig.text}・{p.rssi} dBm</span>
-                  ) : <Value tone="muted">—</Value>}
-                </Row>
-                <Row label="使用時間" hint="插座自己記錄的">
-                  {usage === null ? <Value tone="muted">讀取中…</Value> : usage === false ? <Value tone="muted">讀不到</Value> : <Value>今天 {fmtMin(usage.today)}・本月 {fmtMin(usage.month)}</Value>}
-                </Row>
-                {usage && usage.days && (
-                  <div className="flex h-14 items-end gap-[2px] px-4 py-2" role="img" aria-label="最近每天的使用時間">
-                    {usage.days.map((d, i) => (
-                      <div key={d.day} title={`${d.day}：${fmtMin(d.minutes)}`} className="group flex h-full flex-1 items-end">
-                        <i className={cn("w-full rounded-t-sm transition-colors group-hover:bg-primary", i === usage.days!.length - 1 ? "bg-primary" : "bg-primary/40")} style={{ height: `${Math.max(d.minutes ? 4 : 0, (d.minutes / maxDay) * 100)}%` }} />
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <Row label="內建排程" hint={nativeText} warn={!!n && !n.ok}>
-                  {n && !n.ok ? <AlertCircle className="size-5 text-orange-500" /> : n ? <CheckCircle2 className="size-5 text-emerald-500" /> : null}
-                </Row>
-                {!!n?.kasa?.length && (
-                  <Row label="Kasa App 設的排程" hint="插座自己會執行；在「排程」頁可以修改">
-                    <span className="text-right text-sm leading-relaxed">{n.kasa.map((r, i) => <span key={i} className="block">{ruleText(r)}</span>)}</span>
-                  </Row>
-                )}
-                <Row label="TP-Link 雲端">
-                  <Value>{net?.cloud_bound === false ? "已解除綁定" : net?.cloud_bound ? "綁著帳號" : p.cloud ? "連線中" : p.cloud === false ? "未連線" : "—"}</Value>
-                </Row>
-                <Row label="重新啟動插座" hint={`插座卡住時用；${shared ? "整條排插都會重開，" : ""}可能短暫斷電`}>
-                  <AlertDialog>
-                    <AlertDialogTrigger asChild>
-                      <Button variant="outline" size="sm" disabled={busy === "reboot"}>
-                        {busy === "reboot" ? <Loader2 className="animate-spin" /> : <RotateCcw />}重新啟動
-                      </Button>
-                    </AlertDialogTrigger>
-                    <AlertDialogContent>
-                      <AlertDialogHeader>
-                        <AlertDialogTitle>重新啟動插座？</AlertDialogTitle>
-                        <AlertDialogDescription className="leading-relaxed">
-                          插座大約 30 秒後恢復，期間可能短暫斷電{shared ? "；整條排插的每個孔都會一起重開" : ""}。
-                        </AlertDialogDescription>
-                      </AlertDialogHeader>
-                      <AlertDialogFooter>
-                        <AlertDialogCancel>取消</AlertDialogCancel>
-                        <AlertDialogAction onClick={() => run("reboot", () => api("POST", `/api/plugs/${encodeURIComponent(p.id)}/reboot`), "插座重新啟動中，大約 30 秒後恢復")}>
-                          重新啟動
-                        </AlertDialogAction>
-                      </AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
-                </Row>
-              </Group>
-            </Section>
-          )}
-        </div>
-      </div>
+            )}
+            {p.online && (
+              <Row label="內建排程" hint={nativeText} warn={!!n && !n.ok}>
+                {n && !n.ok ? <AlertCircle className="size-5 text-orange-500" /> : n ? <CheckCircle2 className="size-5 text-emerald-500" /> : null}
+              </Row>
+            )}
+            {!!n?.kasa?.length && (
+              <Row label="Kasa App 設的排程" hint="插座自己會執行；在「排程」頁可以修改">
+                <span className="text-right text-sm leading-relaxed">{n.kasa.map((r, i) => <span key={i} className="block">{ruleText(r)}</span>)}</span>
+              </Row>
+            )}
+            <Row label="硬體資訊">
+              <span className="text-right text-sm leading-relaxed text-muted-foreground">
+                {[p.model, p.host, net?.fw ? `韌體 ${net.fw}` : "", net?.hw ? `硬體 ${net.hw}` : "", net ? (onRouter ? "WPA2 以上" : keyName(net.key_type)) : "", p.rssi != null ? `${p.rssi} dBm` : "", cloudText].filter(Boolean).join("・")}
+              </span>
+            </Row>
+            {p.online && (
+              <Row label="重新啟動插座" hint={`插座卡住時用；${shared ? "整條排插都會重開，" : ""}可能短暫斷電`}>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button variant="outline" size="sm" disabled={busy === "reboot"}>
+                      {busy === "reboot" ? <Loader2 className="animate-spin" /> : <RotateCcw />}重新啟動
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>重新啟動插座？</AlertDialogTitle>
+                      <AlertDialogDescription className="leading-relaxed">
+                        插座大約 30 秒後恢復，期間可能短暫斷電{shared ? "；整條排插的每個孔都會一起重開" : ""}。
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>取消</AlertDialogCancel>
+                      <AlertDialogAction onClick={() => run("reboot", () => api("POST", `/api/plugs/${encodeURIComponent(p.id)}/reboot`), "插座重新啟動中，大約 30 秒後恢復")}>
+                        重新啟動
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </Row>
+            )}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
