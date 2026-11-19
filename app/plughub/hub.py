@@ -23,6 +23,7 @@ from . import habits, native, sun, tariff
 from .sensing import INTERVAL as SENSE_INTERVAL, SAVE_EVERY as SENSE_SAVE_EVERY, Sensing
 from .notify import Notifier
 from .daysoff import DaysOff
+from .localinfo import LocalInfo
 from .weather import Weather
 from .router import Router
 from .store import Store
@@ -145,6 +146,9 @@ class Hub:
         # 放假日、天氣（排程的「國定假日不執行」「下雨不執行」）
         self.weather = Weather(store.dir / "secrets.json")
         self.daysoff = DaysOff(store.dir, self.weather)
+        self.local = LocalInfo(store.dir, lambda: store.data["settings"].setdefault("local", {}),
+                               lambda: (self.weather.county, self.weather.town),
+                               lambda title, msg: self.notifier.send(title, msg))
         self._calendar_at = 0.0
         self._today = date.today()
         self.sched_skipped: dict[str, str] = {}  # 排程 ID → 今天為什麼沒執行
@@ -169,6 +173,7 @@ class Hub:
             asyncio.create_task(self._schedule_loop()),
             asyncio.create_task(self._loop(self._native_tick, 5)),
             asyncio.create_task(self._loop(self._sense_tick, SENSE_INTERVAL)),
+            asyncio.create_task(self._loop(self._local_tick, 15)),
             asyncio.create_task(self.router.run()),
         ]
 
@@ -656,6 +661,11 @@ class Hub:
                 self.refresh_habits()
             except Exception as err:  # noqa: BLE001
                 _LOGGER.warning("排程建議算不出來：%s", err)
+
+    async def _local_tick(self) -> None:
+        """垃圾車、停水停電（要先知道在哪個縣市、鄉鎮：從氣象署那邊來）。"""
+        if self.weather.town and await self.local.refresh(self.location()):
+            await self.changed()
 
     async def refresh_usage(self) -> None:
         self._usage_at = time.time()
@@ -1670,6 +1680,7 @@ class Hub:
                 "holidays_ready": date.today().year in self.daysoff.years,
                 "weather": self.weather.report(),  # 沒有氣象署授權碼是 None
                 "weather_show": self.store.data["settings"].get("weather", True),
+                "local": self.local.report(),
             },
             "sun": {"sunrise": self._sun_min(1, date.today()), "sunset": self._sun_min(2, date.today()), "located": self.location() is not None},
             "settings": settings,

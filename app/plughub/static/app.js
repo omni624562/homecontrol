@@ -674,6 +674,23 @@ const STYLE = `
   .wday .pop { color: var(--accent-text); font-size: 13px; display: inline-flex; align-items: center; justify-content: flex-end; gap: 2px; }
   .wday .pop .i { width: 14px; height: 14px; color: var(--accent-text); }
   .wbody { padding: 0 16px 12px; }
+  .wchip.warn { border-color: color-mix(in srgb, var(--warn) 45%, var(--line)); }
+  .wchip.warn .i { color: var(--warn); }
+  .lstat { display: flex; align-items: center; gap: 14px; padding: 4px 2px 12px; }
+  .lstat > .i { width: 44px; height: 44px; color: var(--accent); flex: none; }
+  .lstat b { font-size: 22px; display: block; line-height: 1.25; }
+  .lstat span { color: var(--text2); font-size: 14px; }
+  .lnext { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  .lnext > div { background: var(--soft); border-radius: var(--r-sm); padding: 8px 11px; font-size: 13px; color: var(--text2); }
+  .lnext b { color: var(--text); display: block; font-size: 14px; }
+  .outage { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; padding: 11px 0; border-top: 1px solid var(--line); }
+  .outage:first-child { border-top: 0; }
+  .outage > .i { width: 24px; height: 24px; color: var(--muted); margin-top: 2px; }
+  .outage.road > .i { color: var(--warn); }
+  .outage .t { font-weight: 600; font-size: 14px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .outage .a { color: var(--text2); font-size: 13px; margin-top: 3px; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .outage .r { color: var(--muted); font-size: 12px; margin-top: 3px; }
+  .badge.warn { background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--warn); }
   .wday .lo { color: var(--muted); text-align: right; } .wday .hi { font-weight: 600; }
   .wbar { position: relative; height: 5px; border-radius: 3px; background: var(--soft2); }
   .wbar i { position: absolute; top: 0; bottom: 0; border-radius: 3px; background: linear-gradient(90deg, #60a5fa, #f59e0b); }
@@ -1499,7 +1516,7 @@ class PlugApp extends HTMLElement {
     const head = `
       <div class="ph">
         <div><h1>我的家</h1><div class="sub">${onCount ? `<b>${onCount} 個開著</b>・` : ""}共 ${plugs.length} 個裝置</div></div>
-        <div class="right">${this._weatherChip()}<button class="link" data-a="edit">編輯</button></div>
+        <div class="right">${this._lifeChips()}${this._weatherChip()}<button class="link" data-a="edit">編輯</button></div>
       </div>`;
     if (!plugs.length) {
       return `${head}<div class="card"><div class="empty">還沒找到插座。<br>確認插座已經接上家裡的 Wi-Fi。<br><br><button class="btn primary" data-a="discover">${ic("mdi:magnify")}現在找</button></div></div>`;
@@ -1534,6 +1551,26 @@ class PlugApp extends HTMLElement {
     return `<button class="${cls}" data-a="weather" aria-label="天氣：${esc(x.text)} ${fmt(w.temp, 1)} 度">${ic(x.icon)}${fmt(w.temp, 0)}°<small>${esc(w.text || x.text)}${pop >= 30 ? `・降雨 ${fmt(pop)}%` : ""}</small></button>`;
   }
 
+  // 首頁：垃圾車、停水停電的小按鈕（點開「生活資訊」）
+  _lifeChips(cls = "wchip") {
+    const L = this._s.calendar?.local;
+    if (!L) return "";
+    const out = [];
+    const g = L.garbage;
+    if (g && g.today.length) {
+      const t = g.truck;
+      const live = t && !t.none && t.stops >= 0 ? `還有 ${t.stops} 站` : t && !t.none && t.stops < 0 ? "已經過了" : g.stop.time;
+      out.push(`<button class="${cls}" data-a="life" aria-label="垃圾車：${esc(live)}">${ic("mdi:truck-outline")}垃圾車<small>${esc(live)}</small></button>`);
+    }
+    const road = (L.outages || []).filter((x) => x.hit === "road");
+    if (road.length) {
+      const x = road[0];
+      const d = new Date(x.start);
+      out.push(`<button class="${cls} warn" data-a="life" aria-label="附近要${x.kind === "power" ? "停電" : "停水"}">${ic(x.kind === "power" ? "mdi:flash-off" : "mdi:water-off")}${d.getMonth() + 1}/${d.getDate()} ${x.kind === "power" ? "停電" : "停水"}${road.length > 1 ? `<small>還有 ${road.length - 1} 件</small>` : ""}</button>`);
+    }
+    return out.join("");
+  }
+
   _statusPills() {
     const s = this._s;
     const people = s.people || [];
@@ -1542,6 +1579,7 @@ class PlugApp extends HTMLElement {
     const r = s.router || {};
     return [
       this._weatherChip("spill"),
+      this._lifeChips("spill"),
       people.length ? `<span class="spill ${home ? "ok" : ""}">${ic("mdi:home-outline")}${home ? `${home} 人在家` : "都出門了"}</span>` : "",
       s.summary.power != null ? `<span class="spill">${ic("mdi:flash")}${fmt(s.summary.power)} W</span>` : "",
       `<span class="spill">${ic("mdi:power")}${on} 個開著</span>`,
@@ -1590,7 +1628,7 @@ class PlugApp extends HTMLElement {
         </div>`;
     };
     return `
-      <div class="ph"><div><h1>我的家</h1></div><div class="right">${this._weatherChip()}<button class="link" data-a="edit">編輯</button></div></div>
+      <div class="ph"><div><h1>我的家</h1></div><div class="right">${this._lifeChips()}${this._weatherChip()}<button class="link" data-a="edit">編輯</button></div></div>
       <div class="bscenes">${scenes}</div>
       <div class="brooms">${groups
         .map((g) => `<section class="broom"><h2>${esc(g.name)}<small>${g.plugs.filter((p) => p.online && this._isOn(p)).length} 個開著</small><span class="end">${this._roomBtn(g)}</span></h2><div class="tiles">${g.plugs.map(tile).join("")}</div></section>`)
@@ -2498,6 +2536,71 @@ class PlugApp extends HTMLElement {
   }
 
   // Wi-Fi 感測（實驗）：每台插座 × 最近 60 分鐘的擾動熱力圖
+  // 生活資訊：垃圾車、停水停電（政府開放資料）
+  _lifeSheet() {
+    const L = this._s.calendar?.local || {};
+    const head = this._sheetHead("mdi:home-city-outline", "生活資訊", L.place ? `${L.place}・政府開放資料` : "政府開放資料");
+    const DN = "一二三四五六日"; // date.weekday()：0 = 星期一
+    const g = L.garbage;
+    const kindDays = (days) => (days.length ? days.map((i) => DN[i]).join("") : "不收");
+    let garbage = "";
+    if (!L.garbage_supported) {
+      garbage = `<div class="empty">垃圾車目前只支援新北市${L.place ? `（偵測到在${esc(L.place)}）` : ""}</div>`;
+    } else if (!g) {
+      garbage = `<div class="empty">${L.errors?.routes ? `垃圾車路線下載失敗：${esc(L.errors.routes)}` : "正在下載垃圾車路線…"}</div>`;
+    } else {
+      const t = g.truck;
+      const DOW = (iso) => { const d = new Date(iso + "T12:00"); const i = Math.floor((d - new Date(new Date().toDateString())) / 864e5); return i === 0 ? "今天" : i === 1 ? "明天" : `週${"日一二三四五六"[d.getDay()]}`; };
+      const status = !g.today.length
+        ? `<b>今天不收</b><span>下一次：${g.next[0] ? `${DOW(g.next[0].date)} ${esc(g.stop.time)}` : "—"}</span>`
+        : t && !t.none && t.stops >= 0
+          ? `<b>還有 ${t.stops} 站${t.eta_min != null ? `・約 ${t.eta_min} 分鐘` : ""}</b><span>車子在${esc(t.at_stop)}附近（${esc(t.car || "")}，${esc((t.at || "").slice(11, 16))} 回報）</span>`
+          : t && !t.none
+            ? `<b>垃圾車已經過了</b><span>最後在${esc(t.at_stop)}附近</span>`
+            : g.watching
+              ? `<b>今天 ${esc(g.stop.time)}</b><span>還沒看到這條路線的車子出勤</span>`
+              : `<b>今天 ${esc(g.stop.time)}</b><span>${g.today.join("、")}・表定時間前 45 分鐘開始追蹤車子</span>`;
+      const stops = (L.stops || [])
+        .map((x) => `<option value="${esc(x.lineid)}|${x.rank}" ${x.lineid === g.stop.lineid && +x.rank === +g.stop.rank ? "selected" : ""}>${esc(x.name)}・${esc(x.time)}・${esc(x.line)}・${x.m} 公尺</option>`)
+        .join("");
+      garbage = `
+        <div class="lstat">${ic("mdi:truck-outline")}<div>${status}</div></div>
+        <div class="lnext">${g.next.map((n) => `<div><b>${DOW(n.date)} ${esc(g.stop.time)}</b>${n.kinds.join("、")}</div>`).join("")}</div>
+        <div class="group">
+          <div class="gi col"><div class="gt"><div class="gl">清運點</div><div class="gs">一般垃圾 ${kindDays(g.stop.days.garbage)}・回收 ${kindDays(g.stop.days.recycling)}・廚餘 ${kindDays(g.stop.days.foodscraps)}${g.stop.memo ? `・${esc(g.stop.memo)}` : ""}</div></div>
+            <select class="gsel" style="margin-top:8px;width:100%;max-width:none" data-c="life-stop" aria-label="清運點">${stops}</select></div>
+          <div class="gi"><div class="gt"><div class="gl">快到時通知</div><div class="gs">剩 3 站時推播（要先設定 ntfy）</div></div>
+            <button class="sw ${L.garbage_notify ? "on" : ""}" data-a="life-toggle" data-v="garbage_notify" role="switch" aria-checked="${!!L.garbage_notify}" aria-label="垃圾車快到時通知"></button></div>
+        </div>`;
+    }
+    const roads = L.roads || [];
+    const fmtRange = (x) => {
+      const a = new Date(x.start), b = new Date(x.end);
+      const same = a.toDateString() === b.toDateString();
+      return `${a.getMonth() + 1}/${a.getDate()}（${"日一二三四五六"[a.getDay()]}）${pad2(a.getHours())}:${pad2(a.getMinutes())}～${same ? "" : `${b.getMonth() + 1}/${b.getDate()} `}${pad2(b.getHours())}:${pad2(b.getMinutes())}`;
+    };
+    const list = (L.outages || [])
+      .map((x) => `<div class="outage ${x.hit}">${ic(x.kind === "power" ? "mdi:flash-off" : "mdi:water-off")}<div>
+          <div class="t">${x.kind === "power" ? "停電" : x.pressure ? "停水／降壓" : "停水"} ${fmtRange(x)}${x.hit === "road" ? `<span class="badge warn">有你家的路</span>` : ""}</div>
+          <div class="a">${esc(x.area)}</div><div class="r">${esc(x.src)}${x.reason ? `・${esc(x.reason)}` : ""}</div></div></div>`)
+      .join("");
+    const outages = `
+      <div class="group">
+        <div class="gi col"><div class="gt"><div class="gl">你家的路名</div><div class="gs">停水、停電的範圍寫到這些路就標出來並通知。用頓號或逗號分開，例如「中興街、集賢路」。只存在樹莓派上</div></div>
+          <div class="inline" style="margin-top:8px;width:100%"><input class="text" style="flex:1;min-width:0;background:var(--card);border:1px solid var(--line)" data-c="life-roads" value="${esc(roads.join("、"))}" placeholder="中興街、集賢路" aria-label="你家的路名">
+          <button class="btn" style="height:46px" data-a="life-roads-save">儲存</button></div></div>
+        <div class="gi"><div class="gt"><div class="gl">有你家的路時通知</div><div class="gs">新公告一出來就推播（要先設定 ntfy）</div></div>
+          <button class="sw ${L.outage_notify ? "on" : ""}" data-a="life-toggle" data-v="outage_notify" role="switch" aria-checked="${!!L.outage_notify}" aria-label="停水停電通知"></button></div>
+      </div>
+      <div class="card flat" style="margin-top:12px"><div class="ch"><div class="n">接下來兩週${L.place ? `・${esc(L.place)}` : ""}</div></div>
+        <div class="wbody">${list || `<p class="desc">${L.errors?.outages ? `查詢失敗：${esc(L.errors.outages)}` : L.updated?.outages ? "沒有停水、停電的公告" : "查詢中…"}</p>`}</div></div>`;
+    return `
+      ${head}
+      <div class="card flat"><div class="ch"><div class="ri">${ic("mdi:truck-outline")}</div><div class="n">垃圾車</div></div><div class="wbody">${garbage}</div></div>
+      <div class="card flat" style="margin-top:12px"><div class="ch"><div class="ri">${ic("mdi:flash-off")}</div><div class="n">停水、停電</div></div><div class="wbody">${outages}</div></div>
+      <p class="desc" style="margin-top:10px">資料來源：新北市環保局（垃圾車路線、即時位置）、台灣自來水公司、臺北自來水事業處、台電（計畫性工作停電）。整份資料下載到樹莓派上比對，不會送出家裡的位置或地址。${L.errors?.outages_part ? `<br>部分來源查詢失敗：${esc(L.errors.outages_part)}` : ""}</p>`;
+  }
+
   // 天氣：中央氣象署測站實測＋鄉鎮預報，環境部空品測站
   _weatherSheet(s) {
     const c = this._s.calendar || {};
@@ -2505,7 +2608,7 @@ class PlugApp extends HTMLElement {
     const on = c.weather_show !== false;
     const head = this._sheetHead("mdi:weather-partly-cloudy", "天氣", w?.place ? `${w.place}・中央氣象署` : "中央氣象署、環境部的開放資料");
     const keyRow = (k, label, has, hint, ph) => `<div class="gi col"><div class="gt"><div class="gl">${label}${has ? `<span class="badge ok" style="margin-left:6px">已設定</span>` : ""}</div><div class="gs">${hint}</div></div>
-        <div class="inline" style="margin-top:8px"><input class="text" data-c="wkey-${k}" placeholder="${has ? "要換新的才填" : ph}" autocapitalize="off" autocomplete="off" spellcheck="false" aria-label="${label}">
+        <div class="inline" style="margin-top:8px;width:100%"><input class="text" style="flex:1;min-width:0;background:var(--card);border:1px solid var(--line)" data-c="wkey-${k}" placeholder="${has ? "要換新的才填" : ph}" autocapitalize="off" autocomplete="off" spellcheck="false" aria-label="${label}">
         <button class="btn" style="height:46px" data-a="wkey-save" data-v="${k}">儲存</button></div></div>`;
     const keys = `<div class="group" style="margin-top:12px">
       ${keyRow("cwa", "中央氣象署授權碼", !!w, "到 opendata.cwa.gov.tw 註冊、登入，右上角「取得授權碼」", "CWA- 開頭")}
@@ -3914,6 +4017,17 @@ class PlugApp extends HTMLElement {
           await api("PUT", "/api/settings", { presence: { home_dark_only: !this._s.settings.presence?.home_dark_only } });
         }),
       weather: () => this._openSheet({ type: "weather", wide: true, live: true }),
+      life: () => this._openSheet({ type: "life", wide: true, live: true }),
+      "life-toggle": (v) =>
+        this._safe(async () => {
+          await api("PUT", "/api/local", { [v]: !this._s.calendar?.local?.[v] });
+        }),
+      "life-roads-save": () =>
+        this._safe(async () => {
+          const val = this._sheetHost.querySelector('[data-c="life-roads"]')?.value || "";
+          await api("PUT", "/api/local", { roads: val.split(/[、,，\s]+/).filter(Boolean) });
+          this._showToast("已儲存路名");
+        }),
       "wkey-save": (v) =>
         this._safe(async () => {
           const inp = this._sheetHost.querySelector(`[data-c="wkey-${v}"]`);
@@ -4291,6 +4405,11 @@ class PlugApp extends HTMLElement {
         this._mapSave();
         this._render();
       },
+      "life-stop": (v, t) =>
+        this._safe(async () => {
+          const [lineid, rank] = t.value.split("|");
+          await api("PUT", "/api/local", { stop: { lineid, rank } });
+        }),
       "ask-cap": (v, t) =>
         this._safe(async () => {
           await api("PUT", "/api/assistant", { cap: +t.value });
@@ -4739,7 +4858,7 @@ class PlugApp extends HTMLElement {
   _renderSheet() {
     const s = this._sheet;
     if (!s) return;
-    const builders = { weather: this._weatherSheet, sense: this._senseSheet, edev: this._edevSheet, kasa: this._kasaSheet, confirm: this._confirmSheet, away: this._awaySheet, cloud: this._cloudSheet, ask: this._askSheet, netdev: this._netdevSheet, person: this._personSheet, device: this._deviceSheet, timer: this._deviceSheet, plug: this._deviceSheet, room: this._roomSheet, scene: this._sceneSheet, sched: this._schedSheet, watts: this._wattsSheet };
+    const builders = { life: this._lifeSheet, weather: this._weatherSheet, sense: this._senseSheet, edev: this._edevSheet, kasa: this._kasaSheet, confirm: this._confirmSheet, away: this._awaySheet, cloud: this._cloudSheet, ask: this._askSheet, netdev: this._netdevSheet, person: this._personSheet, device: this._deviceSheet, timer: this._deviceSheet, plug: this._deviceSheet, room: this._roomSheet, scene: this._sceneSheet, sched: this._schedSheet, watts: this._wattsSheet };
     const html = builders[s.type]?.call(this, s);
     if (html === null || html === undefined) return this._closeSheet();
     const key = `${s.type}|${s.id}|${s.wide ? 1 : 0}`;

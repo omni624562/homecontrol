@@ -742,6 +742,24 @@ async def weather_keys(body: dict = Body(...)) -> dict[str, Any]:
     return {"cwa": bool(hub.weather.key()), "moenv": bool(hub.weather.air_key())}
 
 
+@app.put("/api/local")
+async def local_settings(body: dict = Body(...)) -> dict[str, Any]:
+    """生活資訊：{"stop": {"lineid", "rank"}, "roads": [路名], "garbage_notify", "outage_notify"}；只存在樹莓派上。"""
+    cfg = store.data["settings"].setdefault("local", {})
+    if isinstance(body.get("stop"), dict):
+        cfg["stop"] = {"lineid": str(body["stop"].get("lineid", ""))[:20], "rank": str(body["stop"].get("rank", ""))[:6]}
+    if isinstance(body.get("roads"), list):
+        cfg["roads"] = [str(r).strip()[:20] for r in body["roads"] if str(r).strip()][:8]
+        hub.local.recheck()
+    for k in ("garbage_notify", "outage_notify"):
+        if k in body:
+            cfg[k] = bool(body[k])
+    store.save()
+    hub.local._at.pop("truck", None)
+    await hub.changed()
+    return hub.local.report()
+
+
 # ---- 問家裡（Claude）----
 
 
