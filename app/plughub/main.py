@@ -164,7 +164,7 @@ async def update_plug(plug_id: str, body: dict = Body(...)) -> dict[str, Any]:
     if "room" in body:
         room = body["room"]
         if room is not None and not store.room(room):
-            raise HTTPException(400, "沒有這個房間")
+            raise HTTPException(400, "沒有這個區域")
         meta.room = room
     for key in ("keep_on", "night", "matter"):
         if key in body:
@@ -219,7 +219,7 @@ async def turn_off(body: dict = Body(default={})) -> dict[str, Any]:
 async def turn_on(body: dict = Body(default={})) -> dict[str, Any]:
     room = body.get("room")
     if not room or not store.room(room):
-        raise HTTPException(404, "找不到這個房間")
+        raise HTTPException(404, "找不到這個區域")
     done = await hub.turn_on(room, remember="undo")
     await hub.changed()
     return {"ok": True, "count": len(done)}
@@ -245,7 +245,7 @@ async def discover() -> dict[str, Any]:
 async def add_room(body: dict = Body(...)) -> dict[str, Any]:
     name = (body.get("name") or "").strip()
     if not name:
-        raise HTTPException(400, "請輸入房間名稱")
+        raise HTTPException(400, "請輸入區域名稱")
     room = store.add_room(name, body.get("icon"))
     await hub.changed()
     return room
@@ -255,7 +255,7 @@ async def add_room(body: dict = Body(...)) -> dict[str, Any]:
 async def update_room(room_id: str, body: dict = Body(...)) -> dict[str, Any]:
     room = store.room(room_id)
     if not room:
-        raise HTTPException(404, "沒有這個房間")
+        raise HTTPException(404, "沒有這個區域")
     if body.get("name", "").strip():
         room["name"] = body["name"].strip()
     if body.get("icon"):

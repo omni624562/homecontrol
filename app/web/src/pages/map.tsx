@@ -128,7 +128,7 @@ export function MapPage() {
   const devsRef = useRef(devs);
   devsRef.current = devs;
 
-  // 讀地圖；第一次（還沒有房間）用家庭中控的房間排出草圖
+  // 讀地圖；第一次（還沒有區域）用家庭中控的區域排出草圖
   const roomsReady = !!state;
   useEffect(() => {
     if (!roomsReady) return;
@@ -180,7 +180,7 @@ export function MapPage() {
   const head = (
     <PageHeader
       title={<span className="flex items-center gap-1"><a href="#settings" className="-ml-2 inline-flex size-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="回設定"><ChevronLeft className="size-6" /></a>訊號地圖</span>}
-      sub={edit ? "拖曳房間和裝置到實際的位置；拉右下角改大小" : "各裝置的 Wi-Fi 訊號：藍色好、橘色弱；點裝置看詳細、設定高度"}
+      sub={edit ? "拖曳區域和裝置到實際的位置；拉右下角改大小" : "各裝置的 Wi-Fi 訊號：藍色好、橘色弱；點裝置看詳細、設定高度"}
       actions={
         <Button variant={edit ? "default" : "outline"} className="h-10" onClick={() => { setEdit((v) => !v); setSel(null); }}>
           {edit ? <><Check />完成</> : <><Pencil />編輯</>}
@@ -243,7 +243,7 @@ export function MapPage() {
   if (edit && !sel)
     picked = (
       <>
-        <Note>點房間、裝置或 Wi-Fi 基地台可以選取；拖曳移動，房間拉右下角的小方塊改大小。</Note>
+        <Note>點區域、裝置或 Wi-Fi 基地台可以選取；拖曳移動，區域拉右下角的小方塊改大小。</Note>
         <Q sub="用來算距離">地圖的實際寬度</Q>
         <div className="flex items-center gap-2">
           <CommitInput
@@ -260,13 +260,13 @@ export function MapPage() {
     if (r)
       picked = (
         <>
-          <Q>房間名稱</Q>
+          <Q>區域名稱</Q>
           <div className="flex gap-2">
-            <CommitInput maxLength={20} aria-label="房間名稱" className="h-10" value={r.name}
+            <CommitInput maxLength={20} aria-label="區域名稱" className="h-10" value={r.name}
               onCommit={(v) => update({ ...fp, rooms: fp.rooms!.map((x) => (x.id === r.id ? { ...x, name: v.trim().slice(0, 20) || x.name } : x)) })} />
             <Confirm
               trigger={<Button variant="outline" className="h-10 text-destructive hover:text-destructive"><Trash2 />移除</Button>}
-              title="從地圖移除這個房間？" text="只影響地圖，家庭中控的房間設定不變。" ok="移除"
+              title="從地圖移除這個區域？" text="只影響地圖，家庭中控的區域設定不變。" ok="移除"
               onOk={() => { update({ ...fp, rooms: fp.rooms!.filter((x) => x.id !== r.id) }); setSel(null); }}
             />
           </div>
@@ -375,9 +375,9 @@ export function MapPage() {
             <div className="flex flex-wrap gap-2">
               <Button variant="outline" size="sm" onClick={() => {
                 const id = `r${Date.now().toString(36)}`;
-                update({ ...fp, rooms: [...fp.rooms!, { id, name: "新房間", x: fp.w / 2 - 120, y: fp.h / 2 - 90, w: 240, h: 180 }] });
+                update({ ...fp, rooms: [...fp.rooms!, { id, name: "新區域", x: fp.w / 2 - 120, y: fp.h / 2 - 90, w: 240, h: 180 }] });
                 setSel({ kind: "room", id });
-              }}><Plus />房間</Button>
+              }}><Plus />區域</Button>
               <Button variant="outline" size="sm" onClick={() => {
                 const id = `a${Date.now().toString(36)}`;
                 update({ ...fp, aps: [...fp.aps, { id, name: `Wi-Fi 基地台 ${fp.aps.length + 1}` }], items: { ...fp.items, [`ap:${id}`]: { x: fp.w / 2, y: fp.h / 2 } } });
@@ -387,7 +387,7 @@ export function MapPage() {
               {fp.image && (
                 <Confirm
                   trigger={<Button variant="outline" size="sm">移除平面圖</Button>}
-                  title="移除平面圖？" text="只移除底圖，房間和裝置的位置會保留。" ok="移除"
+                  title="移除平面圖？" text="只移除底圖，區域和裝置的位置會保留。" ok="移除"
                   onOk={async () => {
                     try {
                       setFp(await api<Floorplan>("DELETE", "/api/floorplan/image"));
@@ -400,7 +400,7 @@ export function MapPage() {
               <Confirm
                 safe
                 trigger={<Button variant="outline" size="sm"><LayoutGrid />重新自動排版</Button>}
-                title="重新自動排版？" text="房間會依家庭中控的房間重新排列，裝置放回各自的房間；Wi-Fi 基地台的位置保留。" ok="重新排版"
+                title="重新自動排版？" text="區域會依家庭中控的區域重新排列，裝置放回各自的區域；Wi-Fi 基地台的位置保留。" ok="重新排版"
                 onOk={() => { update(autoLayout(fp, state?.rooms || [], devs, true)); setSel(null); }}
               />
               <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f); e.target.value = ""; }} />
@@ -441,7 +441,7 @@ export function MapPage() {
         <div ref={sideRef} className="min-w-0 space-y-4">
           {edit ? (
             <SideCard title="選取的項目">
-              {picked || <Note>點房間、裝置或 Wi-Fi 基地台可以選取。</Note>}
+              {picked || <Note>點區域、裝置或 Wi-Fi 基地台可以選取。</Note>}
               {tray.length > 0 && (
                 <div className="space-y-2 border-t pt-3">
                   <Q>還沒擺上去的裝置</Q>

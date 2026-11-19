@@ -28,7 +28,7 @@ const parse = (x: UniqueIdentifier) => {
   return { kind: s.slice(0, i), id: s.slice(i + 1) };
 };
 
-// 拖插座時只看插座和房間的空白處；拖房間時只看房間
+// 拖插座時只看插座和區域的空白處；拖區域時只看區域
 const collide: CollisionDetection = (args) => {
   const kind = parse(args.active.id).kind;
   const ok = kind === "plug" ? ["plug", "drop"] : [kind];
@@ -36,7 +36,7 @@ const collide: CollisionDetection = (args) => {
   const a = { ...args, droppableContainers };
   if (kind === "plug") {
     const within = pointerWithin(a);
-    // 在某一列上就用那一列；只在房間的空白處就用房間
+    // 在某一列上就用那一列；只在區域的空白處就用區域
     const row = within.find((c) => parse(c.id).kind === "plug");
     if (row) return [row];
     if (within.length) return closestCenter({ ...a, droppableContainers: droppableContainers.filter((c) => within.some((w) => w.id === c.id) || parse(c.id).kind === "plug") });
@@ -92,7 +92,7 @@ function PlugBody({ p, onOpen }: { p: Plug; onOpen: () => void }) {
   );
 }
 
-// 一個房間：卡片本身可以拖（換房間順序），裡面的插座也可以拖
+// 一個區域：卡片本身可以拖（換區域順序），裡面的插座也可以拖
 function RoomBox({ id, name, icon, plugs, onOpen, onEdit, sortable }: { id: string; name: string; icon?: string; plugs: Plug[]; onOpen: (p: Plug) => void; onEdit?: () => void; sortable: boolean }) {
   const s = useSortable({ id: k("room", id), disabled: !sortable });
   const drop = useDroppable({ id: k("drop", id) });
@@ -160,7 +160,7 @@ export function EditPage() {
     if (a.kind === "plug") setStartBox(boxOf(a.id) || null);
     navigator.vibrate?.(10);
   };
-  // 插座拖到別的房間：先在畫面上搬過去
+  // 插座拖到別的區域：先在畫面上搬過去
   const onOver = (e: DragOverEvent) => {
     const a = parse(e.active.id);
     if (a.kind !== "plug" || !e.over) return;
@@ -202,7 +202,7 @@ export function EditPage() {
       save(async () => {
         if (moved) await api("PATCH", `/api/plugs/${encodeURIComponent(a.id)}`, { room: box === NONE ? null : box });
         if (changed) await api("POST", "/api/order", { plugs: order });
-        if (moved) toast.success(`已移到「${box === NONE ? "還沒分房間" : state.rooms.find((r) => r.id === box)?.name}」`);
+        if (moved) toast.success(`已移到「${box === NONE ? "還沒分區域" : state.rooms.find((r) => r.id === box)?.name}」`);
       });
     }
   };
@@ -214,12 +214,12 @@ export function EditPage() {
     <>
       <PageHeader
         title="編輯"
-        sub="改名稱、換房間、拖拉調順序"
+        sub="改名稱、換區域、拖拉調順序"
         actions={<Button asChild className="h-10"><a href="#plugs"><Check />完成</a></Button>}
       />
       <div className="mx-auto max-w-7xl space-y-4 px-4 py-4 sm:px-6 lg:px-8">
         <p className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm leading-relaxed">
-          按住右邊的 <GripVertical className="inline size-4 align-text-bottom" /> 拖拉排順序，也可以把裝置拖到別的房間；用鍵盤的話，在把手上按空白鍵拿起、↑↓ 移動、再按空白鍵放下。點名稱修改設定。
+          按住右邊的 <GripVertical className="inline size-4 align-text-bottom" /> 拖拉排順序，也可以把裝置拖到別的區域；用鍵盤的話，在把手上按空白鍵拿起、↑↓ 移動、再按空白鍵放下。點名稱修改設定。
         </p>
 
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={onStart} onDragEnd={onEnd} onDragCancel={() => setActive(null)}>
@@ -256,7 +256,7 @@ export function EditPage() {
         <DndContext sensors={sensors} collisionDetection={collide} onDragStart={onStart} onDragOver={onOver} onDragEnd={onEnd} onDragCancel={() => { setActive(null); setBoxes(server.boxes); }}>
           <div className="grid items-start gap-4 md:grid-cols-2 2xl:grid-cols-3">
             {boxes[NONE]?.length > 0 && (
-              <RoomBox id={NONE} name="還沒分房間" plugs={boxes[NONE].map(plug).filter(Boolean) as Plug[]} onOpen={(p) => setDevice(p.id)} sortable={false} />
+              <RoomBox id={NONE} name="還沒分區域" plugs={boxes[NONE].map(plug).filter(Boolean) as Plug[]} onOpen={(p) => setDevice(p.id)} sortable={false} />
             )}
             <SortableContext items={rooms.map((id) => k("room", id))} strategy={rectSortingStrategy}>
               {rooms.map((id) => {
@@ -266,7 +266,7 @@ export function EditPage() {
               })}
             </SortableContext>
             <button onClick={() => setRoom("")} className="flex min-h-24 items-center justify-center gap-2 rounded-xl border-2 border-dashed font-medium text-primary transition-colors hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-              <Plus className="size-5" />新增房間
+              <Plus className="size-5" />新增區域
             </button>
           </div>
           <DragOverlay>

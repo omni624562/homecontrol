@@ -84,7 +84,7 @@ export function mapDevices(plugs: Plug[], sense: MapSense | null): MapDev[] {
   return [...devs.values()];
 }
 
-// 用家庭中控的房間排出草圖，裝置放進各自的房間（reset：裝置也重新放，基地台保留）
+// 用家庭中控的區域排出草圖，裝置放進各自的區域（reset：裝置也重新放，基地台保留）
 export function autoLayout(fp: Floorplan, homeRooms: Room[], devs: MapDev[], reset: boolean): Floorplan {
   const rooms = homeRooms.length ? homeRooms : [{ id: "all", name: "家" }];
   const cols = rooms.length > 4 ? 3 : 2;

@@ -29,7 +29,7 @@ export function EnergyDeviceSheet({ id, energy: e, plug: p, onClose, onChanged }
   const ep = e.plugs.find((x) => x.id === id);
   const open = !!id && !!p && !!ep;
   const I = p ? deviceIcon(p.name) : null;
-  const room = state?.rooms.find((r) => r.id === p?.room)?.name || "還沒分房間";
+  const room = state?.rooms.find((r) => r.id === p?.room)?.name || "還沒分區域";
 
   let body: ReactNode = null;
   if (p && ep) {

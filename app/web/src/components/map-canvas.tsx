@@ -9,7 +9,7 @@ type Drag = { kind: "item" | "room" | "resize"; id: string };
 const STROKE: Record<string, string> = { good: "var(--primary)", mid: "color-mix(in srgb, var(--primary) 45%, var(--card))", weak: "var(--color-orange-500, #f97316)" };
 const WARN = "var(--color-orange-500, #f97316)";
 
-// 地圖本體：房間、訊號光暈、連線、基地台、裝置；編輯時可以拖曳
+// 地圖本體：區域、訊號光暈、連線、基地台、裝置；編輯時可以拖曳
 export function MapCanvas({
   fp, devs, links, layer, edit, sel, motion, onChange, onDragEnd, onPick, onTip,
 }: {

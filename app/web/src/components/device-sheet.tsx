@@ -93,7 +93,7 @@ function DeviceIcon({ p }: { p: Plug }) {
 
 function DeviceSub({ p }: { p: Plug }) {
   const { state, isOn } = useHub();
-  const room = state?.rooms.find((r) => r.id === p.room)?.name || "還沒分房間";
+  const room = state?.rooms.find((r) => r.id === p.room)?.name || "還沒分區域";
   return (
     <>
       {room}・<span className={cn(p.online && isOn(p) && "font-medium text-amber-700 dark:text-amber-400")}>{!p.online ? "連不上" : isOn(p) ? "開著" : "關著"}</span>
@@ -205,7 +205,7 @@ function DeviceBody({ p }: { p: Plug }) {
               <AlertDialogHeader>
                 <AlertDialogTitle>從清單移除「{p.name}」？</AlertDialogTitle>
                 <AlertDialogDescription className="leading-relaxed">
-                  {shared ? "整條排插的每個孔都會一起移除。" : ""}名稱、房間這些設定會留著；之後它又連上家裡的網路，會自動再出現。
+                  {shared ? "整條排插的每個孔都會一起移除。" : ""}名稱、區域這些設定會留著；之後它又連上家裡的網路，會自動再出現。
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
@@ -283,11 +283,11 @@ function DeviceBody({ p }: { p: Plug }) {
             </div>
           </form>
           <div className="space-y-1">
-            <div className="text-sm font-medium">房間</div>
+            <div className="text-sm font-medium">區域</div>
             <Select value={p.room || "none"} onValueChange={(v) => patch({ room: v === "none" ? null : v })}>
-              <SelectTrigger className="w-full bg-background" aria-label="房間"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="w-full bg-background" aria-label="區域"><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="none">還沒分房間</SelectItem>
+                <SelectItem value="none">還沒分區域</SelectItem>
                 {state?.rooms.map((r) => <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>)}
               </SelectContent>
             </Select>

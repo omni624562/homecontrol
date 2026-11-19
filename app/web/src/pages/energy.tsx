@@ -162,9 +162,9 @@ export function EnergyPage() {
         </Card>
 
         <div className="grid items-start gap-4 lg:grid-cols-2">
-          {/* 依房間 */}
+          {/* 依區域 */}
           <Card className="gap-0 overflow-hidden py-0">
-            <CardTitle title="本月依房間" />
+            <CardTitle title="本月依區域" />
             <div className="space-y-4 px-4 py-4 sm:px-5">
               {e.rooms.map((r) => (
                 <div key={r.name} className="space-y-1.5">

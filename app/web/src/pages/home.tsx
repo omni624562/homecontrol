@@ -89,7 +89,7 @@ export function HomePage() {
     const out: Group[] = [];
     const ids = new Set(state.rooms.map((r) => r.id));
     const loose = state.plugs.filter((p) => !p.room || !ids.has(p.room));
-    if (loose.length) out.push({ id: "", name: "還沒分房間", plugs: loose });
+    if (loose.length) out.push({ id: "", name: "還沒分區域", plugs: loose });
     for (const r of state.rooms) {
       const list = state.plugs.filter((p) => p.room === r.id);
       if (list.length) out.push({ ...r, plugs: list });
@@ -203,7 +203,7 @@ export function HomePage() {
         chips={chips}
         actions={
           <Button variant="outline" asChild className="h-9 rounded-full bg-background">
-            <a href="#edit" title="排順序、換房間、改情境"><Pencil />編輯</a>
+            <a href="#edit" title="排順序、換區域、改情境"><Pencil />編輯</a>
           </Button>
         }
       />

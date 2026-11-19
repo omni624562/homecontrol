@@ -864,7 +864,7 @@ class Hub:
             month_kwh = month_min / 60 * kw
             mtd_kwh += month_kwh
             same_kwh += same_min / 60 * kw
-            name = room["name"] if room else "還沒分房間"
+            name = room["name"] if room else "還沒分區域"
             rooms[name] = rooms.get(name, 0.0) + month_kwh
             # 最近 7 個「完整的」天（不算今天）和再之前 21 天
             last7 = [use["days"].get(d, 0) for d in days[-8:-1]]

@@ -168,7 +168,7 @@ export function SunOffset({ mode, offset, onChange }: { mode: TimeMode; offset: 
   );
 }
 
-// 依房間分組的插座
+// 依區域分組的插座
 export function usePlugGroups() {
   const { state } = useHub();
   return useMemo(() => {
@@ -176,7 +176,7 @@ export function usePlugGroups() {
     const ids = new Set(state.rooms.map((r) => r.id));
     const out: { id: string; name: string; plugs: Plug[] }[] = [];
     const loose = state.plugs.filter((p) => !p.room || !ids.has(p.room));
-    if (loose.length) out.push({ id: "", name: "還沒分房間", plugs: loose });
+    if (loose.length) out.push({ id: "", name: "還沒分區域", plugs: loose });
     for (const r of state.rooms) {
       const list = state.plugs.filter((p) => p.room === r.id);
       if (list.length) out.push({ id: r.id, name: r.name, plugs: list });
@@ -185,7 +185,7 @@ export function usePlugGroups() {
   }, [state]);
 }
 
-// 選插座：依房間分組，每組可以全選／取消
+// 選插座：依區域分組，每組可以全選／取消
 export function PlugPicker({
   selected, onChange, disabled, hide, roomToggle = true,
 }: {
