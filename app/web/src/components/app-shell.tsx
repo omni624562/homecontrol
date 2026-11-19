@@ -100,14 +100,13 @@ export function PageHeader({ title, sub, actions, chips }: { title: ReactNode; s
   return (
     <header className="sticky top-0 z-20 bg-neutral-50/85 backdrop-blur-md dark:bg-background/85">
       <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-x-4 gap-y-2 px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-3 sm:px-6 lg:px-8 lg:py-4">
-        <div className="flex min-w-0 flex-1 items-start gap-2">
-          <div className="min-w-0 flex-1">
-            <h1 className="text-2xl font-bold tracking-tight">{title}</h1>
-            {sub && <div className="text-sm leading-relaxed text-muted-foreground">{sub}</div>}
-          </div>
-          {actions && <div className="flex items-center gap-1 md:order-last">{actions}</div>}
+        <div className="min-w-0 flex-1 md:max-w-full md:flex-none">
+          <h1 className="text-2xl font-bold tracking-tight">{title}</h1>
+          {sub && <div className="text-sm leading-relaxed text-muted-foreground">{sub}</div>}
         </div>
-        {chips && <div className="-mx-4 flex w-[calc(100%+2rem)] items-center gap-2 overflow-x-auto px-4 pb-0.5 [scrollbar-width:none] md:mx-0 md:w-auto md:flex-wrap md:overflow-visible md:px-0">{chips}</div>}
+        {/* 手機：標題右邊；電腦：整列最右邊（小標籤後面） */}
+        {actions && <div className="ml-auto flex shrink-0 items-center gap-2 self-start md:order-last md:self-center">{actions}</div>}
+        {chips && <div className="-mx-4 flex w-[calc(100%+2rem)] items-center gap-2 overflow-x-auto px-4 pb-0.5 [scrollbar-width:none] md:mx-0 md:w-auto md:min-w-0 md:flex-1 md:flex-wrap md:justify-end md:overflow-visible md:px-0">{chips}</div>}
       </div>
     </header>
   );

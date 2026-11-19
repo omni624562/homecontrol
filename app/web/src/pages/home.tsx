@@ -202,8 +202,8 @@ export function HomePage() {
         sub={<>{onCount ? <b className="font-semibold text-amber-600 dark:text-amber-400">{onCount} 個開著</b> : "全部關著"}・共 {state.plugs.length} 個裝置</>}
         chips={chips}
         actions={
-          <Button variant="ghost" size="sm" asChild className="text-muted-foreground">
-            <a href="#edit"><Pencil />編輯</a>
+          <Button variant="outline" asChild className="h-9 rounded-full bg-background">
+            <a href="#edit" title="排順序、換房間、改情境"><Pencil />編輯</a>
           </Button>
         }
       />
