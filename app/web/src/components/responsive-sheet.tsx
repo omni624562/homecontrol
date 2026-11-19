@@ -34,9 +34,14 @@ export function Sheet({
   if (desktop)
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className={cn("max-h-[88vh] grid-cols-[minmax(0,1fr)] overflow-y-auto", wide === "xl" ? "sm:max-w-5xl" : wide ? "sm:max-w-2xl" : "sm:max-w-md")}>
-          <DialogHeader>{head}</DialogHeader>
-          <div className="min-w-0">{children}</div>
+        <DialogContent
+          className={cn(
+            "flex max-h-[88vh] flex-col gap-0 overflow-hidden rounded-2xl p-0",
+            wide === "xl" ? "sm:max-w-5xl" : wide ? "sm:max-w-2xl" : "sm:max-w-md",
+          )}
+        >
+          <DialogHeader className="shrink-0 border-b px-6 pt-6 pb-4 pr-14">{head}</DialogHeader>
+          <div className="scroll-area min-h-0 min-w-0 flex-1 overflow-y-auto px-6 pt-4 pb-6">{children}</div>
         </DialogContent>
       </Dialog>
     );
@@ -44,7 +49,7 @@ export function Sheet({
     <Drawer open={open} onOpenChange={onOpenChange}>
       <DrawerContent className="max-h-[92vh]">
         <DrawerHeader className="pb-2">{head}</DrawerHeader>
-        <div className="overflow-y-auto px-4 pb-[max(1.5rem,env(safe-area-inset-bottom))]">{children}</div>
+        <div className="scroll-area min-h-0 overflow-y-auto px-4 pb-[max(1.5rem,env(safe-area-inset-bottom))]">{children}</div>
       </DrawerContent>
     </Drawer>
   );

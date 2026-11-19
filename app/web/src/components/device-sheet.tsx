@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { AlertCircle, CheckCircle2, Loader2, Lock, Power, RotateCcw, Timer, WifiOff, X } from "lucide-react";
+import { AlertCircle, CheckCircle2, Loader2, Lock, RotateCcw, Timer, WifiOff, X } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -128,14 +128,14 @@ function DeviceSub({ p }: { p: Plug }) {
   const room = state?.rooms.find((r) => r.id === p.room)?.name || "還沒分房間";
   return (
     <>
-      {room}・{!p.online ? "連不上" : isOn(p) ? "開著" : "關著"}
+      {room}・<span className={cn(p.online && isOn(p) && "font-medium text-amber-700 dark:text-amber-400")}>{!p.online ? "連不上" : isOn(p) ? "開著" : "關著"}</span>
       <span className="block text-xs text-muted-foreground/80">{[p.model, p.host].filter(Boolean).join("・")}</span>
     </>
   );
 }
 
 function DeviceBody({ p }: { p: Plug }) {
-  const { state, isOn, isPending, setPower, now } = useHub();
+  const { state, isOn, now } = useHub();
   useTick(1000);
   const on = isOn(p);
   const t = now();
@@ -211,54 +211,38 @@ function DeviceBody({ p }: { p: Plug }) {
   const nativeText = !n ? "等待同步…" : !n.ok ? n.msg || "同步失敗，稍後再試" : n.schedule ? `已寫入 ${n.schedule} 條，樹莓派離線時照樣執行` : "目前沒有排程要寫入";
 
   return (
-    <div className="space-y-5 pt-2">
+    <div className="space-y-5">
       {/* 狀態和開關 */}
       {!p.online ? (
         <div className="flex items-center gap-3 rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-destructive">
           <WifiOff className="size-5 shrink-0" />
           <div><div className="font-semibold">連不上這個插座</div><div className="text-sm leading-relaxed opacity-90">檢查插頭有沒有插好、Wi-Fi 有沒有訊號</div></div>
         </div>
-      ) : (
-        <div className={cn("flex flex-wrap items-center gap-4 rounded-2xl border p-4 transition-colors duration-300", on ? "border-amber-200 bg-amber-50 dark:border-amber-500/30 dark:bg-amber-500/10" : "bg-muted/50")}>
-          <div className="min-w-0 flex-1">
-            <div className="text-lg font-semibold">{on ? "開著" : "關著"}</div>
-            <div className="text-sm leading-relaxed text-muted-foreground">
-              {p.protect === "lock"
-                ? "已鎖定：App、Google Home、情境、排程都不能開關；要開關請先把「防呆」改掉"
-                : on && p.timer
-                  ? `${fmtLeft(p.timer - t)}後自動關閉（${clockSec(p.timer)}）`
-                  : p.keep_on
-                    ? "設定成常開：全部關閉、情境、排程不會關它"
-                    : "可以在這裡開關，或用列表上的開關"}
-            </div>
-          </div>
-          {on && p.timer && !p.max_on_s && (
-            <Button variant="outline" onClick={stopTimer} disabled={busy === "stop"}>
-              {busy === "stop" ? <Loader2 className="animate-spin" /> : <X />}取消定時
-            </Button>
-          )}
-          {p.protect === "lock" ? (
-            <Lock className="size-6 text-muted-foreground" aria-label="已鎖定" />
-          ) : (
-            <Button
-              size="lg"
-              disabled={isPending(p.id)}
-              onClick={() => setPower(p, !on)}
-              variant={on ? "outline" : "default"}
-              className={cn("h-12 min-w-28 text-base transition-all active:scale-95", !on && "bg-amber-500 text-white hover:bg-amber-600")}
-            >
-              {isPending(p.id) ? <Loader2 className="animate-spin" /> : <Power />}
-              {on ? "關閉" : "打開"}
-            </Button>
-          )}
+      ) : p.protect === "lock" ? (
+        <div className="flex items-center gap-3 rounded-2xl border bg-muted/50 p-4">
+          <Lock className="size-5 shrink-0 text-muted-foreground" />
+          <div className="text-sm leading-relaxed">已鎖定：App、Google Home、情境、排程都不能開關。要開關請先把下面的「防呆」改掉。</div>
         </div>
-      )}
+      ) : null}
 
       <div className="grid gap-6 md:grid-cols-2">
         {/* 左欄：定時、名稱、設定、防呆 */}
         <div className="min-w-0 space-y-5">
           {p.online && p.protect !== "lock" && (
             <Section title={on ? "定時關閉" : "打開，並在多久後關閉"}>
+              {on && p.timer && (
+                <div className="flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-500/30 dark:bg-amber-500/10">
+                  <Timer className="size-4 shrink-0 text-amber-600" />
+                  <div className="min-w-0 flex-1 text-sm leading-relaxed">
+                    <span className="font-medium tabular-nums">{fmtLeft(p.timer - t)}</span>後自動關閉（{clockSec(p.timer)}）
+                  </div>
+                  {!p.max_on_s && (
+                    <Button variant="ghost" size="sm" onClick={stopTimer} disabled={busy === "stop"}>
+                      {busy === "stop" ? <Loader2 className="animate-spin" /> : <X />}取消
+                    </Button>
+                  )}
+                </div>
+              )}
               <div className="grid grid-cols-4 gap-2">
                 {choices.map((s) => (
                   <Button key={s} variant="outline" className="h-11 px-1 transition-all active:scale-95" disabled={!!busy} onClick={() => setTimer(s)}>
