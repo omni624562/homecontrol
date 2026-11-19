@@ -181,6 +181,7 @@ function Body({ id, saved, d, set, onClose, onCopy, isCopy }: { id?: string; sav
   };
   const mode = d.time_mode || "clock";
   const scenes = state?.scenes || [];
+  const [lastDur, setLastDur] = useState(d.duration_s || 60); // 關掉「開多久」時記住原本的秒數
 
   const save = async () => {
     if (!d.days.length) return setErr("請至少選一天");
@@ -300,14 +301,13 @@ function Body({ id, saved, d, set, onClose, onCopy, isCopy }: { id?: string; sav
             {d.action === "on" && (
               <Group>
                 <Row label="開多久後自動關閉" hint="例如澆水開 50 秒" htmlFor="du">
-                  <Switch id="du" checked={!!d.duration_s} onCheckedChange={(v) => up({ duration_s: v ? 60 : null })} />
+                  <Switch id="du" aria-label="開多久後自動關閉" checked={!!d.duration_s} onCheckedChange={(v) => { if (!v && d.duration_s) setLastDur(d.duration_s); up({ duration_s: v ? lastDur : null }); }} />
                 </Row>
-                {!!d.duration_s && (
-                  <div className="space-y-2 px-4 py-3">
-                    <DurationPicker value={d.duration_s} onChange={(v) => up({ duration_s: v || 1 })} />
-                    <p className="text-xs text-muted-foreground">插座有設「最長開啟時間」的話，以比較短的為準</p>
-                  </div>
-                )}
+                {/* 關掉時不藏起來，只是變淡、不能按：版面不會跳，也看得出打開後可以設什麼 */}
+                <div className={cn("space-y-2 px-4 py-3 transition-opacity", !d.duration_s && "pointer-events-none opacity-45 select-none")} inert={!d.duration_s} aria-disabled={!d.duration_s}>
+                  <DurationPicker value={d.duration_s || lastDur} onChange={(v) => up({ duration_s: v || 1 })} />
+                  <p className="text-xs text-muted-foreground">{d.duration_s ? "插座有設「最長開啟時間」的話，以比較短的為準" : "沒有打開：排程只負責打開，不會自動關"}</p>
+                </div>
               </Group>
             )}
           </Step>
