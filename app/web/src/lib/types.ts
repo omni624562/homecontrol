@@ -238,3 +238,36 @@ export interface HubState {
   router?: { configured: boolean; ok: boolean; ssids?: string[] };
   assistant?: unknown;
 }
+
+// /api/energy：插座記錄的開機時間 × 瓦數
+export interface EnergyPlug {
+  id: string;
+  name: string;
+  watts: number | null;
+  known: boolean;
+  room: string | null;
+  today_min: number;
+  month_min: number;
+  same_min: number;
+  month_kwh: number;
+  month_cost: number;
+  days: number[];
+  months: number[];
+}
+
+export interface Energy {
+  price: number;
+  season: string;
+  day_of_month: number;
+  month_days: number;
+  today: { kwh: number; hours: number };
+  month: { kwh: number; cost: number };
+  projected: { kwh: number; cost: number };
+  same_period: { kwh: number; cost: number };
+  days: { day: string; kwh: number; hours: number }[];
+  months: { month: string; kwh: number; hours: number; cost?: number }[];
+  rooms: { name: string; kwh: number }[];
+  plugs: EnergyPlug[];
+  insights: { kind: string; plug?: string; text: string }[];
+  updated: number;
+}

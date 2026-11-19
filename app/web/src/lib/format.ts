@@ -42,3 +42,6 @@ export function dayLabel(iso: string) {
   const i = Math.floor((d.getTime() - today.getTime()) / 864e5);
   return i === 0 ? "今天" : i === 1 ? "明天" : `週${WEEK[d.getDay()]}`;
 }
+
+// 分鐘數：「45 分鐘」「3 小時 20 分」
+export const fmtMin = (m: number) => (m < 60 ? `${Math.round(m)} 分鐘` : `${Math.floor(m / 60)} 小時${Math.round(m % 60) ? ` ${Math.round(m % 60)} 分` : ""}`);

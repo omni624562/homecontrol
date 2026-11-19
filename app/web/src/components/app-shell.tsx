@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 export const TABS = [
   { key: "plugs", label: "首頁", icon: Home, ready: true },
   { key: "schedule", label: "排程", icon: Clock, ready: true },
-  { key: "energy", label: "用電", icon: BarChart3, ready: false },
+  { key: "energy", label: "用電", icon: BarChart3, ready: true },
   { key: "settings", label: "設定", icon: Settings, ready: false },
 ] as const;
 

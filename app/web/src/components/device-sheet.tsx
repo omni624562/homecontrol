@@ -11,16 +11,16 @@ import { Switch } from "@/components/ui/switch";
 import { DurationPicker } from "@/components/duration-picker";
 import { Sheet } from "@/components/responsive-sheet";
 import { Group, Row, Section, Value } from "@/components/settings-bits";
+import { WattsRows } from "@/components/watts-field";
 import { deviceIcon } from "@/components/icons";
 import { api } from "@/lib/api";
-import { fmt, fmtLeft, fmtSec, pad2 } from "@/lib/format";
+import { fmtLeft, fmtSec, pad2 } from "@/lib/format";
 import { useHub, useTick } from "@/lib/hub";
 import type { KasaRule, Plug, Protect } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const TIMER_OPTIONS = [300, 600, 1800, 3600];
 const SHORT_OPTIONS = [30, 60, 120, 180, 300, 600, 900, 1800, 3600]; // 有最長開啟時間（澆水）用的
-const WATT_PRESETS: [string, number][] = [["燈", 10], ["風扇", 40], ["電腦", 60], ["電視", 100], ["電暖器", 1000]];
 const PROTECT: [Protect, string, string][] = [
   ["", "不需要", "一般的燈、風扇"],
   ["confirm_off", "關閉前確認", "電腦、電視盒：突然斷電可能遺失資料"],
@@ -114,7 +114,6 @@ function DeviceBody({ p }: { p: Plug }) {
   const max = p.max_on_s || 86400;
   const [draft, setDraft] = useState(Math.min(600, max));
   const [maxDraft, setMaxDraft] = useState<number | null>(null);
-  const [wattsCustom, setWattsCustom] = useState<string | null>(null);
   const [usage, setUsage] = useState<Usage | false | null>(null);
   const [keepOn, setKeepOn] = useLocal(p.keep_on);
   const [matter, setMatter] = useLocal(p.matter !== false);
@@ -160,8 +159,6 @@ function DeviceBody({ p }: { p: Plug }) {
   const stopTimer = () => run("stop", () => api("DELETE", `/api/plugs/${encodeURIComponent(p.id)}/timer`), "已取消定時");
 
   const choices = p.max_on_s ? [...new Set([...SHORT_OPTIONS.filter((x) => x < max), max])].slice(-4) : TIMER_OPTIONS;
-  const preset = WATT_PRESETS.find(([, w]) => w === p.watts);
-  const wattValue = !p.watts ? "none" : preset ? String(p.watts) : "custom";
   const n = p.native;
   const net = p.net;
   const ssids = state?.router?.ssids || [];
@@ -262,40 +259,7 @@ function DeviceBody({ p }: { p: Plug }) {
                   </SelectContent>
                 </Select>
               </Row>
-              {p.mode !== "metered" && (
-                <>
-                  <Row label="接的電器" hint="估算用電">
-                    <Select value={wattsCustom !== null ? "custom" : wattValue} onValueChange={(v) => {
-                      if (v === "custom") return setWattsCustom(p.watts ? String(p.watts) : "");
-                      setWattsCustom(null);
-                      patch({ watts: v === "none" ? null : Number(v) });
-                    }}>
-                      <SelectTrigger className="w-40 bg-background" aria-label="接的電器"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none">不估算</SelectItem>
-                        {WATT_PRESETS.map(([l, w]) => <SelectItem key={w} value={String(w)}>{l} {w} W</SelectItem>)}
-                        <SelectItem value="custom">{wattValue === "custom" ? `自訂 ${fmt(p.watts)} W` : "自訂…"}</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </Row>
-                  {wattsCustom !== null && (
-                    <form
-                      className="flex items-center gap-2 px-4 py-3"
-                      onSubmit={async (e) => {
-                        e.preventDefault();
-                        const w = Number(wattsCustom);
-                        if (!(w > 0 && w <= 5000)) return toast.error("請輸入 1～5000 W");
-                        if (await patch({ watts: w }, `已設定 ${fmt(w)} W`)) setWattsCustom(null);
-                      }}
-                    >
-                      <span className="text-sm text-muted-foreground">大約</span>
-                      <Input autoFocus type="number" inputMode="decimal" min={1} max={5000} value={wattsCustom} onChange={(e) => setWattsCustom(e.target.value)} className="h-10 w-28 bg-background" aria-label="瓦數" />
-                      <span className="text-sm text-muted-foreground">W（看電器背面的標示）</span>
-                      <Button type="submit" size="sm" className="ml-auto">儲存</Button>
-                    </form>
-                  )}
-                </>
-              )}
+              {p.mode !== "metered" && <WattsRows p={p} />}
               <Row label="常開" hint="全部關閉、情境、排程都不會關它（路由器、冰箱）" htmlFor="keep-on">
                 <Switch id="keep-on" size="lg" checked={keepOn} onCheckedChange={(v) => { setKeepOn(v); patch({ keep_on: v }); }} />
               </Row>
