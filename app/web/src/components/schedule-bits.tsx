@@ -147,25 +147,23 @@ export function SunOffset({ mode, offset, onChange }: { mode: TimeMode; offset: 
   const opt = mode === "sunrise" ? 1 : 2;
   const base = opt === 1 ? state?.sun?.sunrise : state?.sun?.sunset;
   const clamp = (v: number) => Math.max(-180, Math.min(180, v));
+  // 手機放不下：±15 只在寬一點的畫面出現
   const Step = ({ by }: { by: number }) => (
-    <Button type="button" variant="outline" className="h-12 w-12 px-0 text-sm tabular-nums" aria-label={`${by < 0 ? "提早" : "延後"} ${Math.abs(by)} 分鐘`} onClick={() => onChange(clamp(offset + by))}>
+    <Button type="button" variant="outline" className={cn("h-11 w-11 shrink-0 px-0 text-sm tabular-nums", Math.abs(by) > 5 && "hidden sm:inline-flex")} aria-label={`${by < 0 ? "提早" : "延後"} ${Math.abs(by)} 分鐘`} onClick={() => onChange(clamp(offset + by))}>
       {by > 0 ? "+" : "−"}{Math.abs(by)}
     </Button>
   );
+  // 和固定時間那一排一樣高：一行，中間是「日出前 15 分・約 05:58」，有調過才出現「準時」可以按回去
   return (
-    <div className="space-y-1.5">
-      <div className="flex items-center gap-1.5">
-        <Step by={-15} /><Step by={-5} />
-        <div className="flex h-12 min-w-0 flex-1 flex-col items-center justify-center rounded-xl border bg-background" aria-live="polite">
-          <span className="inline-flex items-center gap-1.5 font-semibold"><SunIcon opt={opt} className="size-4 text-amber-600" />{sunLabel(opt, offset)}</span>
-          <span className="text-xs text-muted-foreground">{base != null ? `今天約 ${minText(Math.min(1439, Math.max(0, base + offset)))}` : "還不知道家裡的位置"}</span>
-        </div>
-        <Step by={5} /><Step by={15} />
+    <div className="flex items-center gap-1.5" title="每天跟著日出日落自動調整；存在插座裡的備援也用插座內建的日出日落">
+      <Step by={-15} /><Step by={-5} />
+      <div className="flex h-11 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-xl border bg-background px-2" aria-live="polite">
+        <SunIcon opt={opt} className="size-4 shrink-0 text-amber-600" />
+        <span className="truncate font-semibold">{sunLabel(opt, offset)}</span>
+        <span className="hidden shrink-0 text-xs text-muted-foreground tabular-nums min-[400px]:inline">{base != null ? `約 ${minText(Math.min(1439, Math.max(0, base + offset)))}` : "不知道位置"}</span>
+        {offset !== 0 && <button type="button" className="shrink-0 rounded px-1 text-xs font-medium text-primary hover:underline" onClick={() => onChange(0)}>準時</button>}
       </div>
-      <p className="text-xs leading-relaxed text-muted-foreground">
-        每天跟著日出日落調整，插座裡的備援也是。
-        {offset !== 0 && <button type="button" className="ml-1 font-medium text-primary hover:underline" onClick={() => onChange(0)}>改回準時</button>}
-      </p>
+      <Step by={5} /><Step by={15} />
     </div>
   );
 }
