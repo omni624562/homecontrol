@@ -76,6 +76,28 @@ function initDraft(o: NonNullable<SchedOpen>, existing: Schedule | undefined, ct
   return d;
 }
 
+// 「下次：明天 07:00」
+function nextRun(d: Draft, saved?: Schedule) {
+  if (!d.enabled) return "暫停中，不會執行";
+  if (!d.days.length) return "還沒選日子";
+  const mode = d.time_mode || "clock";
+  const sun = mode !== "clock";
+  const t = sun ? saved?.today || "" : d.time;
+  const now = new Date();
+  const today = (now.getDay() + 6) % 7;
+  const p2 = (n: number) => String(n).padStart(2, "0");
+  const hms = `${p2(now.getHours())}:${p2(now.getMinutes())}:${p2(now.getSeconds())}`;
+  for (let i = 0; i < 8; i++) {
+    const day = (today + i) % 7;
+    if (!d.days.includes(day) || (i === 0 && !!t && t <= hms)) continue;
+    const when = i === 0 ? "今天" : i === 1 ? "明天" : `星期${"一二三四五六日"[day]}`;
+    const clock = t ? (t.endsWith(":00") ? t.slice(0, 5) : t) : "";
+    const name = mode === "sunrise" ? "日出" : "日落";
+    return `下次：${when} ${sun ? name + (clock ? `（約 ${clock}）` : "") : clock}`;
+  }
+  return undefined;
+}
+
 export function ScheduleSheet({ open, onClose }: { open: SchedOpen; onClose: () => void }) {
   const { state } = useHub();
   const existing = open?.id ? state?.schedules.find((x) => x.id === open.id) : undefined;
@@ -87,7 +109,22 @@ export function ScheduleSheet({ open, onClose }: { open: SchedOpen; onClose: () 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
   return (
-    <Sheet open={!!open && !!draft} onOpenChange={(v) => !v && onClose()} title={open?.id ? "編輯排程" : "新增排程"} icon={<CalendarClock />} wide="xl">
+    <Sheet
+      open={!!open && !!draft}
+      onOpenChange={(v) => !v && onClose()}
+      title={open?.id ? "編輯排程" : "新增排程"}
+      description={draft ? nextRun(draft, existing) : undefined}
+      icon={<CalendarClock />}
+      wide="xl"
+      aside={
+        open?.id && draft ? (
+          <label className="flex items-center gap-2 text-sm font-medium">
+            {draft.enabled ? "啟用中" : "已暫停"}
+            <Switch size="lg" checked={draft.enabled} onCheckedChange={(v) => setDraft({ ...draft, enabled: v })} aria-label="啟用排程" />
+          </label>
+        ) : undefined
+      }
+    >
       {open && draft && <Body id={open.id} saved={existing} d={draft} set={setDraft} onClose={onClose} />}
     </Sheet>
   );

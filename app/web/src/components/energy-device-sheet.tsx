@@ -1,6 +1,5 @@
 import { useState, type ReactNode } from "react";
 import { AlertCircle, ChevronDown, ChevronUp } from "lucide-react";
-import { Card } from "@/components/ui/card";
 import { BarChart, type Bar } from "@/components/bar-chart";
 import { deviceIcon } from "@/components/icons";
 import { Sheet } from "@/components/responsive-sheet";
@@ -11,16 +10,6 @@ import { fmt, fmtMin } from "@/lib/format";
 import { useHub } from "@/lib/hub";
 import type { Energy, Plug } from "@/lib/types";
 import { cn } from "@/lib/utils";
-
-function Mini({ label, value, sub, tone }: { label: string; value: ReactNode; sub?: ReactNode; tone?: "up" | "down" }) {
-  return (
-    <Card className="gap-1 px-4 py-3 shadow-none">
-      <div className="text-sm text-muted-foreground">{label}</div>
-      <div className={cn("text-xl font-bold tabular-nums", tone === "up" && "text-orange-600 dark:text-orange-400", tone === "down" && "text-emerald-600 dark:text-emerald-400")}>{value}</div>
-      {sub && <div className="text-xs leading-relaxed text-muted-foreground">{sub}</div>}
-    </Card>
-  );
-}
 
 // 單一裝置的用電明細：本月數字、每天／每月趨勢、接的電器
 export function EnergyDeviceSheet({ id, energy: e, plug: p, onClose, onChanged }: { id: string | null; energy: Energy; plug?: Plug; onClose: () => void; onChanged: () => void }) {
@@ -71,24 +60,31 @@ export function EnergyDeviceSheet({ id, energy: e, plug: p, onClose, onChanged }
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-              <Mini label="本月用電" value={useKwh ? <>{fmt(ep.month_kwh, 1)}<span className="ml-1 text-sm font-normal text-muted-foreground">度</span></> : "—"} sub={useKwh ? undefined : "沒設瓦數"} />
-              <Mini label="本月電費" value={useKwh ? `$${fmt(ep.month_cost)}` : "—"} sub="估算" />
-              <Mini label="本月開機" value={<>{fmt(ep.month_min / 60, 0)}<span className="ml-1 text-sm font-normal text-muted-foreground">小時</span></>} sub={`平均每天 ${fmt(ep.month_min / 60 / Math.max(1, e.day_of_month), 1)} 小時`} />
-              <Mini
-                label="比上月同期"
-                tone={ch == null || Math.abs(ch) < 0.05 ? undefined : ch > 0 ? "up" : "down"}
-                value={ch == null ? "—" : Math.abs(ch) < 0.05 ? "持平" : <span className="inline-flex items-center">{ch > 0 ? <ChevronUp className="size-5" /> : <ChevronDown className="size-5" />}{fmt(Math.abs(ch) * 100)}%</span>}
-                sub="開機時數"
-              />
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+                <span className="whitespace-nowrap text-muted-foreground">
+                  {useKwh && <>開機 <b className="font-semibold text-foreground tabular-nums">{fmt(ep.month_min / 60, 0)}</b> 小時・</>}
+                  平均每天 <b className="font-semibold text-foreground tabular-nums">{fmt(ep.month_min / 60 / Math.max(1, e.day_of_month), 1)}</b> 小時
+                </span>
+                <span className="inline-flex items-center whitespace-nowrap text-muted-foreground">
+                  比上月同期
+                  {ch == null ? (
+                    <b className="ml-1 font-semibold text-foreground">—</b>
+                  ) : Math.abs(ch) < 0.05 ? (
+                    <b className="ml-1 font-semibold text-foreground">持平</b>
+                  ) : (
+                    <b className={cn("ml-1 inline-flex items-center font-semibold tabular-nums", ch > 0 ? "text-orange-600 dark:text-orange-400" : "text-emerald-600 dark:text-emerald-400")}>
+                      {ch > 0 ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}{fmt(Math.abs(ch) * 100)}%
+                    </b>
+                  )}
+                </span>
+              </div>
+              <div className="w-52 shrink-0"><Segmented label="期間" value={range} onChange={setRange} options={[["days", "近 30 天"], ["months", "近 12 個月"]]} /></div>
             </div>
-            <Section title={useKwh ? "用電（度）" : "開機時數（小時）"}>
-              <div className="w-56"><Segmented label="期間" value={range} onChange={setRange} options={[["days", "近 30 天"], ["months", "近 12 個月"]]} /></div>
-              <BarChart items={items} unit={unit} name={`${p.name}${useKwh ? "用電" : "開機時數"}`} />
-            </Section>
+            <BarChart items={items} unit={unit} name={`${p.name}${useKwh ? "用電" : "開機時數"}`} height="h-56" />
           </>
         )}
-        <Section title="接的電器・決定這個裝置怎麼估算用電">
+        <Section title="估算方式">
           <Group>
             <WattsRows p={p} hint="改了會馬上重算" onSaved={onChanged} />
           </Group>
@@ -98,7 +94,21 @@ export function EnergyDeviceSheet({ id, energy: e, plug: p, onClose, onChanged }
   }
 
   return (
-    <Sheet open={open} onOpenChange={(v) => !v && onClose()} title={p?.name || ""} description={`${room}・用電明細`} icon={I ? <I /> : undefined} wide>
+    <Sheet open={open} onOpenChange={(v) => !v && onClose()} title={p?.name || ""} description={`${room}・用電明細`}
+      icon={I ? <I /> : undefined}
+      wide
+      aside={
+        ep?.known ? (
+          <div className="text-right leading-tight">
+            <div className="text-2xl font-bold tracking-tight tabular-nums">
+              {p?.watts ? fmt(ep.month_kwh, 1) : fmt(ep.month_min / 60, 0)}
+              <span className="ml-1 text-sm font-normal text-muted-foreground">{p?.watts ? "度" : "小時"}</span>
+            </div>
+            <div className="text-sm text-muted-foreground tabular-nums">{p?.watts ? `本月・約 $${fmt(ep.month_cost)}` : "本月開機・沒設瓦數"}</div>
+          </div>
+        ) : undefined
+      }
+    >
       {body}
     </Sheet>
   );

@@ -83,12 +83,17 @@ export function KasaSheet({ open, onClose }: { open: KasaOpen; onClose: () => vo
       description={p ? `${p.name}・用 Kasa App 設的，存在插座裡` : undefined}
       icon={I ? <I /> : undefined}
       wide
+      aside={
+        d ? (
+          <label className="flex items-center gap-2 text-sm font-medium">
+            {d.enable ? "啟用中" : "已暫停"}
+            <Switch size="lg" checked={d.enable} onCheckedChange={(v) => up({ enable: v })} aria-label="啟用" />
+          </label>
+        ) : undefined
+      }
     >
       {open && p && d && (
         <div className="space-y-5">
-          <Group>
-            <Row label="啟用" htmlFor="k-en"><Switch id="k-en" checked={d.enable} onCheckedChange={(v) => up({ enable: v })} /></Row>
-          </Group>
           <Section title="什麼時候・插座的排程只到分鐘">
             <TimeModePicker value={d.mode} onChange={(v) => up({ mode: v })} />
             {d.mode === "clock" ? <ClockPicker seconds={false} value={d.time} onChange={(t) => up({ time: t })} /> : <SunOffset mode={d.mode} offset={d.offset} onChange={(v) => up({ offset: v })} />}

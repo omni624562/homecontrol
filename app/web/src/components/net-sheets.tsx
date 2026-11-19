@@ -18,6 +18,16 @@ const Footer = ({ children }: { children: React.ReactNode }) => (
   <div className="sticky -bottom-6 -mx-6 -mb-6 flex flex-wrap items-center gap-2 border-t bg-background/95 px-6 py-3 backdrop-blur max-md:-mx-4 max-md:px-4">{children}</div>
 );
 
+// 標題列右邊的狀態標籤
+function StatePill({ on, text }: { on: boolean; text: string }) {
+  return (
+    <span className={`inline-flex h-8 max-w-56 items-center gap-1.5 rounded-full border bg-background px-3 text-sm font-medium text-muted-foreground ${on ? "border-emerald-300 text-emerald-800 dark:border-emerald-500/40 dark:text-emerald-300" : ""}`}>
+      <i className={`size-2 shrink-0 rounded-full ${on ? "bg-emerald-500" : "bg-neutral-400"}`} />
+      <span className="truncate">{text}</span>
+    </span>
+  );
+}
+
 // 一台網路裝置：取名字、是誰的、放到訊號地圖
 export function NetDevSheet({ mac, net, onClose, onSaved }: { mac: string | null; net: NetData | null; onClose: () => void; onSaved: (n?: NetData) => void }) {
   const { state } = useHub();
@@ -69,7 +79,12 @@ export function NetDevSheet({ mac, net, onClose, onSaved }: { mac: string | null
   };
 
   return (
-    <Sheet open onOpenChange={(v) => !v && onClose()} title={c.name} description={c.plug ? `插座：${c.plug}` : c.vendor || undefined} icon={<I />} wide>
+    <Sheet open onOpenChange={(v) => !v && onClose()} title={c.name}
+      description={c.plug ? `插座：${c.plug}` : c.vendor || undefined}
+      icon={<I />}
+      wide
+      aside={<StatePill on={c.online} text={c.online ? `連線中・${c.wired ? "有線" : c.band || "Wi-Fi"}` : "沒連線"} />}
+    >
       <form className="space-y-5" onSubmit={(e) => { e.preventDefault(); save(); }}>
         <Section title="名字">
           <Input value={label} maxLength={30} placeholder={c.router_name || "例如：客廳電視、爸爸的手機"} aria-label="名字" onChange={(e) => setLabel(e.target.value)} className="h-11" />
@@ -158,9 +173,10 @@ export function PersonSheet({ open, net, onClose, onSaved }: { open: string | nu
       open={open !== null && (isNew || !!person)}
       onOpenChange={(v) => !v && onClose()}
       title={isNew ? "新增家人" : person?.name || ""}
-      description={person ? (person.home ? "在家" : "出門") : undefined}
+      description={person ? `${person.macs.length} 台裝置` : undefined}
       icon={<User />}
       wide
+      aside={person ? <StatePill on={!!person.home} text={person.home ? "在家" : "出門"} /> : undefined}
     >
       <form className="space-y-5" onSubmit={(e) => { e.preventDefault(); save(); }}>
         <Section title="名字">

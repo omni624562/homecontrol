@@ -117,17 +117,18 @@ export function WeatherSheet({ open, onClose }: { open: boolean; onClose: () => 
   const span = Math.max(1, hi - lo);
   const obs = w.obs_at ? new Date(w.obs_at) : null;
   return (
-    <Sheet open={open} onOpenChange={(v) => !v && onClose()} title="天氣" description={w.place ? `${w.place}・中央氣象署` : "中央氣象署"} icon={<Now />} wide>
-      <div className="space-y-5 pt-2">
-        <div className="flex items-center gap-4">
-          <Now className="size-14 text-primary" strokeWidth={1.5} />
-          <div>
-            <div className="text-5xl font-semibold tracking-tight tabular-nums">{fmt(w.temp, 1)}°</div>
-            <div className="mt-1 text-sm text-muted-foreground">
-              {w.obs_text || w.text}・今天 {fmt(today?.min)}°～{fmt(today?.max)}°
-            </div>
-          </div>
+    <Sheet open={open} onOpenChange={(v) => !v && onClose()} title="天氣"
+      description={w.place ? `${w.place}・中央氣象署` : "中央氣象署"}
+      icon={<Now />}
+      wide
+      aside={
+        <div className="text-right leading-tight">
+          <div className="text-3xl font-bold tracking-tight tabular-nums">{fmt(w.temp, 1)}°</div>
+          <div className="text-sm text-muted-foreground">{w.obs_text || w.text}・{fmt(today?.min)}°～{fmt(today?.max)}°</div>
         </div>
+      }
+    >
+      <div className="space-y-5">
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           {facts.map((f) => (
             <div key={f.k} className="rounded-xl bg-muted/60 px-3 py-2.5">

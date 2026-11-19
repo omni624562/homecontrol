@@ -6,7 +6,7 @@ import { Switch } from "@/components/ui/switch";
 import { ClockPicker } from "@/components/duration-picker";
 import { Sheet } from "@/components/responsive-sheet";
 import { PlugPicker } from "@/components/schedule-bits";
-import { Group, Row, Section } from "@/components/settings-bits";
+import { Section } from "@/components/settings-bits";
 import { api } from "@/lib/api";
 import { useHub } from "@/lib/hub";
 import type { Plug } from "@/lib/types";
@@ -46,14 +46,21 @@ export function AwaySheet({ open, onClose }: { open: boolean; onClose: () => voi
     }
   };
   return (
-    <Sheet open={open && !!d} onOpenChange={(v) => !v && onClose()} title="離家模式" description="不在家時，讓燈隨機開關，看起來像有人在" icon={<Home />} wide>
+    <Sheet open={open && !!d} onOpenChange={(v) => !v && onClose()} title="離家模式"
+      description="不在家時讓燈隨機開關；由插座自己執行"
+      icon={<Home />}
+      wide
+      aside={
+        d ? (
+          <label className="flex items-center gap-2 text-sm font-medium">
+            {d.enabled ? "啟用中" : "沒有啟用"}
+            <Switch size="lg" checked={d.enabled} onCheckedChange={(v) => up({ enabled: v })} aria-label="啟用離家模式" />
+          </label>
+        ) : undefined
+      }
+    >
       {d && (
         <div className="space-y-5">
-          <Group>
-            <Row label="啟用離家模式" hint="由插座自己執行，樹莓派離線也照跑" htmlFor="aw-en">
-              <Switch id="aw-en" checked={d.enabled} onCheckedChange={(v) => up({ enabled: v })} />
-            </Row>
-          </Group>
           <Section title="每天這段時間">
             <div className="grid gap-3">
               <div className="space-y-1.5"><div className="text-sm">開始</div><ClockPicker seconds={false} value={d.start} onChange={(t) => up({ start: t })} /></div>

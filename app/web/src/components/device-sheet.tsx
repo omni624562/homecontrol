@@ -14,7 +14,7 @@ import { Group, Row, Section, Value } from "@/components/settings-bits";
 import { WattsRows } from "@/components/watts-field";
 import { deviceIcon } from "@/components/icons";
 import { api } from "@/lib/api";
-import { fmtLeft, fmtSec, pad2 } from "@/lib/format";
+import { fmtDur, fmtLeft, fmtSec, pad2 } from "@/lib/format";
 import { useHub, useTick } from "@/lib/hub";
 import type { KasaRule, Plug, Protect } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -78,6 +78,7 @@ export function DeviceSheet({ id, onClose }: { id: string | null; onClose: () =>
       title={p?.name || ""}
       description={p ? <DeviceSub p={p} /> : undefined}
       icon={p ? <DeviceIcon p={p} /> : undefined}
+      aside={p ? <DeviceState p={p} /> : undefined}
       wide
     >
       {p && <DeviceBody key={p.id} p={p} />}
@@ -92,12 +93,28 @@ function DeviceIcon({ p }: { p: Plug }) {
 }
 
 function DeviceSub({ p }: { p: Plug }) {
-  const { state, isOn } = useHub();
-  const room = state?.rooms.find((r) => r.id === p.room)?.name || "還沒分區域";
+  const { state } = useHub();
+  return <>{state?.rooms.find((r) => r.id === p.room)?.name || "還沒分區域"}</>;
+}
+
+// 標題列右邊的狀態：開著多久、還有多久關、關著、連不上
+function DeviceState({ p }: { p: Plug }) {
+  const { isOn, now } = useHub();
+  useTick(1000);
+  const t = now();
+  const on = p.online && isOn(p);
+  const text = !p.online ? "連不上" : !on ? "關著" : p.timer ? `${fmtLeft(p.timer - t)}後關閉` : p.on_since ? `開著・${t - p.on_since < 60 ? "剛打開" : `已開 ${fmtDur(t - p.on_since)}`}` : "開著";
   return (
-    <>
-      {room}・<span className={cn(p.online && isOn(p) && "font-medium text-amber-700 dark:text-amber-400")}>{!p.online ? "連不上" : isOn(p) ? "開著" : "關著"}</span>
-    </>
+    <span
+      className={cn(
+        "inline-flex h-8 items-center gap-1.5 rounded-full border bg-background px-3 text-sm font-medium whitespace-nowrap text-muted-foreground tabular-nums",
+        on && "border-amber-300 bg-amber-100 text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-300",
+        !p.online && "border-destructive/30 bg-destructive/10 text-destructive",
+      )}
+    >
+      <i className={cn("size-2 rounded-full bg-neutral-400", on && "bg-amber-500", !p.online && "bg-destructive")} />
+      {text}
+    </span>
   );
 }
 

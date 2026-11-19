@@ -57,8 +57,20 @@ export function LifeSheet({ open, onClose }: { open: boolean; onClose: () => voi
   const days = (d: number[]) => (d.length ? d.map((i) => DN[i]).join("") : "不收");
 
   return (
-    <Sheet open={open} onOpenChange={(v) => !v && onClose()} title="生活資訊" description={L.place ? `${L.place}・政府開放資料` : "政府開放資料"} icon={<Truck />} wide>
-      <div className="space-y-5 pt-2">
+    <Sheet open={open} onOpenChange={(v) => !v && onClose()} title="生活資訊"
+      description={L.place ? `${L.place}・政府開放資料` : "政府開放資料"}
+      icon={<Truck />}
+      wide
+      aside={
+        status ? (
+          <div className="text-right leading-tight">
+            <div className="text-xs text-muted-foreground">垃圾車</div>
+            <div className={cn("text-lg font-bold whitespace-nowrap", running && "text-amber-600 dark:text-amber-400")}>{status.big}</div>
+          </div>
+        ) : undefined
+      }
+    >
+      <div className="space-y-5">
         <section className="rounded-2xl border p-4">
           <h3 className="mb-3 flex items-center gap-2 font-semibold">
             <Truck className="size-5 text-primary" />
@@ -70,10 +82,7 @@ export function LifeSheet({ open, onClose }: { open: boolean; onClose: () => voi
             <p className="text-sm text-muted-foreground">{L.errors.routes ? `路線下載失敗：${L.errors.routes}` : "正在下載垃圾車路線…"}</p>
           ) : (
             <div className="space-y-4">
-              <div>
-                <div className="text-xl font-semibold">{status.big}</div>
-                <div className="text-sm leading-relaxed text-muted-foreground">{status.small}</div>
-              </div>
+              {status.small && <div className="text-sm leading-relaxed text-muted-foreground">{status.small}</div>}
               {running && <TruckRoad stops={t!.stops!} />}
               <div className="flex flex-wrap gap-2">
                 {g.next.map((n) => (
