@@ -146,6 +146,80 @@ function wx(code, text = "", day = 1) {
 }
 // 空氣品質指標（AQI，環境部）→ 等級顏色
 const aqiCls = (v) => (v == null ? "" : v <= 50 ? "ok" : v <= 100 ? "" : "warn");
+// 路由器上的裝置：從名字、廠商猜種類
+const KIND = {
+  phone: { icon: "mdi:cellphone", label: "手機" },
+  tablet: { icon: "mdi:cellphone", label: "平板" },
+  watch: { icon: "mdi:watch", label: "手錶" },
+  computer: { icon: "mdi:laptop", label: "電腦" },
+  tv: { icon: "mdi:television", label: "電視" },
+  speaker: { icon: "mdi:speaker", label: "音箱" },
+  network: { icon: "mdi:wifi", label: "網路設備" },
+  other: { icon: "mdi:help-circle-outline", label: "不明裝置" },
+};
+function devKind(c) {
+  const t = `${c.label || ""} ${c.name || ""} ${c.router_name || ""} ${c.vendor || ""}`.toLowerCase();
+  if (/watch/.test(t)) return "watch";
+  if (/\btab\b|tab-|ipad|pad\b/.test(t)) return "tablet";
+  if (/iphone|pixel|galaxy|phone|redmi|xiaomi|oppo|vivo|huawei|sm-[a-z]/.test(t)) return "phone";
+  if (/msft|windows|laptop|desktop|macbook|imac|hyperv|ubuntu|\bpc\b|raspberry/.test(t)) return "computer";
+  if (/\btv\b|nvidia|shield|chromecast|roku|bravia|apple tv/.test(t)) return "tv";
+  if (/google|nest|echo|alexa|homepod|speaker/.test(t)) return "speaker";
+  if (/\basus\b|rt-[a-z]{2}\d|router|tp-link deco|mesh|zyxel|synology|qnap|netgear/.test(t)) return "network";
+  if (/android|dhcpcd/.test(t)) return "phone";
+  return "other";
+}
+// 路由器給的名字看不懂（MAC、android-dhcp-12、MSFT 5.0…）
+const isRawName = (n) => !n || /^([0-9A-F]{2}:){5}[0-9A-F]{2}$/i.test(n) || /^(android-dhcp|dhcpcd|msft|espressif|unknown)/i.test(n);
+const netName = (c) => c.label || c.name;
+const fmtUsd = (u) => (u == null ? "—" : `US$${u < 1 ? u.toFixed(2) : u.toFixed(1)}（約 NT$${Math.round(u * 32)}）`);
+const fmtBytes = (b) => (b >= 1e9 ? `${fmt(b / 1e9, 1)} GB` : b >= 1e6 ? `${fmt(b / 1e6, 0)} MB` : `${fmt(Math.max(1, b / 1e3), 0)} KB`);
+// 訊號強度分三級：強 / 普通 / 弱（低於 -70 容易斷線）
+const sigQ = (v) => (v >= -55 ? "good" : v >= -70 ? "mid" : "weak");
+// 名字太長就截短：中文字算 1、英數算 0.55
+function shortName(name, max) {
+  let w = 0;
+  let out = "";
+  for (const ch of name) {
+    w += /[\u0000-\u024f]/.test(ch) ? 0.55 : 1;
+    if (w > max) return `${out.trimEnd()}…`;
+    out += ch;
+  }
+  return out;
+}
+const splitSec = (sec) => ({ h: Math.floor(sec / 3600), m: Math.floor((sec % 3600) / 60), s: sec % 60 });
+const WHEEL_ROW = 40; // 每一格的高度（px）
+function wheelCol(key, unit, n, v, label, suffix = "") {
+  const items = Array.from({ length: n }, (_, i) => `<div class="wi" data-a="wi" data-v="${i}">${pad2(i)}</div>`).join("");
+  return `<div class="wseg"><div class="wcol" tabindex="0" role="spinbutton" aria-label="${label}" aria-valuemin="0" aria-valuemax="${n - 1}" aria-valuenow="${v}" data-wheel="${key}:${unit}" data-val="${v}">${items}</div>${suffix ? `<span class="wlab">${suffix}</span>` : ""}</div>`;
+}
+// 幾點：時 : 分 : 秒
+function clockPicker(key, t, rows = 5) {
+  const [h, m, x] = hms(t).split(":").map(Number);
+  return `<div class="wheel r${rows}">${wheelCol(key, "h", 24, h, "時")}<span class="wsep">:</span>${wheelCol(key, "m", 60, m, "分")}<span class="wsep">:</span>${wheelCol(key, "s", 60, x, "秒")}</div>`;
+}
+// 多久：時 分 秒
+function durPicker(key, sec, rows = 3) {
+  const v = splitSec(sec || 0);
+  return `<div class="wheel dur r${rows}">${wheelCol(key, "h", 24, v.h, "小時", "時")}${wheelCol(key, "m", 60, v.m, "分鐘", "分")}${wheelCol(key, "s", 60, v.s, "秒", "秒")}</div>`;
+}
+// 日出日落：opt 1 = 日出、2 = 日落；val = 提早（負）／延後（正）幾分鐘
+const sunLabel = (opt, val) => `${opt === 1 ? "日出" : "日落"}${val ? `${val < 0 ? "前" : "後"} ${Math.abs(val)} 分` : ""}`;
+const sunIcon = (opt) => (opt === 1 ? "mdi:white-balance-sunny" : "mdi:weather-night");
+const hhmm = (m) => `${pad2(Math.floor(m / 60))}:${pad2(m % 60)}`;
+const hmsSec = (t) => {
+  const [h, m, x] = hms(t).split(":").map(Number);
+  return h * 3600 + m * 60 + x;
+};
+// 插座的 wday（星期日開始）↔ 我們的星期（0 = 星期一）
+const kasaDays = (wday) => wday.map((v, i) => (v ? (i + 6) % 7 : -1)).filter((d) => d >= 0).sort();
+const toKasaWday = (days) => [0, 1, 2, 3, 4, 5, 6].map((i) => (days.includes((i + 6) % 7) ? 1 : 0));
+// 訊號地圖的高度（公尺）
+const DEV_Z = 0.3;
+const AP_Z = 1.0;
+const BAND = [0.8, 1.6]; // 人的腰到胸
+const DEV_HEIGHTS = [[0.3, "牆上的插座孔"], [0.75, "桌上"], [1.2, "櫃子上"], [1.8, "高處"]];
+const AP_HEIGHTS = [[0.3, "地上"], [0.75, "桌上"], [1, "矮櫃上"], [1.8, "高櫃上"], [2.5, "天花板"]];
 
 // 長條圖：items = [{ v, tip, label, now }]；平均線不算還沒過完的最後一根
 function barPlot(items, unit) {
@@ -1445,7 +1519,13 @@ class PlugApp extends HTMLElement {
         map: () => this._mapPage(),
         net: () => this._netPage(),
       };
-      page = (pages[this._tab] || pages.plugs)();
+      try {
+        page = (pages[this._tab] || pages.plugs)();
+      } catch (err) {
+        // 某一頁畫不出來：至少顯示錯誤和回首頁的按鈕，不要整個空白
+        console.error(err);
+        page = `<div class="ph"><div><h1>這一頁出錯了</h1></div></div><div class="card"><div class="empty">畫面有錯誤：${esc(String(err?.message || err))}<br><br><button class="btn primary" data-a="tab" data-v="plugs">回首頁</button></div></div>`;
+      }
     }
     const banner = this._s && !this._connected ? `<div class="banner">${ic("mdi:cloud-off-outline")}連不上插座伺服器，重新連線中…</div>` : "";
     const fab = this._s && this._s.assistant ? `<button class="askfab" data-a="ask-open" aria-label="問家裡">${ic("mdi:message-text")}<span>問家裡</span></button>` : "";
