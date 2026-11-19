@@ -273,34 +273,6 @@ function Body({ id, saved, d, set, onClose, onCopy, isCopy }: { id?: string; sav
               disabled={(p) => (d.action === "off" && p.keep_on ? "常開的插座不會被關" : false)}
             />
           )}
-          {d.action === "off" && !!(saved?.restore_at || d.restore_at) && (
-            <Group>
-              <Row label="關掉之後，到某個時間自動再打開" hint="例如晚上 11 點關、隔天早上 7 點自動打開；不需要就不用開" htmlFor="rs">
-                <Switch id="rs" checked={!!d.restore_at} onCheckedChange={(v) => up({ restore_at: v ? "07:00:00" : null })} />
-              </Row>
-              {d.restore_at && (
-                <div className="space-y-2 px-4 py-3">
-                  <ClockPicker value={d.restore_at} onChange={(t) => up({ restore_at: t })} />
-                  <p className="text-xs leading-relaxed text-muted-foreground">
-                    {mode === "clock" ? `${showT(d.time)} 關掉，` : "關掉之後，"}<b className="font-semibold text-foreground">{mode === "clock" && d.restore_at <= d.time ? "隔天" : "當天"} {showT(d.restore_at)} 自動打開</b>。只會打開被這條排程關掉的；關之前本來就關著的不會動。
-                  </p>
-                </div>
-              )}
-            </Group>
-          )}
-          {d.action === "on" && (
-            <Group>
-              <Row label="開多久後自動關閉" hint="例如澆水開 50 秒" htmlFor="du">
-                <Switch id="du" checked={!!d.duration_s} onCheckedChange={(v) => up({ duration_s: v ? 60 : null })} />
-              </Row>
-              {!!d.duration_s && (
-                <div className="space-y-2 px-4 py-3">
-                  <DurationPicker value={d.duration_s} onChange={(v) => up({ duration_s: v || 1 })} />
-                  <p className="text-xs text-muted-foreground">插座有設「最長開啟時間」的話，以比較短的為準</p>
-                </div>
-              )}
-            </Group>
-          )}
         </Step>
 
         <div className="flex min-w-0 flex-col gap-4">
@@ -309,6 +281,35 @@ function Body({ id, saved, d, set, onClose, onCopy, isCopy }: { id?: string; sav
             <TimeModePicker value={mode} onChange={(v) => up({ time_mode: v })} />
             {mode === "clock" ? <ClockPicker value={d.time} onChange={(t) => up({ time: t })} /> : <SunOffset mode={mode} offset={d.offset_min || 0} onChange={(v) => up({ offset_min: v })} />}
             <DayPicker days={d.days} onChange={(v) => up({ days: v })} />
+            {/* 開多久、幾點再打開：也是「時間」，放在這一塊 */}
+            {d.action === "off" && !!(saved?.restore_at || d.restore_at) && (
+              <Group>
+                <Row label="關掉之後，到某個時間自動再打開" hint="例如晚上 11 點關、隔天早上 7 點自動打開；不需要就不用開" htmlFor="rs">
+                  <Switch id="rs" checked={!!d.restore_at} onCheckedChange={(v) => up({ restore_at: v ? "07:00:00" : null })} />
+                </Row>
+                {d.restore_at && (
+                  <div className="space-y-2 px-4 py-3">
+                    <ClockPicker value={d.restore_at} onChange={(t) => up({ restore_at: t })} />
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      {mode === "clock" ? `${showT(d.time)} 關掉，` : "關掉之後，"}<b className="font-semibold text-foreground">{mode === "clock" && d.restore_at <= d.time ? "隔天" : "當天"} {showT(d.restore_at)} 自動打開</b>。只會打開被這條排程關掉的；關之前本來就關著的不會動。
+                    </p>
+                  </div>
+                )}
+              </Group>
+            )}
+            {d.action === "on" && (
+              <Group>
+                <Row label="開多久後自動關閉" hint="例如澆水開 50 秒" htmlFor="du">
+                  <Switch id="du" checked={!!d.duration_s} onCheckedChange={(v) => up({ duration_s: v ? 60 : null })} />
+                </Row>
+                {!!d.duration_s && (
+                  <div className="space-y-2 px-4 py-3">
+                    <DurationPicker value={d.duration_s} onChange={(v) => up({ duration_s: v || 1 })} />
+                    <p className="text-xs text-muted-foreground">插座有設「最長開啟時間」的話，以比較短的為準</p>
+                  </div>
+                )}
+              </Group>
+            )}
           </Step>
 
           {/* 3. 例外和備援 */}
