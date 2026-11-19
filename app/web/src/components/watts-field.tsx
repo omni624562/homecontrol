@@ -11,7 +11,7 @@ import type { Plug } from "@/lib/types";
 const WATT_PRESETS: [string, number][] = [["燈", 10], ["風扇", 40], ["電腦", 60], ["電視", 100], ["電暖器", 1000]];
 
 // 接的電器（瓦數）：常見電器、不估算、自訂；改了馬上存
-export function WattsRows({ p, hint = "估算用電", onSaved }: { p: Plug; hint?: string; onSaved?: () => void }) {
+export function WattsRows({ p, hint = "估算用電", onSaved, compact }: { p: Plug; hint?: string; onSaved?: () => void; compact?: boolean }) {
   const [custom, setCustom] = useState<string | null>(null);
   const preset = WATT_PRESETS.find(([, w]) => w === p.watts);
   const value = !p.watts ? "none" : preset ? String(p.watts) : "custom";
@@ -26,28 +26,36 @@ export function WattsRows({ p, hint = "估算用電", onSaved }: { p: Plug; hint
       return false;
     }
   };
+  const select = (
+    <Select
+      value={custom !== null ? "custom" : value}
+      onValueChange={(v) => {
+        if (v === "custom") return setCustom(p.watts ? String(p.watts) : "");
+        setCustom(null);
+        save(v === "none" ? null : Number(v));
+      }}
+    >
+      <SelectTrigger className={compact ? "w-full bg-background" : "w-40 bg-background"} aria-label="接的電器"><SelectValue /></SelectTrigger>
+      <SelectContent>
+        <SelectItem value="none">不估算</SelectItem>
+        {WATT_PRESETS.map(([l, w]) => <SelectItem key={w} value={String(w)}>{l} {w} W</SelectItem>)}
+        <SelectItem value="custom">{value === "custom" ? `自訂 ${fmt(p.watts)} W` : "自訂…"}</SelectItem>
+      </SelectContent>
+    </Select>
+  );
   return (
     <>
-      <Row label="接的電器" hint={hint}>
-        <Select
-          value={custom !== null ? "custom" : value}
-          onValueChange={(v) => {
-            if (v === "custom") return setCustom(p.watts ? String(p.watts) : "");
-            setCustom(null);
-            save(v === "none" ? null : Number(v));
-          }}
-        >
-          <SelectTrigger className="w-40 bg-background" aria-label="接的電器"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="none">不估算</SelectItem>
-            {WATT_PRESETS.map(([l, w]) => <SelectItem key={w} value={String(w)}>{l} {w} W</SelectItem>)}
-            <SelectItem value="custom">{value === "custom" ? `自訂 ${fmt(p.watts)} W` : "自訂…"}</SelectItem>
-          </SelectContent>
-        </Select>
-      </Row>
+      {compact ? (
+        <div className="space-y-1">
+          <div className="text-sm font-medium">接的電器<span className="ml-1.5 text-xs font-normal text-muted-foreground">{hint}</span></div>
+          {select}
+        </div>
+      ) : (
+        <Row label="接的電器" hint={hint}>{select}</Row>
+      )}
       {custom !== null && (
         <form
-          className="flex flex-wrap items-center gap-2 px-4 py-3"
+          className={compact ? "col-span-full flex flex-wrap items-center gap-2 rounded-lg bg-muted/50 px-3 py-2" : "flex flex-wrap items-center gap-2 px-4 py-3"}
           onSubmit={async (e) => {
             e.preventDefault();
             const w = Number(custom);

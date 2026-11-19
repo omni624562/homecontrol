@@ -180,7 +180,7 @@ function DeviceBody({ p }: { p: Plug }) {
   if (weakKey) issues.push(`Wi-Fi 加密是 ${keyName(net?.key_type)}，比較容易被破解，建議改用 WPA2 以上`);
   if (ups.length) issues.push(`有新韌體 ${ups[0].version || ""}`);
   const fwShort = net?.fw_check === "unavailable" ? "韌體無法檢查" : net?.fw_check === "ok" ? "韌體最新" : "韌體檢查中";
-  const cloudText = net?.cloud_bound === false ? "雲端已解除綁定" : net?.cloud_bound ? "雲端綁著帳號" : p.cloud ? "雲端連線中" : p.cloud === false ? "雲端未連線" : "";
+  const cloudText = net?.cloud_bound === false ? "TP-Link 雲端已解除" : net?.cloud_bound ? "TP-Link 雲端綁著帳號" : p.cloud ? "TP-Link 雲端連線中" : p.cloud === false ? "TP-Link 雲端未連線" : "";
   // 「進階」收著的時候，有設定過的用小標籤顯示
   const chips: [string, "warn" | ""][] = [];
   if (p.keep_on) chips.push(["常開", ""]);
@@ -188,7 +188,6 @@ function DeviceBody({ p }: { p: Plug }) {
   if (p.matter === false) chips.push(["Google Home 不控制", ""]);
   if (p.online && p.led === false) chips.push(["指示燈關", ""]);
   if (n && !n.ok) chips.push(["內建排程同步失敗", "warn"]);
-  const protectDesc = PROTECT.find(([k]) => k === protect)?.[2];
 
   return (
     <div className="space-y-5">
@@ -262,11 +261,11 @@ function DeviceBody({ p }: { p: Plug }) {
         </Section>
       )}
 
-      {/* 常用的設定 */}
+      {/* 常用的設定：兩欄，標籤在上 */}
       <Section title="基本設定">
-        <Group>
+        <div className="grid grid-cols-2 gap-x-3 gap-y-3 rounded-xl border bg-muted/30 p-3">
           <form
-            className="flex items-center gap-3 px-4 py-2.5"
+            className="space-y-1"
             onSubmit={async (e) => {
               e.preventDefault();
               if (name === p.name) return;
@@ -275,28 +274,29 @@ function DeviceBody({ p }: { p: Plug }) {
               setBusy(null);
             }}
           >
-            <label htmlFor="dev-name" className="min-w-0 flex-1">
-              <span className="block text-[15px] font-medium leading-snug">名稱</span>
-              {p.kasa_name && p.kasa_name !== p.name && <span className="block text-xs leading-relaxed text-muted-foreground">插座本身叫「{p.kasa_name}」；清空再存就改回來</span>}
-            </label>
-            <Input id="dev-name" value={name} maxLength={30} onChange={(e) => setName(e.target.value)} className="h-10 w-44 bg-background sm:w-56" />
-            {name !== p.name && (
-              <Button type="submit" size="sm" disabled={busy === "name"}>{busy === "name" && <Loader2 className="animate-spin" />}改名</Button>
-            )}
+            <label htmlFor="dev-name" className="block text-sm font-medium">名稱</label>
+            <div className="flex gap-2">
+              <Input id="dev-name" value={name} maxLength={30} onChange={(e) => setName(e.target.value)} className="h-9 min-w-0 bg-background" />
+              {name !== p.name && (
+                <Button type="submit" size="sm" className="h-9 shrink-0" disabled={busy === "name"}>{busy === "name" && <Loader2 className="animate-spin" />}改名</Button>
+              )}
+            </div>
           </form>
-          <Row label="房間">
+          <div className="space-y-1">
+            <div className="text-sm font-medium">房間</div>
             <Select value={p.room || "none"} onValueChange={(v) => patch({ room: v === "none" ? null : v })}>
-              <SelectTrigger className="w-40 bg-background" aria-label="房間"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="w-full bg-background" aria-label="房間"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="none">還沒分房間</SelectItem>
                 {state?.rooms.map((r) => <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>)}
               </SelectContent>
             </Select>
-          </Row>
-          {p.mode !== "metered" && <WattsRows p={p} />}
-          <Row label="防呆" hint={protectDesc}>
+          </div>
+          {p.mode !== "metered" && <WattsRows p={p} compact />}
+          <div className="space-y-1">
+            <div className="text-sm font-medium">防呆</div>
             <Select value={protect || "none"} onValueChange={(v) => { const k = (v === "none" ? "" : v) as Protect; setProtect(k); patch({ protect: k }); }}>
-              <SelectTrigger className="w-40 bg-background" aria-label="防呆"><SelectValue>{PROTECT.find(([k]) => k === protect)?.[1]}</SelectValue></SelectTrigger>
+              <SelectTrigger className="w-full bg-background" aria-label="防呆"><SelectValue>{PROTECT.find(([k]) => k === protect)?.[1]}</SelectValue></SelectTrigger>
               <SelectContent>
                 {PROTECT.map(([k, label, desc]) => (
                   <SelectItem key={k || "none"} value={k || "none"} textValue={label}>
@@ -308,21 +308,28 @@ function DeviceBody({ p }: { p: Plug }) {
                 ))}
               </SelectContent>
             </Select>
-          </Row>
-        </Group>
+          </div>
+          {p.kasa_name && p.kasa_name !== p.name && <p className="col-span-full text-xs leading-relaxed text-muted-foreground">插座本身叫「{p.kasa_name}」；名稱清空再存就改回來</p>}
+        </div>
       </Section>
 
       {/* 狀態：沒事的時候各一行；有狀況才展開說明 */}
       {p.online && (
         <Section title="狀態">
           <Group>
-            <Row label="網路" hint={net?.ssid || undefined}>
-              {issues.length ? null : (
-                <span className="flex items-center gap-2 text-right text-sm text-emerald-700 dark:text-emerald-400">
-                  {sig && <Bars level={sig.level} />}{sig ? `訊號${sig.text}・` : ""}{fwShort}<CheckCircle2 className="size-4" />
-                </span>
-              )}
-            </Row>
+            <div className="space-y-0.5 px-4 py-2.5">
+              <div className="flex items-center gap-3">
+                <span className="flex-1 text-[15px] font-medium">網路</span>
+                {!issues.length && (
+                  <span className="flex items-center gap-2 text-sm text-emerald-700 dark:text-emerald-400">
+                    {sig && <Bars level={sig.level} />}{sig ? `訊號${sig.text}・` : ""}{fwShort}<CheckCircle2 className="size-4" />
+                  </span>
+                )}
+              </div>
+              <div className="text-xs leading-relaxed text-muted-foreground">
+                {[net?.ssid, p.host, net ? (onRouter ? "WPA2 以上" : keyName(net.key_type)) : "", p.rssi != null ? `${p.rssi} dBm` : "", cloudText].filter(Boolean).join("・")}
+              </div>
+            </div>
             {issues.length > 0 && (
               <div className="space-y-1.5 px-4 py-3">
                 {issues.map((x) => (
@@ -332,7 +339,7 @@ function DeviceBody({ p }: { p: Plug }) {
             )}
             <Row label={<span className="whitespace-nowrap">使用時間</span>}>
               <span className="flex max-w-[72%] flex-wrap items-center justify-end gap-x-3 text-right text-sm tabular-nums">
-                {usage === null ? <Value tone="muted">讀取中…</Value> : usage === false ? <Value tone="muted">讀不到</Value> : <span>今天 {fmtMin(usage.today)}・本月 {fmtMin(usage.month)}</span>}
+                {usage === null ? <Value tone="muted">讀取中…</Value> : usage === false ? <Value tone="muted">讀不到</Value> : <><span className="whitespace-nowrap">今天 {fmtMin(usage.today)}</span><span className="whitespace-nowrap">本月 {fmtMin(usage.month)}</span></>}
                 <a href="#energy" className="font-medium whitespace-nowrap text-primary hover:underline">看用電 ›</a>
               </span>
             </Row>
@@ -402,9 +409,9 @@ function DeviceBody({ p }: { p: Plug }) {
                 <span className="text-right text-sm leading-relaxed">{n.kasa.map((r, i) => <span key={i} className="block">{ruleText(r)}</span>)}</span>
               </Row>
             )}
-            <Row label="硬體資訊">
-              <span className="text-right text-sm leading-relaxed text-muted-foreground">
-                {[p.model, p.host, net?.fw ? `韌體 ${net.fw}` : "", net?.hw ? `硬體 ${net.hw}` : "", net ? (onRouter ? "WPA2 以上" : keyName(net.key_type)) : "", p.rssi != null ? `${p.rssi} dBm` : "", cloudText].filter(Boolean).join("・")}
+            <Row label={<span className="whitespace-nowrap">硬體</span>}>
+              <span className="text-right text-sm text-muted-foreground">
+                {[p.model, net?.hw ? `硬體 ${net.hw}` : "", net?.fw ? `韌體 ${net.fw}` : ""].filter(Boolean).join("・")}
               </span>
             </Row>
             {p.online && (
