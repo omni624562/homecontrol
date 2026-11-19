@@ -40,11 +40,11 @@ async function call(fn: () => Promise<unknown>, ok?: string) {
 // 卡片標題列
 function CardHead({ icon: I, title, tone, end }: { icon: React.ElementType; title: string; tone?: "timer"; end?: ReactNode }) {
   return (
-    <div className="flex items-center gap-3 px-4 pt-4 pb-2 sm:px-5">
-      <div className={cn("flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary", tone === "timer" && "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-400")}>
+    <div className="mb-2 flex items-center gap-3 border-b bg-muted/60 px-4 py-3 sm:px-5 dark:bg-muted/40">
+      <div className={cn("flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-sm", tone === "timer" && "bg-amber-500 text-white")}>
         <I className="size-5" />
       </div>
-      <h2 className="flex-1 text-lg font-semibold">{title}</h2>
+      <h2 className="flex-1 text-lg font-bold tracking-tight">{title}</h2>
       {end}
     </div>
   );
@@ -175,7 +175,7 @@ export function SchedulePage() {
   if (c.rain && state.schedules.some((x) => x.skip_rain)) calParts.push(`下雨：${c.rain}`);
 
   const habitCard = habits.length > 0 && (
-    <Card className="gap-0 py-0">
+    <Card className="gap-0 overflow-hidden py-0">
       <CardHead icon={Sparkles} title="建議的排程" end={<Badge variant="secondary">{habits.length}</Badge>} />
       <div className="divide-y px-4 sm:px-5">
         {habits.map((x) => {
@@ -217,7 +217,7 @@ export function SchedulePage() {
       <div className="mx-auto grid max-w-7xl items-start gap-4 px-4 py-4 sm:px-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:px-8">
         <div className="min-w-0 space-y-4">
           {narrow && habitCard}
-          <Card className="gap-0 py-0">
+          <Card className="gap-0 overflow-hidden py-0">
             <CardHead
               icon={CalendarClock}
               title="排程"
@@ -327,7 +327,7 @@ export function SchedulePage() {
         <div className="min-w-0 space-y-4">
           {!narrow && habitCard}
           {timers.length > 0 && (
-            <Card className="gap-0 py-0">
+            <Card className="gap-0 overflow-hidden py-0">
               <CardHead icon={Timer} title="定時關閉中" tone="timer" />
               <div className="divide-y px-4 pb-2 sm:px-5">
                 {timers.map((p) => {
@@ -353,7 +353,7 @@ export function SchedulePage() {
               </div>
             </Card>
           )}
-          <Card className="gap-0 py-0">
+          <Card className="gap-0 overflow-hidden py-0">
             <CardHead icon={Home} title="離家模式" end={a?.enabled && <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300">啟用中</Badge>} />
             <button
               onClick={() => setAway(true)}

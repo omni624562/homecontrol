@@ -8,6 +8,7 @@ import { PlugRow } from "@/components/plug-row";
 import { api } from "@/lib/api";
 import { useHub } from "@/lib/hub";
 import type { Plug, Room } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 export interface Group extends Room {
   plugs: Plug[];
@@ -35,22 +36,22 @@ export function RoomCard({ g, onOpen, onToggle }: { g: Group; onOpen: (p: Plug) 
 
   return (
     <Card className="mb-4 gap-0 overflow-hidden py-0 break-inside-avoid">
-      <div className="flex items-center gap-3 px-4 pt-4 pb-2">
-        <div className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+      <div className="flex items-center gap-3 border-b bg-muted/60 px-4 py-3 dark:bg-muted/40">
+        <div className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-sm">
           <Icon className="size-5" />
         </div>
-        <h2 className="text-base font-semibold">{g.name}</h2>
-        <span className="text-sm tabular-nums text-muted-foreground">
+        <h2 className="text-lg font-bold tracking-tight">{g.name}</h2>
+        <span className={cn("rounded-full px-2 py-0.5 text-xs font-medium tabular-nums", on.length ? "bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300" : "bg-background text-muted-foreground")}>
           {on.length}／{g.plugs.length} 開著
         </span>
         {g.id && (canOff || canOn) && (
-          <Button variant="ghost" size="sm" className="ml-auto text-muted-foreground" disabled={busy} onClick={() => all(!canOff)}>
+          <Button variant="outline" size="sm" className="ml-auto bg-background" disabled={busy} onClick={() => all(!canOff)}>
             {busy ? <Loader2 className="animate-spin" /> : <Power />}
             {canOff ? "全關" : "全開"}
           </Button>
         )}
       </div>
-      <div className="divide-y pb-1">
+      <div className="divide-y">
         {g.plugs.map((p) => (
           <PlugRow key={p.id} plug={p} onOpen={() => onOpen(p)} onToggle={() => onToggle(p)} />
         ))}
