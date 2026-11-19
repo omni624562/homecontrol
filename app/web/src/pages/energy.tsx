@@ -179,8 +179,9 @@ export function EnergyPage() {
           <Kpi label="今天" value={<>{fmt(e.today.kwh, 1)}<span className="ml-1 text-base font-normal text-muted-foreground">度</span></>} sub={`約 ${money(e.today.kwh * e.price)}・到現在為止`} />
         </div>
 
-        <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-          <div className="min-w-0 space-y-4">
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+          {/* 兩欄的底切齊：每一欄最後一張卡片拉到一樣高 */}
+          <div className="flex min-w-0 flex-col gap-4">
             {/* 趨勢 */}
             <Card className="gap-0 overflow-hidden py-0">
               <CardTitle
@@ -193,7 +194,7 @@ export function EnergyPage() {
             </Card>
 
             {/* 每天開機時數：裝置 × 30 天 */}
-            <Card className="gap-0 overflow-hidden py-0">
+            <Card className="flex-1 gap-0 overflow-hidden py-0">
               <CardTitle
                 title="每天開機時數"
                 end={
@@ -222,7 +223,7 @@ export function EnergyPage() {
               </div>
             </Card>
           </div>
-          <div className="min-w-0 space-y-4">
+          <div className="flex min-w-0 flex-col gap-4">
             {/* 依區域：一區一行 */}
             <Card className="gap-0 overflow-hidden py-0">
               <CardTitle title="本月依區域" end={<span className="text-sm text-muted-foreground tabular-nums">共 {fmt(rtotal, 1)} 度</span>} />
@@ -285,7 +286,7 @@ export function EnergyPage() {
             </Card>
 
             {/* 電費設定 */}
-            <Card className="gap-0 overflow-hidden py-0">
+            <Card className="flex-1 gap-0 overflow-hidden py-0">
               <CardTitle title="電費設定" end={<span className="text-sm text-muted-foreground tabular-nums">目前 {fmt(e.price, 2)} 元/度・{e.season}</span>} />
               <div className="flex flex-wrap items-center gap-3 px-4 py-3 sm:px-5">
                 <div className="min-w-0 flex-1 basis-40">
