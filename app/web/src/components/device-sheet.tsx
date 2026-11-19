@@ -14,7 +14,7 @@ import { Row, Section } from "@/components/settings-bits";
 import { WattsRows } from "@/components/watts-field";
 import { deviceIcon } from "@/components/icons";
 import { api } from "@/lib/api";
-import { fmtDur, fmtLeft, fmtSec, pad2 } from "@/lib/format";
+import { fmt, fmtDur, fmtLeft, fmtSec, pad2 } from "@/lib/format";
 import { useHub, useTick } from "@/lib/hub";
 import type { KasaRule, Plug, Protect } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -39,7 +39,7 @@ function signal(rssi?: number | null) {
 }
 
 // 狀態的一格：上面小字、下面數字，置中；有連結的可以點
-function Tile({ label, children, href, warn }: { label: string; children: ReactNode; href?: string; warn?: boolean }) {
+function Tile({ label, children, sub, href, warn }: { label: string; children: ReactNode; sub?: ReactNode; href?: string; warn?: boolean }) {
   const cls = cn(
     "flex min-w-0 flex-col items-center justify-center gap-0.5 rounded-xl border bg-card px-2 py-2.5 text-center",
     href && "transition-colors hover:bg-muted/60 active:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
@@ -49,6 +49,7 @@ function Tile({ label, children, href, warn }: { label: string; children: ReactN
     <>
       <span className="max-w-full truncate text-xs text-muted-foreground">{label}</span>
       <span className={cn("max-w-full text-[15px] font-semibold whitespace-nowrap tabular-nums", warn && "text-orange-700 dark:text-orange-400")}>{children}</span>
+      {sub && <span className="max-w-full truncate text-xs text-muted-foreground tabular-nums">{sub}</span>}
     </>
   );
   return href ? <a href={href} className={cls}>{inner}</a> : <div className={cls}>{inner}</div>;
@@ -204,6 +205,8 @@ function DeviceBody({ p }: { p: Plug }) {
   const ups = net?.fw_updates || [];
   const shared = (state?.plugs || []).filter((x) => x.host === p.host).length > 1;
   const sig = signal(p.rssi);
+  // 開了這麼久大約幾度（有設瓦數才算）
+  const kwh = (min: number | null) => (min == null ? undefined : p.watts ? `約 ${fmt((min / 60) * (p.watts / 1000), 1)} 度` : "看用電 ›");
   const nativeText = !n ? "等待同步…" : !n.ok ? n.msg || "同步失敗，稍後再試" : n.schedule ? `已寫入 ${n.schedule} 條，樹莓派離線時照樣執行` : "目前沒有排程要寫入";
 
   // 網路、韌體有沒有要注意的地方
@@ -213,7 +216,6 @@ function DeviceBody({ p }: { p: Plug }) {
   if (weakKey) issues.push(`Wi-Fi 加密是 ${keyName(net?.key_type)}，比較容易被破解，建議改用 WPA2 以上`);
   if (ups.length) issues.push(`有新韌體 ${ups[0].version || ""}`);
   const fwShort = net?.fw_check === "unavailable" ? "韌體無法檢查" : net?.fw_check === "ok" ? "韌體最新" : "韌體檢查中";
-  const cloudText = net?.cloud_bound === false ? "TP-Link 雲端已解除" : net?.cloud_bound ? "TP-Link 雲端綁著帳號" : p.cloud ? "TP-Link 雲端連線中" : p.cloud === false ? "TP-Link 雲端未連線" : "";
   // 「進階」收著的時候，有設定過的用小標籤顯示
   const chips: [string, "warn" | ""][] = [];
   if (p.keep_on) chips.push(["常開", ""]);
@@ -349,11 +351,14 @@ function DeviceBody({ p }: { p: Plug }) {
       {/* 狀態：三格一樣大的數字（今天、本月、Wi-Fi 訊號）；有要注意的事才在下面列出來 */}
       {p.online && (
         <Section title="狀態">
-          <div className="grid grid-cols-3 gap-2 sm:gap-3">
-            <Tile label="今天開了" href="#energy">{usage === null ? "…" : usage === false ? "—" : fmtMin(usage.today)}</Tile>
-            <Tile label="本月開了" href="#energy">{usage === null ? "…" : usage === false ? "—" : usage.month >= 6000 ? `${Math.round(usage.month / 60)} 小時` : fmtMin(usage.month)}</Tile>
-            <Tile label={net?.ssid ? `Wi-Fi・${net.ssid}` : "Wi-Fi 訊號"} warn={!!sig && sig.level <= 2}>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <Tile label="今天開了" href="#energy" sub={kwh(usage ? usage.today : null)}>{usage === null ? "…" : usage === false ? "—" : fmtMin(usage.today)}</Tile>
+            <Tile label="本月開了" href="#energy" sub={kwh(usage ? usage.month : null)}>{usage === null ? "…" : usage === false ? "—" : usage.month >= 6000 ? `${Math.round(usage.month / 60)} 小時` : fmtMin(usage.month)}</Tile>
+            <Tile label={net?.ssid ? `Wi-Fi・${net.ssid}` : "Wi-Fi 訊號"} warn={!!sig && sig.level <= 2} sub={[p.host, net ? (onRouter ? "WPA2 以上" : keyName(net.key_type)) : ""].filter(Boolean).join("・")}>
               {sig ? <span className="inline-flex items-center gap-1.5"><Bars level={sig.level} />{sig.text}</span> : "—"}
+            </Tile>
+            <Tile label="插座" warn={ups.length > 0} sub={[net?.hw ? `硬體 ${net.hw}` : "", net?.fw ? `韌體 ${net.fw}` : ""].filter(Boolean).join("・")}>
+              {p.model || "—"}{fwShort === "韌體最新" && <span className="ml-1.5 text-xs font-normal text-emerald-700 dark:text-emerald-400">最新</span>}
             </Tile>
           </div>
           {issues.length > 0 && (
@@ -428,25 +433,6 @@ function DeviceBody({ p }: { p: Plug }) {
                 <span className="text-right text-sm leading-relaxed">{n.kasa.map((r, i) => <span key={i} className="block">{ruleText(r)}</span>)}</span>
               </Row>
             )}
-            <div className="px-4 py-2.5">
-              <div className="mb-1.5 text-[15px] font-medium">裝置資訊</div>
-              <dl className="grid grid-cols-2 gap-x-5 gap-y-1 text-sm sm:grid-cols-3">
-                {([
-                  ["Wi-Fi", net?.ssid],
-                  ["IP 位址", p.host],
-                  ["訊號", p.rssi != null ? `${p.rssi} dBm` : ""],
-                  ["加密", net ? (onRouter ? "WPA2 以上" : keyName(net.key_type)) : ""],
-                  ["型號", [p.model, net?.hw ? `硬體 ${net.hw}` : ""].filter(Boolean).join("・")],
-                  ["韌體", [net?.fw, fwShort.replace("韌體", "")].filter(Boolean).join("・")],
-                  ["TP-Link 雲端", cloudText.replace("TP-Link 雲端", "")],
-                ] as [string, string | undefined][]).filter(([, v]) => v).map(([k, v]) => (
-                  <div key={k} className="flex min-w-0 items-baseline gap-2">
-                    <dt className="shrink-0 text-xs text-muted-foreground">{k}</dt>
-                    <dd className="truncate tabular-nums" title={v}>{v}</dd>
-                  </div>
-                ))}
-              </dl>
-            </div>
             {p.online && (
               <Row label="重新啟動插座" hint={`插座卡住時用；${shared ? "整條排插都會重開，" : ""}可能短暫斷電`}>
                 <AlertDialog>
