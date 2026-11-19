@@ -233,4 +233,125 @@
 .crash-flash { opacity: 0; animation: crash-flash 0.45s ease-out 1.15s both; }
 .crash-cracks { opacity: 0; transform-origin: 50% 50%; animation: crash-cracks 3.3s ease-out 1.2s both; }
 .crash-text { opacity: 0; animation: crash-text 3.2s ease-out 1.3s both; }
-.screen-shake #root { animation: screen-shake 0.5s ease-in-out; }
+/* 不轉整個頁面（固定在畫面上的東西會跑掉），改成內容、側邊選單、下方分頁列、右下角按鈕各自晃 */
+.screen-shake #root :is(main, aside, nav[aria-label="主選單"], button[aria-label="問家裡"]) { animation: screen-shake 0.5s ease-in-out; }
+body:is(.screen-shake, .screen-tilt) { overflow-x: clip; }
+#root main { transform-origin: 50% var(--fx-y, 50%); }
+
+/* ---- 垃圾車的其他衝法 ---- */
+@keyframes fx-text {
+  0% { opacity: 0; transform: translateY(10px) scale(0.92); }
+  12% { opacity: 1; transform: none; }
+  82% { opacity: 1; }
+  100% { opacity: 0; }
+}
+.fx-text { opacity: 0; animation: fx-text 2.8s ease-out both; }
+
+/* 從天而降：掉下來、彈兩下、停一下、開走 */
+@keyframes truck-drop {
+  0% { transform: translate(-50%, -130vh) rotate(-8deg); animation-timing-function: cubic-bezier(0.5, 0, 1, 0.6); }
+  29% { transform: translate(-50%, 0) rotate(0deg); animation-timing-function: cubic-bezier(0, 0.6, 0.4, 1); }
+  38% { transform: translate(-50%, -11vh) rotate(3deg); animation-timing-function: cubic-bezier(0.5, 0, 1, 0.6); }
+  47% { transform: translate(-50%, 0) rotate(0deg); animation-timing-function: cubic-bezier(0, 0.6, 0.4, 1); }
+  53% { transform: translate(-50%, -3.5vh); animation-timing-function: cubic-bezier(0.5, 0, 1, 0.6); }
+  59% { transform: translate(-50%, 0); }
+  78% { transform: translate(-50%, 0); animation-timing-function: cubic-bezier(0.6, 0, 0.9, 0.5); }
+  100% { transform: translate(120vw, 0); }
+}
+.truck-drop { animation: truck-drop 4.3s both; will-change: transform; }
+@keyframes truck-dust {
+  0% { transform: translateX(-50%) scale(0.2, 0.3); opacity: 0.75; }
+  100% { transform: translateX(-50%) scale(1.9, 1.2); opacity: 0; }
+}
+.truck-dust { opacity: 0; animation: truck-dust 0.9s ease-out 1.25s both; }
+
+/* 倒車入庫：慢慢倒進來、停一下、開走 */
+@keyframes truck-reverse {
+  0% { transform: translate(105vw, -50%); }
+  55% { transform: translate(calc(50vw - 50%), -50%); }
+  78% { transform: translate(calc(50vw - 50%), -50%); animation-timing-function: cubic-bezier(0.6, 0, 0.9, 0.5); }
+  100% { transform: translate(115vw, -50%); }
+}
+.truck-reverse { animation: truck-reverse 6.1s linear both; will-change: transform; }
+@keyframes tail-blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0.15; } }
+.tail-blink { animation: tail-blink 0.55s steps(1) 8; }
+
+/* 車隊遊行；最後一台落隊再追上 */
+@keyframes truck-parade { from { transform: translateX(-105%); } to { transform: translateX(105vw); } }
+.truck-parade { animation: truck-parade 5.6s linear both; will-change: transform; }
+@keyframes parade-late {
+  0%, 20% { transform: translateX(-38vw); }
+  75%, 100% { transform: translateX(0); }
+}
+.parade-late { animation: parade-late 5.6s ease-in-out both; }
+
+/* 把畫面撞歪：車子很快衝過去，頁面歪掉再彈回來 */
+@keyframes truck-ram { from { transform: translate(-110%, -50%); } to { transform: translate(115vw, -50%); } }
+.truck-ram { animation: truck-ram 1.1s cubic-bezier(0.5, 0, 0.8, 0.6) both; will-change: transform; }
+@keyframes screen-tilt {
+  0% { transform: none; }
+  8% { transform: rotate(4.5deg) translate(14px, 6px); }
+  45% { transform: rotate(4deg) translate(12px, 5px); }
+  62% { transform: rotate(-1.6deg) translate(-4px, 0); }
+  78% { transform: rotate(0.7deg); }
+  100% { transform: none; }
+}
+.screen-tilt #root :is(main, aside, nav[aria-label="主選單"], button[aria-label="問家裡"]) { animation: screen-tilt 2.6s ease-in-out; }
+
+/* 追垃圾車：車子開過去，小人在後面追 */
+@keyframes truck-cruise { from { transform: translateX(-30vw); } to { transform: translateX(112vw); } }
+.truck-cruise { animation: truck-cruise 5.2s linear both; will-change: transform; }
+@keyframes runner-chase { from { transform: translateX(-75vw); } to { transform: translateX(105vw); } }
+.runner-chase { animation: runner-chase 5.9s cubic-bezier(0.3, 0.1, 0.6, 1) both; will-change: transform; }
+@keyframes runner-swing-a { 0%, 100% { transform: rotate(-32deg); } 50% { transform: rotate(34deg); } }
+@keyframes runner-swing-b { 0%, 100% { transform: rotate(34deg); } 50% { transform: rotate(-32deg); } }
+.runner-leg-a, .runner-leg-b { transform-box: view-box; transform-origin: 38px 56px; }
+.runner-arm-a, .runner-arm-b { transform-box: view-box; transform-origin: 43px 32px; }
+.runner-leg-a { animation: runner-swing-a 0.36s ease-in-out infinite; }
+.runner-leg-b { animation: runner-swing-b 0.36s ease-in-out infinite; }
+.runner-arm-b { animation: runner-swing-a 0.36s ease-in-out infinite; }
+.runner-arm-a { animation: runner-swing-b 0.36s ease-in-out infinite; }
+@keyframes runner-bag { 0%, 100% { transform: translateY(0) rotate(-4deg); } 50% { transform: translateY(-4px) rotate(5deg); } }
+.runner-bag { transform-box: fill-box; transform-origin: 50% 0; animation: runner-bag 0.36s ease-in-out infinite; }
+
+/* ---- 其他時機的小動畫 ---- */
+/* 全部關閉：像關燈，由上往下暗一下 */
+@keyframes lights-out {
+  0% { background-position: 0 100%; opacity: 1; }
+  45% { background-position: 0 0; opacity: 1; }
+  100% { background-position: 0 0; opacity: 0; }
+}
+.lights-out {
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.78) 0 50%, transparent 100%) no-repeat;
+  background-size: 100% 220%;
+  animation: lights-out 1.4s ease-in-out both;
+}
+/* 下雨 */
+@keyframes rain-drop {
+  0% { transform: translateY(-14px); opacity: 0; }
+  20% { opacity: 1; }
+  100% { transform: translateY(96px); opacity: 0; }
+}
+.rain-drop { animation: rain-drop 1.1s linear infinite; }
+/* 熱氣 */
+@keyframes steam {
+  0% { transform: translateY(4px) scaleY(0.6); opacity: 0; }
+  40% { opacity: 0.9; }
+  100% { transform: translateY(-7px) scaleY(1.2); opacity: 0; }
+}
+.steam { animation: steam 1.8s ease-out infinite; }
+/* 彩帶 */
+@keyframes confetti {
+  0% { transform: translate(0, 0) rotate(0deg) scale(0.4); opacity: 1; }
+  70% { opacity: 1; }
+  100% { transform: translate(var(--x), calc(var(--y) + 60px)) rotate(var(--r)) scale(1); opacity: 0; }
+}
+.confetti { opacity: 0; animation: confetti 1.5s cubic-bezier(0.1, 0.7, 0.3, 1) both; }
+/* 走進門 */
+@keyframes walk-in {
+  0% { transform: translateX(-10px); opacity: 0; }
+  15% { opacity: 1; }
+  80% { transform: translateX(20px); opacity: 1; }
+  100% { transform: translateX(24px); opacity: 0; }
+}
+.walk-in { animation: walk-in 1.6s ease-in-out 2 both; }

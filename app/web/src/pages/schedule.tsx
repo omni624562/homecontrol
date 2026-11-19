@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { PageHeader } from "@/components/app-shell";
 import { AwaySheet } from "@/components/away-sheet";
+import { Rain, useFun } from "@/components/fx";
 import { deviceIcon } from "@/components/icons";
 import { KasaSheet, ruleMatch, type KasaOpen } from "@/components/kasa-sheet";
 import { ScheduleSheet, type SchedOpen } from "@/components/schedule-sheet";
@@ -58,8 +59,8 @@ const Foot = ({ icon: I, children }: { icon?: React.ElementType; children: React
 );
 
 // 排程清單的一列（整列可以點開編輯；右邊的開關直接啟用／暫停）
-function SchedItem({ time, sec, top, desc, tags, enabled, onOpen, onToggle, label }: {
-  time: ReactNode; sec?: string; top: ReactNode; desc: ReactNode; tags: ReactNode; enabled: boolean; onOpen: () => void; onToggle: (v: boolean) => void; label: string;
+function SchedItem({ time, sec, top, desc, tags, enabled, onOpen, onToggle, label, rain }: {
+  time: ReactNode; sec?: string; top: ReactNode; desc: ReactNode; tags: ReactNode; enabled: boolean; onOpen: () => void; onToggle: (v: boolean) => void; label: string; rain?: boolean;
 }) {
   return (
     <div
@@ -69,10 +70,11 @@ function SchedItem({ time, sec, top, desc, tags, enabled, onOpen, onToggle, labe
       onClick={onOpen}
       onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && e.target === e.currentTarget && (e.preventDefault(), onOpen())}
       className={cn(
-        "group flex cursor-pointer items-start gap-4 rounded-xl px-3 py-3 transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:bg-muted",
+        "group relative flex cursor-pointer items-start gap-4 rounded-xl px-3 py-3 transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:bg-muted",
         !enabled && "opacity-60",
       )}
     >
+      {rain && <Rain />}
       <div className="w-16 shrink-0 pt-0.5 text-2xl font-semibold tabular-nums tracking-tight sm:w-20 sm:text-[1.7rem]">
         {time}
         {sec && <span className="text-sm font-normal text-muted-foreground">:{sec}</span>}
@@ -104,6 +106,7 @@ function SchedSkeleton() {
 
 export function SchedulePage() {
   const { state, isOn, now } = useHub();
+  const fun = useFun();
   const ruleMin = useRuleMin();
   const narrow = !useMedia("(min-width: 1024px)");
   const [sched, setSched] = useState<SchedOpen>(null);
@@ -273,6 +276,7 @@ export function SchedulePage() {
                           {x.skip_rain && <Tag icon={Droplets}>下雨跳過</Tag>}
                           {x.enabled && x.days.includes(today) && (x.skipped || x.skip_today) && <Tag tone="warn" icon={Info}>今天不執行：{x.skipped || x.skip_today}</Tag>}
                         </>}
+                        rain={fun && x.enabled && x.days.includes(today) && /雨/.test(x.skipped || x.skip_today || "")}
                         enabled={en}
                         onOpen={() => setSched({ id: x.id })}
                         onToggle={(v) => toggleSched(x, v)}

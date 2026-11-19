@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Droplets, Gauge, Home as HomeIcon, Loader2, Pencil, Power, Truck, Wifi, WifiOff, Zap } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -9,6 +9,7 @@ import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/app-shell";
 import { DeviceSheet, needsConfirm } from "@/components/device-sheet";
+import { WalkIn, playFx, useFun } from "@/components/fx";
 import { mdiIcon, weatherIcon } from "@/components/icons";
 import { LifeSheet } from "@/components/life-sheet";
 import { RoomCard, type Group } from "@/components/room-card";
@@ -80,6 +81,20 @@ export function HomePage() {
   const [allOff, setAllOff] = useState(false);
   const [sheet, setSheet] = useState<"weather" | "life" | null>(null);
   const [running, setRunning] = useState<string | null>(null);
+  // 有人回家：在家人數變多的時候，小人走進門幾秒
+  const fun = useFun();
+  const homeCount = state ? (state.people || []).filter((x) => x.home).length : null;
+  const prevHome = useRef<number | null>(null);
+  const [arrived, setArrived] = useState(false);
+  useEffect(() => {
+    if (homeCount === null) return;
+    const was = prevHome.current;
+    prevHome.current = homeCount;
+    if (was === null || homeCount <= was) return;
+    setArrived(true);
+    const timer = setTimeout(() => setArrived(false), 3400);
+    return () => clearTimeout(timer);
+  }, [homeCount]);
   const wide3 = useMedia("(min-width: 1536px)");
   const wide2 = useMedia("(min-width: 768px)");
   const cols = wide3 ? 3 : wide2 ? 2 : 1;
@@ -157,7 +172,10 @@ export function HomePage() {
     try {
       const res = await api<{ count: number }>("POST", "/api/off", {});
       if (!res.count) toast("沒有開著的插座");
-      else toast.success(`已關閉 ${res.count} 個插座`, { action: { label: "復原", onClick: undo }, duration: 8000 });
+      else {
+        playFx("lights-out");
+        toast.success(`已關閉 ${res.count} 個插座`, { action: { label: "復原", onClick: undo }, duration: 8000 });
+      }
     } catch (err) {
       toast.error("沒有成功", { description: (err as Error).message });
     } finally {
@@ -176,7 +194,7 @@ export function HomePage() {
   const r = state.router;
   const chips = (
     <>
-      {people.length > 0 && <Pill icon={HomeIcon} tone={home ? "ok" : undefined}>{home ? `${home} 人在家` : "都出門了"}</Pill>}
+      {people.length > 0 && <Pill icon={HomeIcon} tone={home ? "ok" : undefined}>{home ? `${home} 人在家` : "都出門了"}{arrived && fun && <WalkIn />}</Pill>}
       {state.summary.power != null && <Pill icon={Gauge}>{fmt(state.summary.power)} W</Pill>}
       {r?.configured && <Pill icon={r.ok ? Wifi : WifiOff} tone={r.ok ? undefined : "bad"}>{r.ok ? "網路正常" : "路由器連不上"}</Pill>}
       {g && g.today.length > 0 && (

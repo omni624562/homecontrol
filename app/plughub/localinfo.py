@@ -392,4 +392,5 @@ class LocalInfo:
             "garbage_notify": self.cfg.get("garbage_notify", True), "outage_notify": self.cfg.get("outage_notify", True),
             "truck_rush": self.cfg.get("truck_rush", True),
             "truck_rush_style": self.cfg.get("truck_rush_style", "random"),
+            "fun": self.cfg.get("fun", True),
         }

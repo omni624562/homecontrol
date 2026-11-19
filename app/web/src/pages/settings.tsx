@@ -18,7 +18,7 @@ import { SenseSheet } from "@/components/sense-sheet";
 import { WeatherKeys, WeatherSheet } from "@/components/weather-sheet";
 import { LifeSheet } from "@/components/life-sheet";
 import { SettingNumber } from "@/components/settings-bits";
-import { previewTruckRush } from "@/components/truck-rush";
+import { RUSH_STYLES, previewTruckRush } from "@/components/truck-rush";
 import { api } from "@/lib/api";
 import { pad2 } from "@/lib/format";
 import { useHub } from "@/lib/hub";
@@ -414,11 +414,10 @@ export function SettingsPage() {
                       }
                     }}
                   >
-                    <SelectTrigger className="w-44 bg-background" aria-label="垃圾車衝出來的樣式"><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="w-56 bg-background" aria-label="垃圾車衝出來的樣式"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="random">隨機</SelectItem>
-                      <SelectItem value="side">從旁邊衝過去</SelectItem>
-                      <SelectItem value="front">從正面衝出來（螢幕裂開）</SelectItem>
+                      {RUSH_STYLES.map(([k, l]) => <SelectItem key={k} value={k}>{l}</SelectItem>)}
                       <SelectItem value="off">關閉</SelectItem>
                     </SelectContent>
                   </Select>
@@ -426,6 +425,20 @@ export function SettingsPage() {
                 </div>
               </SRow>
             )}
+            <SRow label="趣味小動畫" hint="全部關閉時畫面暗一下、下雨跳過的排程飄雨、有人回家小人走進門、電費比上月少噴彩帶、開很久的插座冒熱氣">
+              <Switch
+                checked={state.calendar.local?.fun !== false}
+                aria-label="趣味小動畫"
+                onCheckedChange={async (v) => {
+                  try {
+                    await api("PUT", "/api/local", { fun: v });
+                    toast.success(v ? "小動畫已打開" : "小動畫已關閉");
+                  } catch (e) {
+                    toast.error("沒有成功", { description: (e as Error).message });
+                  }
+                }}
+              />
+            </SRow>
             <WeatherKeys />
           </SCard>
           <AskCard />

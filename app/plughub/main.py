@@ -761,10 +761,10 @@ async def local_settings(body: dict = Body(...)) -> dict[str, Any]:
     if isinstance(body.get("roads"), list):
         cfg["roads"] = [str(r).strip()[:20] for r in body["roads"] if str(r).strip()][:8]
         hub.local.recheck()
-    for k in ("garbage_notify", "outage_notify", "truck_rush"):
+    for k in ("garbage_notify", "outage_notify", "truck_rush", "fun"):
         if k in body:
             cfg[k] = bool(body[k])
-    if body.get("truck_rush_style") in ("side", "front", "random"):
+    if body.get("truck_rush_style") in ("side", "front", "drop", "reverse", "parade", "tilt", "chase", "random"):
         cfg["truck_rush_style"] = body["truck_rush_style"]
     store.save()
     hub.local._at.pop("truck", None)

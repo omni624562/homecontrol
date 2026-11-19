@@ -6,6 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/app-shell";
 import { BarChart, type Bar } from "@/components/bar-chart";
 import { EnergyDeviceSheet } from "@/components/energy-device-sheet";
+import { Confetti, useFun } from "@/components/fx";
 import { deviceIcon } from "@/components/icons";
 import { Segmented } from "@/components/schedule-bits";
 import { SettingNumber } from "@/components/settings-bits";
@@ -47,9 +48,10 @@ function CardTitle({ title, end }: { title: string; end?: ReactNode }) {
   );
 }
 
-function Kpi({ label, value, sub, tone }: { label: string; value: ReactNode; sub: ReactNode; tone?: "up" | "down" }) {
+function Kpi({ label, value, sub, tone, extra }: { label: string; value: ReactNode; sub: ReactNode; tone?: "up" | "down"; extra?: ReactNode }) {
   return (
-    <Card className="gap-1 px-4 py-4 sm:px-5">
+    <Card className="relative gap-1 px-4 py-4 sm:px-5">
+      {extra}
       <div className="text-sm text-muted-foreground">{label}</div>
       <div className={cn("text-2xl font-bold tracking-tight tabular-nums sm:text-3xl", tone === "up" && "text-orange-600 dark:text-orange-400", tone === "down" && "text-emerald-600 dark:text-emerald-400")}>{value}</div>
       <div className="text-sm leading-relaxed text-muted-foreground">{sub}</div>
@@ -81,6 +83,22 @@ export function EnergyPage() {
     const el = heatRef.current;
     if (el) el.scrollLeft = el.scrollWidth;
   }, [hasE]);
+
+  // 電費比上個月同期少：噴一次彩帶（同一天只噴一次）
+  const fun = useFun();
+  const saved = !!e && !!e.same_period.kwh && (e.month.kwh - e.same_period.kwh) / e.same_period.kwh < -0.02;
+  const [party, setParty] = useState(false);
+  useEffect(() => {
+    if (!saved || !fun) return;
+    const key = `confetti-${new Date().toDateString()}`;
+    try {
+      if (sessionStorage.getItem(key)) return;
+      sessionStorage.setItem(key, "1");
+    } catch { /* 不能存就每次都噴 */ }
+    setParty(true);
+    const timer = setTimeout(() => setParty(false), 2200);
+    return () => clearTimeout(timer);
+  }, [saved, fun]);
 
   const sub = e ? `估算：插座記錄的開機時間 × 瓦數・台電累進電價 ${fmt(e.price, 2)} 元/度（${e.season}）` : "讀取插座記錄的使用時間…";
   if (!e)
@@ -135,6 +153,7 @@ export function EnergyPage() {
           <Kpi label="本月至今" value={money(e.month.cost)} sub={`${fmt(e.month.kwh, 1)} 度・${e.day_of_month} 天`} />
           <Kpi label="預估本月" value={money(e.projected.cost)} sub={`${fmt(e.projected.kwh, 0)} 度・照目前每天的平均推算`} />
           <Kpi
+            extra={party && <Confetti />}
             label="比上月同期"
             tone={delta == null ? undefined : delta > 0.02 ? "up" : delta < -0.02 ? "down" : undefined}
             value={

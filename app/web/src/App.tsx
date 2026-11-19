@@ -9,6 +9,7 @@ import { NetPage } from "@/pages/net";
 import { MapPage } from "@/pages/map";
 import { AskProvider } from "@/components/ask-sheet";
 import { TruckRush } from "@/components/truck-rush";
+import { FxLayer } from "@/components/fx";
 
 export default function App() {
   const [tab, setTab] = useState(() => location.hash.slice(1) || "plugs");
@@ -23,6 +24,7 @@ export default function App() {
         {tab === "schedule" ? <SchedulePage /> : tab === "energy" ? <EnergyPage /> : tab === "settings" ? <SettingsPage /> : tab === "edit" ? <EditPage /> : tab === "net" ? <NetPage /> : tab === "map" ? <MapPage /> : <HomePage />}
       </AppShell>
       <TruckRush />
+      <FxLayer />
     </AskProvider>
   );
 }

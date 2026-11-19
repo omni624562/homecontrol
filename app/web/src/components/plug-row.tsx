@@ -1,5 +1,6 @@
 import { Lock, WifiOff } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
+import { Steam, useFun } from "@/components/fx";
 import { deviceIcon } from "@/components/icons";
 import { fmtDur, fmtLeft, fmtSec, fmtWatts } from "@/lib/format";
 import { useHub } from "@/lib/hub";
@@ -16,6 +17,7 @@ export function PlugRow({ plug: p, onOpen, onToggle }: { plug: Plug; onOpen: () 
 
   let sub = p.max_on_s ? `最長開 ${fmtSec(p.max_on_s)}` : "";
   let tone: "timer" | "warn" | "bad" | "" = "";
+  const fun = useFun();
   if (!p.online) {
     sub = "連不上";
     tone = "bad";
@@ -48,12 +50,13 @@ export function PlugRow({ plug: p, onOpen, onToggle }: { plug: Plug; onOpen: () 
     >
       <div
         className={cn(
-          "flex size-10 shrink-0 items-center justify-center rounded-xl transition-colors duration-300",
+          "relative flex size-10 shrink-0 items-center justify-center rounded-xl transition-colors duration-300",
           on ? "bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400" : "bg-muted text-muted-foreground",
           !p.online && "bg-destructive/10 text-destructive",
         )}
       >
         <Icon className="size-5" />
+        {tone === "warn" && fun && <Steam />}
       </div>
       <div className="min-w-0 flex-1">
         <div className="truncate text-[15px] font-medium leading-snug">{p.name}</div>
