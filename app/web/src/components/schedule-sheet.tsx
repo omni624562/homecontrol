@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { AlertCircle, CalendarClock, CheckCircle2, Clock, Droplets, Info, Loader2, PlugZap, Trash2, Umbrella } from "lucide-react";
+import { AlertCircle, CalendarClock, CheckCircle2, Clock, Copy, Droplets, Info, Loader2, PlugZap, Trash2, Umbrella } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -17,7 +17,7 @@ import { useHub } from "@/lib/hub";
 import type { HabitSuggestion, Schedule } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-export type SchedOpen = { id?: string; template?: "night" | "leave" | "water"; sugg?: HabitSuggestion } | null;
+export type SchedOpen = { id?: string; template?: "night" | "leave" | "water"; sugg?: HabitSuggestion; copy?: Draft } | null;
 type Draft = Omit<Schedule, "id">;
 
 // 一行狀態說明
@@ -57,12 +57,12 @@ export function RainLines() {
 
 function initDraft(o: NonNullable<SchedOpen>, existing: Schedule | undefined, ctx: ReturnType<typeof useHub>["state"]): Draft {
   if (existing) return { ...existing, days: [...existing.days], plugs: [...existing.plugs] };
+  if (o.copy) return { ...o.copy, enabled: true, days: [...o.copy.days], plugs: [...o.copy.plugs] };
   const d: Draft = { enabled: true, time: "23:00:00", days: [0, 1, 2, 3, 4, 5, 6], action: "off", scene: null, plugs: [], restore_at: null, duration_s: null, backup: true, time_mode: "clock", offset_min: 0 };
   const plugs = ctx?.plugs || [];
   const scenes = ctx?.scenes || [];
   if (o.template === "night") {
     d.plugs = plugs.filter((p) => /燈|lamp|light/i.test(p.name) && !p.keep_on).map((p) => p.id);
-    d.restore_at = "07:00:00";
   } else if (o.template === "leave") {
     const sc = scenes.find((s) => s.name === "出門") || scenes[0];
     Object.assign(d, { time: "08:30:00", days: [0, 1, 2, 3, 4], action: "scene", scene: sc?.id || null, skip_holiday: true });
@@ -98,7 +98,7 @@ function nextRun(d: Draft, saved?: Schedule) {
   return undefined;
 }
 
-export function ScheduleSheet({ open, onClose }: { open: SchedOpen; onClose: () => void }) {
+export function ScheduleSheet({ open, onClose, onOpen }: { open: SchedOpen; onClose: () => void; onOpen?: (o: SchedOpen) => void }) {
   const { state } = useHub();
   const existing = open?.id ? state?.schedules.find((x) => x.id === open.id) : undefined;
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -112,7 +112,7 @@ export function ScheduleSheet({ open, onClose }: { open: SchedOpen; onClose: () 
     <Sheet
       open={!!open && !!draft}
       onOpenChange={(v) => !v && onClose()}
-      title={open?.id ? "編輯排程" : "新增排程"}
+      title={open?.id ? "編輯排程" : open?.copy ? "複製的排程" : "新增排程"}
       description={draft ? nextRun(draft, existing) : undefined}
       icon={<CalendarClock />}
       wide="xl"
@@ -125,7 +125,7 @@ export function ScheduleSheet({ open, onClose }: { open: SchedOpen; onClose: () 
         ) : undefined
       }
     >
-      {open && draft && <Body id={open.id} saved={existing} d={draft} set={setDraft} onClose={onClose} />}
+      {open && draft && <Body id={open.id} saved={existing} d={draft} set={setDraft} onClose={onClose} onCopy={onOpen ? () => onOpen({ copy: draft }) : undefined} isCopy={!!open.copy} />}
     </Sheet>
   );
 }
@@ -143,7 +143,7 @@ function Step({ n, title, children, grow }: { n: number; title: string; children
   );
 }
 
-function Body({ id, saved, d, set, onClose }: { id?: string; saved?: Schedule; d: Draft; set: (d: Draft) => void; onClose: () => void }) {
+function Body({ id, saved, d, set, onClose, onCopy, isCopy }: { id?: string; saved?: Schedule; d: Draft; set: (d: Draft) => void; onClose: () => void; onCopy?: () => void; isCopy?: boolean }) {
   const { state } = useHub();
   const ruleMin = useRuleMin();
   const [busy, setBusy] = useState<"save" | "delete" | null>(null);
@@ -222,6 +222,12 @@ function Body({ id, saved, d, set, onClose }: { id?: string; saved?: Schedule; d
 
   return (
     <div className="space-y-4">
+      {isCopy && (
+        <div className="flex gap-2 rounded-xl border bg-muted/50 px-4 py-2.5 text-sm leading-relaxed">
+          <Info className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+          這是複製出來的新排程，原本那條不會變。改好時間或動作再按儲存。
+        </div>
+      )}
       <div className="rounded-xl border border-primary/25 bg-primary/5 px-4 py-3 leading-relaxed">
         <div className="text-[17px] font-semibold">
           <span className="text-primary">{d.days.length ? daysText(d.days) : "（還沒選日子）"} {whenText}</span>
@@ -261,7 +267,7 @@ function Body({ id, saved, d, set, onClose }: { id?: string; saved?: Schedule; d
               disabled={(p) => (d.action === "off" && p.keep_on ? "常開的插座不會被關" : false)}
             />
           )}
-          {d.action === "off" && (
+          {d.action === "off" && !!(saved?.restore_at || d.restore_at) && (
             <Group>
               <Row label="關掉之後，到某個時間自動再打開" hint="例如晚上 11 點關、隔天早上 7 點自動打開；不需要就不用開" htmlFor="rs">
                 <Switch id="rs" checked={!!d.restore_at} onCheckedChange={(v) => up({ restore_at: v ? "07:00:00" : null })} />
@@ -355,7 +361,12 @@ function Body({ id, saved, d, set, onClose }: { id?: string; saved?: Schedule; d
         ) : (
           <Button variant="ghost" onClick={onClose}>取消</Button>
         )}
-        <Button className="ml-auto h-11 min-w-28" onClick={save} disabled={!!busy}>
+        {id && onCopy && (
+          <Button variant="outline" className="ml-auto h-11" onClick={onCopy} disabled={!!busy} title="複製成一條新的排程，再改時間或動作">
+            <Copy />複製
+          </Button>
+        )}
+        <Button className={cn("h-11 min-w-28", !(id && onCopy) && "ml-auto")} onClick={save} disabled={!!busy}>
           {busy === "save" && <Loader2 className="animate-spin" />}儲存
         </Button>
       </div>

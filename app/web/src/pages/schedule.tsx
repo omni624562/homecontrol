@@ -313,7 +313,7 @@ export function SchedulePage() {
               <div className="space-y-3 px-4 pb-2 sm:px-5">
                 <p className="text-muted-foreground">還沒有排程。可以從這些開始：</p>
                 <div className="flex flex-wrap gap-2">
-                  {([["night", "每晚 23:00 關燈、早上再開"], ["leave", "平日 08:30 執行「出門」"], ["water", "每天 06:30 澆水 1 分鐘"]] as const).map(([k, l]) => (
+                  {([["night", "每晚 23:00 關燈"], ["leave", "平日 08:30 執行「出門」"], ["water", "每天 06:30 澆水 1 分鐘"]] as const).map(([k, l]) => (
                     <Button key={k} variant="outline" className="rounded-full" onClick={() => setSched({ template: k })}>{l}</Button>
                   ))}
                 </div>
@@ -413,7 +413,7 @@ export function SchedulePage() {
         </div>
       </div>
 
-      <ScheduleSheet open={sched} onClose={() => setSched(null)} />
+      <ScheduleSheet open={sched} onClose={() => setSched(null)} onOpen={setSched} />
       <KasaSheet open={kasa} onClose={() => setKasa(null)} />
       <AwaySheet open={away} onClose={() => setAway(false)} />
     </>
