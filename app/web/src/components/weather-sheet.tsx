@@ -39,7 +39,7 @@ function KeyRow({ k, label, has, hint, ph }: { k: "cwa" | "moenv"; label: string
         <div className="text-sm leading-relaxed text-muted-foreground">{hint}</div>
       </div>
       <div className="flex gap-2">
-        <Input value={v} onChange={(e) => setV(e.target.value)} placeholder={has ? "要換新的才填" : ph} autoCapitalize="off" autoComplete="off" spellCheck={false} aria-label={label} className="h-11 bg-background" />
+        <Input type="password" value={v} onChange={(e) => setV(e.target.value)} placeholder={has ? "要換新的才填" : ph} autoCapitalize="off" autoComplete="off" spellCheck={false} aria-label={label} className="h-11 bg-background" />
         <Button type="submit" variant="outline" className="h-11" disabled={busy || !v.trim()}>{busy && <Loader2 className="animate-spin" />}儲存</Button>
       </div>
     </form>
@@ -47,34 +47,38 @@ function KeyRow({ k, label, has, hint, ph }: { k: "cwa" | "moenv"; label: string
 }
 
 // 授權碼、首頁顯示天氣（只存在樹莓派上，不會再傳回瀏覽器）
-export function WeatherKeys() {
+export function WeatherKeys({ part }: { part: "keys" | "show" }) {
   const { state } = useHub();
   const c = state?.calendar;
   const w = c?.weather;
   const on = c?.weather_show !== false;
+  if (part === "keys")
+    return (
+      <>
+        <KeyRow k="cwa" label="中央氣象署授權碼" has={!!w} hint="到 opendata.cwa.gov.tw 註冊、登入，右上角「取得授權碼」" ph="CWA- 開頭" />
+        <KeyRow k="moenv" label="環境部 API 金鑰（空氣品質）" has={!!w?.air_key} hint="到 data.moenv.gov.tw 註冊、登入，會員專區「API 金鑰」申請" ph="選填" />
+        <p className="px-4 py-3 text-sm leading-relaxed text-muted-foreground sm:px-5">每 10 分鐘查一次附近的測站。最近的測站在樹莓派上算，家裡的位置不會送出去，氣象署只會知道查哪個測站和鄉鎮。</p>
+      </>
+    );
   return (
-    <>
-      <KeyRow k="cwa" label="中央氣象署授權碼" has={!!w} hint="到 opendata.cwa.gov.tw 註冊、登入，右上角「取得授權碼」" ph="CWA- 開頭" />
-      <KeyRow k="moenv" label="環境部 API 金鑰（空氣品質）" has={!!w?.air_key} hint="到 data.moenv.gov.tw 註冊、登入，會員專區「API 金鑰」申請" ph="選填" />
-      <div className="flex items-center gap-3 px-4 py-3.5 sm:px-5">
-        <div className="min-w-0 flex-1">
-          <div className="font-medium">首頁顯示天氣</div>
-          <div className="text-sm leading-relaxed text-muted-foreground">每 10 分鐘查一次附近的測站。最近的測站在樹莓派上算，家裡的位置不會送出去，氣象署只會知道查哪個測站和鄉鎮。授權碼只存在樹莓派上</div>
-        </div>
-        <Switch
-          checked={on}
-          aria-label="首頁顯示天氣"
-          onCheckedChange={async (v) => {
-            try {
-              await api("PUT", "/api/settings", { weather: v });
-              toast.success(v ? "首頁會顯示天氣" : "首頁不顯示天氣");
-            } catch (x) {
-              toast.error("沒有成功", { description: (x as Error).message });
-            }
-          }}
-        />
+    <div className="flex items-center gap-3 px-4 py-3.5 sm:px-5">
+      <div className="min-w-0 flex-1">
+        <div className="font-medium">首頁顯示天氣</div>
+        <div className="text-sm leading-relaxed text-muted-foreground">家裡的位置不會送出去</div>
       </div>
-    </>
+      <Switch
+        checked={on}
+        aria-label="首頁顯示天氣"
+        onCheckedChange={async (v) => {
+          try {
+            await api("PUT", "/api/settings", { weather: v });
+            toast.success(v ? "首頁會顯示天氣" : "首頁不顯示天氣");
+          } catch (x) {
+            toast.error("沒有成功", { description: (x as Error).message });
+          }
+        }}
+      />
+    </div>
   );
 }
 

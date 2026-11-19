@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { AlertCircle, Bell, CheckCircle2, CloudSun, ChevronRight, ExternalLink, Loader2, MessageSquareText, Mic, Search, Wifi, WifiOff } from "lucide-react";
+import { AlertCircle, Bell, CheckCircle2, CloudSun, KeyRound, MessageCircle, ChevronRight, ExternalLink, Loader2, MessageSquareText, Mic, Search, Wifi, WifiOff } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -14,6 +14,7 @@ import { Switch } from "@/components/ui/switch";
 import { PageHeader } from "@/components/app-shell";
 import { AskSetup, fmtUsd, useAsk } from "@/components/ask-sheet";
 import { CloudSheet, cloudBound } from "@/components/cloud-sheet";
+import { Sheet } from "@/components/responsive-sheet";
 import { SenseSheet } from "@/components/sense-sheet";
 import { WeatherKeys, WeatherSheet } from "@/components/weather-sheet";
 import { LifeSheet } from "@/components/life-sheet";
@@ -25,9 +26,9 @@ import { useHub } from "@/lib/hub";
 import type { HubState } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-function SCard({ icon: I, title, badge, children }: { icon: React.ElementType; title: string; badge?: ReactNode; children: ReactNode }) {
+function SCard({ id, icon: I, title, badge, children }: { id?: string; icon: React.ElementType; title: string; badge?: ReactNode; children: ReactNode }) {
   return (
-    <Card className="gap-0 overflow-hidden py-0">
+    <Card id={id} className="scroll-mt-28 gap-0 overflow-hidden py-0">
       <div className="flex items-center gap-3 border-b bg-muted/60 px-4 py-3 sm:px-5 dark:bg-muted/40">
         <div className="flex size-9 items-center justify-center rounded-lg border bg-background text-foreground/70"><I className="size-5" /></div>
         <h2 className="flex-1 text-lg font-bold tracking-tight">{title}</h2>
@@ -114,7 +115,7 @@ function routerLine(s: HubState) {
 }
 
 // 手機通知：LINE 官方的 Messaging API（自己的機器人；權杖只存在樹莓派上）
-function LineNotify() {
+function LineSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { state } = useHub();
   const n = state?.notify;
   const [v, setV] = useState("");
@@ -137,13 +138,18 @@ function LineNotify() {
     }
   };
   return (
-    <div className="space-y-2.5 px-4 py-3.5 sm:px-5">
+    <Sheet
+      open={open}
+      onOpenChange={(v) => !v && onClose()}
+      title="手機通知（LINE）"
+      description={on ? n?.name || "已設定" : "還沒設定"}
+      icon={<MessageCircle />}
+      wide
+      aside={on ? <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300">已設定</Badge> : undefined}
+    >
+    <div className="space-y-3">
       <div>
-        <div className="flex flex-wrap items-center gap-2 font-medium">
-          手機通知（LINE）
-          {on && <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300">已設定{n?.name ? `・${n.name}` : ""}</Badge>}
-        </div>
-        <div className="text-sm leading-relaxed text-muted-foreground">
+        <div className="leading-relaxed text-muted-foreground">
           {on
             ? `定時關閉、插座斷線、垃圾車快到時，會用 LINE 傳訊息給加了這個機器人好友的人。${use?.used != null ? `這個月已經傳 ${use.used} 則${use.limit ? `（免費上限 ${use.limit} 則，每個好友各算一則）` : ""}。` : ""}`
             : "不用另外裝 App：建一個自己的 LINE 機器人，通知會像一般訊息出現在 LINE。"}
@@ -151,7 +157,7 @@ function LineNotify() {
         {(n?.error || use?.error) && <div role="alert" className="mt-1 text-sm text-destructive">上次沒送出去：{n?.error || use?.error}</div>}
       </div>
       {!on && (
-        <ol className="list-decimal space-y-1 rounded-xl border bg-muted/40 py-3 pr-4 pl-9 text-sm leading-relaxed text-muted-foreground">
+        <ol className="list-decimal space-y-2 rounded-xl border bg-muted/40 py-3 pr-4 pl-9 leading-relaxed">
           <li>到 <a className="font-medium text-primary underline-offset-4 hover:underline" href="https://manager.line.biz/" target="_blank" rel="noreferrer">LINE 官方帳號管理頁</a> 用自己的 LINE 登入，建立一個官方帳號（免費，名稱例如「我家」）。</li>
           <li>在那個帳號的「設定 → Messaging API」按「啟用 Messaging API」。同一頁的「回應設定」把自動回應訊息關掉。</li>
           <li>到 <a className="font-medium text-primary underline-offset-4 hover:underline" href="https://developers.line.biz/console/" target="_blank" rel="noreferrer">LINE Developers</a> 點進這個帳號，在「Messaging API」分頁最下面按 Issue，複製 Channel access token 貼到下面。</li>
@@ -175,7 +181,7 @@ function LineNotify() {
           autoComplete="off"
           spellCheck={false}
           aria-label="LINE Channel access token"
-          className="h-11 min-w-0 flex-1 basis-48"
+          className="h-12 min-w-0 flex-1 basis-full sm:basis-48"
         />
         <Button type="submit" variant="outline" className="h-11" disabled={!!busy || !v.trim()}>{busy === "save" && <Loader2 className="animate-spin" />}儲存</Button>
         {on && (
@@ -191,6 +197,7 @@ function LineNotify() {
       </form>
       <p className="text-xs leading-relaxed text-muted-foreground">權杖只存在樹莓派上，不會再傳回瀏覽器。通知的內容（例如「客廳燈 時間到，已經關閉」）會經過 LINE 的伺服器。</p>
     </div>
+    </Sheet>
   );
 }
 
@@ -232,6 +239,7 @@ function AskCard() {
   const { state } = useHub();
   const ask = useAsk();
   const st = state?.assistant;
+  const [keyOpen, setKeyOpen] = useState(false);
   if (!st) return null;
   const setA = async (body: object, ok: string) => {
     try {
@@ -242,8 +250,8 @@ function AskCard() {
     }
   };
   return (
-    <SCard icon={MessageSquareText} title="問家裡（Claude）" badge={<Badge variant={st.configured ? "default" : "secondary"} className={cn(st.configured && "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300")}>{st.configured ? "已設定" : "還沒設定"}</Badge>}>
-      <SRow wrap label="打字或說話控制家裡" hint="「客廳的燈都關掉」「這個月哪個最耗電」「平日天黑開玄關燈」；建立排程、關閉有防呆的插座都會先問你">
+    <SCard id="s-ask" icon={MessageSquareText} title="問家裡（Claude）" badge={<Badge variant={st.configured ? "default" : "secondary"} className={cn(st.configured && "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300")}>{st.configured ? "已設定" : "還沒設定"}</Badge>}>
+      <SRow label="打字或說話控制家裡" hint="例如「客廳的燈都關掉」「這個月哪個最耗電」">
         <Button variant="outline" onClick={ask.open}><MessageSquareText />打開</Button>
       </SRow>
       {st.configured ? (
@@ -280,7 +288,12 @@ function AskCard() {
           </SRow>
         </>
       ) : (
-        <div className="px-4 py-4 sm:px-5"><AskSetup /></div>
+        <>
+          <LinkRow label="API 金鑰" hint="還沒設定・貼上 Anthropic 的金鑰才能用" onClick={() => setKeyOpen(true)} />
+          <Sheet open={keyOpen} onOpenChange={setKeyOpen} title="問家裡的 API 金鑰" description="只存在樹莓派上" icon={<KeyRound />} wide>
+            <AskSetup />
+          </Sheet>
+        </>
       )}
     </SCard>
   );
@@ -297,7 +310,7 @@ function GoogleCard() {
   const P = ({ children }: { children: ReactNode }) => <div className="px-4 py-3.5 leading-relaxed text-muted-foreground sm:px-5">{children}</div>;
   if (!m || !m.running)
     return (
-      <SCard icon={Mic} title="Google Home" badge={<Badge variant="secondary">沒有在執行</Badge>}>
+      <SCard id="s-google" icon={Mic} title="Google Home" badge={<Badge variant="secondary">沒有在執行</Badge>}>
         <P>用 Google Home 語音或 App 控制插座（Matter，不經過 TP-Link 雲端）。要先在樹莓派上啟動串接：<code className="mt-1 block rounded bg-muted px-2 py-1 text-sm text-foreground">cd app &amp;&amp; docker compose up -d matterbridge</code></P>
       </SCard>
     );
@@ -305,10 +318,13 @@ function GoogleCard() {
     const names = [...new Set(m.fabrics.map((f) => f.vendor))];
     const on = state?.settings.matter_scenes !== false;
     return (
-      <SCard icon={Mic} title="Google Home" badge={<Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300">已連上</Badge>}>
+      <SCard id="s-google" icon={Mic} title="Google Home" badge={<Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300">已連上</Badge>}>
         <P>
           {m.plugs} 個插座已加入{names.join("、") || "Google Home"}。可以說「Hey Google，關掉{state?.plugs[0]?.name || "立燈"}」。
-          <br />名稱和房間在 Google Home App 裡設定。要再加到 Apple 家庭或 Alexa：在 Google Home 打開任一個插座 → 設定 →「連結的 Matter 應用程式與服務」。
+          <details className="mt-1 text-sm">
+            <summary className="cursor-pointer py-1 font-medium text-foreground">改名稱、加到 Apple 家庭或 Alexa</summary>
+            名稱和房間在 Google Home App 裡設定。要再加到 Apple 家庭或 Alexa：在 Google Home 打開任一個插座 → 設定 →「連結的 Matter 應用程式與服務」。
+          </details>
         </P>
         <SRow label="情境也放到 Google Home" hint={`每個情境變成一個開關，說「Hey Google，打開${state?.scenes[0]?.name || "出門"}」就執行；執行完會自己變回關`}>
           <Switch checked={on} onCheckedChange={(v) => put({ matter_scenes: v }, v ? "情境已放到 Google Home" : "情境已從 Google Home 拿掉")} aria-label="情境也放到 Google Home" />
@@ -319,7 +335,7 @@ function GoogleCard() {
   }
   const code = m.manual_code.replace(/^(\d{4})(\d{3})(\d{4})$/, "$1-$2-$3");
   return (
-    <SCard icon={Mic} title="Google Home" badge={<Badge className="bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300">等待配對</Badge>}>
+    <SCard id="s-google" icon={Mic} title="Google Home" badge={<Badge className="bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300">等待配對</Badge>}>
       <div className="space-y-4 px-4 py-4 sm:px-5">
         <p className="leading-relaxed text-muted-foreground">用 Google Home 語音或 App 控制插座，不經過 TP-Link 雲端。需要家裡有 Nest 音箱、Nest Hub 或 Google TV。</p>
         <div className="flex flex-wrap items-center gap-5">
@@ -381,7 +397,7 @@ function NetCheck({ s }: { s: HubState }) {
 
 export function SettingsPage() {
   const { state, connected } = useHub();
-  const [sheet, setSheet] = useState<"sense" | "cloud" | "weather" | "life" | null>(null);
+  const [sheet, setSheet] = useState<"sense" | "cloud" | "weather" | "life" | "line" | "keys" | null>(null);
   const [finding, setFinding] = useState(false);
   if (!state)
     return (
@@ -397,12 +413,27 @@ export function SettingsPage() {
   const bound = cloudBound(state.plugs).length;
   const weekly = set.weekly !== false;
 
+  const jump = (
+    <div className="flex gap-2 lg:hidden">
+      {[["s-notify", "通知"], ["s-life", "天氣生活"], ["s-ask", "問家裡"], ["s-google", "Google Home"], ["s-dev", "裝置"]].map(([id, t]) => (
+        <button
+          key={id}
+          type="button"
+          onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" })}
+          className="h-9 shrink-0 rounded-full border bg-background px-3.5 text-sm font-medium whitespace-nowrap transition-colors hover:bg-muted active:bg-muted"
+        >
+          {t}
+        </button>
+      ))}
+    </div>
+  );
+
   return (
     <>
-      <PageHeader title="設定" />
+      <PageHeader title="設定" chips={jump} />
       <div className="mx-auto grid max-w-7xl items-start gap-4 px-4 py-4 sm:px-6 lg:grid-cols-2 lg:px-8">
         <div className="min-w-0 space-y-4">
-          <SCard icon={Bell} title="提醒與通知">
+          <SCard id="s-notify" icon={Bell} title="提醒與通知">
             <SRow wrap label="開太久提醒" hint="插座開超過這麼久，名稱下方會變橘色（常開的不算）">
               <SettingNumber k="long_on_hours" step={1} unit="小時" label="開太久提醒" />
             </SRow>
@@ -416,18 +447,22 @@ export function SettingsPage() {
                 <SettingNumber k="standby_watts" step={0.5} unit="W" label="待機門檻" />
               </SRow>
             )}
-            <LineNotify />
-            <SRow wrap label="每週摘要" hint="每週日晚上 8 點推播：這週的電費、開最久的電器、新連上網路的裝置、Wi-Fi 斷線次數、用最多網路的裝置">
+            <LinkRow
+              label={<>手機通知（LINE）{state.notify?.error && <Badge className="bg-orange-100 text-orange-800 dark:bg-orange-500/15 dark:text-orange-300">沒送出去</Badge>}</>}
+              hint={state.notify?.line ? `已設定${state.notify.name ? `・${state.notify.name}` : ""}` : "還沒設定・不用另外裝 App"}
+              onClick={() => setSheet("line")}
+            />
+            <SRow wrap label="每週摘要" hint="每週日晚上 8 點，用通知傳這週的電費、用電和網路狀況">
               <div className="flex items-center gap-3">
                 <WeeklyPreview />
                 <Switch checked={weekly} onCheckedChange={(v) => put({ weekly: v }, v ? "每週摘要已打開" : "每週摘要已關閉")} aria-label="每週摘要" />
               </div>
             </SRow>
           </SCard>
-          <SCard icon={CloudSun} title="天氣與生活資訊">
+          <SCard id="s-life" icon={CloudSun} title="天氣與生活資訊">
             <LinkRow
               label="天氣"
-              hint={state.calendar.weather ? `${state.calendar.weather.place || "中央氣象署"}・現在、24 小時、一週預報` : "還沒有氣象署授權碼，在下面貼上"}
+              hint={state.calendar.weather ? `${state.calendar.weather.place || "中央氣象署"}・現在、24 小時、一週預報` : "還沒有氣象署授權碼"}
               onClick={() => setSheet("weather")}
             />
             <LinkRow label="生活資訊" hint="垃圾車、停水停電；選清運點、填你家的路名、通知開關" onClick={() => setSheet("life")} />
@@ -457,7 +492,7 @@ export function SettingsPage() {
                 </div>
               </SRow>
             )}
-            <SRow label="趣味小動畫" hint="全部關閉時畫面暗一下、下雨跳過的排程飄雨、有人回家小人走進門、電費比上月少噴彩帶、開很久的插座冒熱氣">
+            <SRow label="趣味小動畫" hint="全部關閉時畫面暗一下、有人回家小人走進門、電費變少噴彩帶…">
               <Switch
                 checked={state.calendar.local?.fun !== false}
                 aria-label="趣味小動畫"
@@ -471,14 +506,19 @@ export function SettingsPage() {
                 }}
               />
             </SRow>
-            <WeatherKeys />
+            <WeatherKeys part="show" />
+            <LinkRow
+              label="天氣資料的授權碼"
+              hint={`氣象署${state.calendar.weather ? "已設定" : "還沒設定"}・環境部（空氣品質）${state.calendar.weather?.air_key ? "已設定" : "還沒設定"}`}
+              onClick={() => setSheet("keys")}
+            />
           </SCard>
           <AskCard />
         </div>
 
         <div className="min-w-0 space-y-4">
           <GoogleCard />
-          <SCard icon={Search} title="裝置">
+          <SCard id="s-dev" icon={Search} title="裝置">
             <NetCheck s={state} />
             <LinkRow label="訊號地圖" hint="在平面圖上看每個裝置的 Wi-Fi 訊號、哪裡有動靜" href="#map" />
             <LinkRow label="網路裝置與在家的人" hint={routerLine(state)} href="#net" />
@@ -513,6 +553,10 @@ export function SettingsPage() {
       <CloudSheet open={sheet === "cloud"} onClose={() => setSheet(null)} />
       <WeatherSheet open={sheet === "weather"} onClose={() => setSheet(null)} />
       <LifeSheet open={sheet === "life"} onClose={() => setSheet(null)} />
+      <LineSheet open={sheet === "line"} onClose={() => setSheet(null)} />
+      <Sheet open={sheet === "keys"} onOpenChange={(v) => !v && setSheet(null)} title="天氣資料的授權碼" description="只存在樹莓派上，不會再傳回瀏覽器" icon={<KeyRound />} wide>
+        <div className="divide-y overflow-hidden rounded-xl border"><WeatherKeys part="keys" /></div>
+      </Sheet>
     </>
   );
 }
