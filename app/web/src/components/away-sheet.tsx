@@ -55,7 +55,7 @@ export function AwaySheet({ open, onClose }: { open: boolean; onClose: () => voi
             </Row>
           </Group>
           <Section title="每天這段時間">
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3">
               <div className="space-y-1.5"><div className="text-sm">開始</div><ClockPicker seconds={false} value={d.start} onChange={(t) => up({ start: t })} /></div>
               <div className="space-y-1.5"><div className="text-sm">結束</div><ClockPicker seconds={false} value={d.end} onChange={(t) => up({ end: t })} /></div>
             </div>

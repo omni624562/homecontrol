@@ -50,10 +50,18 @@ export function ClockPicker({ value, onChange, seconds = true }: { value: string
   const p = (n: number) => String(n).padStart(2, "0");
   const put = (hh: number, mm: number, ss: number) => onChange(seconds ? `${p(hh)}:${p(mm)}:${p(ss)}` : `${p(hh)}:${p(mm)}`);
   return (
-    <div className={seconds ? "grid grid-cols-3 gap-2" : "grid grid-cols-2 gap-2"}>
+    <div className="grid grid-cols-3 gap-2">
       <NumField label="時" value={h} top={23} onChange={(v) => put(v, m, s)} />
       <NumField label="分" value={m} top={59} onChange={(v) => put(h, v, s)} />
-      {seconds && <NumField label="秒" value={s} top={59} onChange={(v) => put(h, m, v)} />}
+      {seconds ? (
+        <NumField label="秒" value={s} top={59} onChange={(v) => put(h, m, v)} />
+      ) : (
+        // 只到分鐘：秒那格留著（大小一致），說明為什麼不能設
+        <div className="flex flex-col items-center justify-center gap-1 rounded-xl border border-dashed p-2 text-center text-muted-foreground" aria-hidden>
+          <span className="text-xs">秒</span>
+          <span className="text-sm leading-tight">只到分鐘</span>
+        </div>
+      )}
     </div>
   );
 }
