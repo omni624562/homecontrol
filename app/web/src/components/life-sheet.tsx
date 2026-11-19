@@ -42,6 +42,8 @@ export function LifeSheet({ open, onClose }: { open: boolean; onClose: () => voi
     }
   };
 
+  const when = g?.usual ? `約 ${g.usual}` : ` ${g?.stop.time}`;
+  const usualNote = g?.usual ? `・表定 ${g.stop.time}，最近實際大約 ${g.usual} 到` : "";
   const status = !g
     ? null
     : !g.today.length
@@ -51,8 +53,8 @@ export function LifeSheet({ open, onClose }: { open: boolean; onClose: () => voi
         : t && !t.none
           ? { big: "垃圾車已經過了", small: `最後在${t.at_stop}附近` }
           : g.watching
-            ? { big: `今天 ${g.stop.time}`, small: "還沒看到這條路線的車子出勤" }
-            : { big: `今天 ${g.stop.time}`, small: `${g.today.join("、")}・表定時間前 45 分鐘開始追蹤車子` };
+            ? { big: `今天${when}`, small: `還沒看到這條路線的車子出勤${usualNote}` }
+            : { big: `今天${when}`, small: `${g.today.join("、")}・表定時間前 45 分鐘開始追蹤車子${usualNote}` };
   const running = !!g && g.today.length > 0 && !!t && !t.none && (t.stops ?? -1) >= 0;
   const days = (d: number[]) => (d.length ? d.map((i) => DN[i]).join("") : "不收");
 

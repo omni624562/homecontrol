@@ -210,6 +210,7 @@ export interface Local {
     next: { date: string; kinds: string[] }[];
     truck: Truck | null;
     watching: boolean;
+    usual?: string; // 最近幾次實際到的時間（和表定差很多才有）
   } | null;
   stops: GarbageStop[];
   outages: Outage[];

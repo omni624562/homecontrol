@@ -9,10 +9,10 @@
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import json
 import logging
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -111,13 +111,13 @@ class Notifier:
 
     # ---- 送出 ----
     def send(self, title: str, message: str, priority: str = "default") -> None:
+        """可以從任何執行緒呼叫（垃圾車、停水停電是在背景執行緒裡查的）。"""
         _LOGGER.info("通知：%s｜%s", title, message)
-        loop = asyncio.get_running_loop()
         topic = (self._topic() or "").strip()
         if topic:
-            loop.run_in_executor(None, _ntfy, topic, title, message, priority)
+            threading.Thread(target=_ntfy, args=(topic, title, message, priority), daemon=True).start()
         if self._token():
-            loop.run_in_executor(None, self._push, title, message, priority)
+            threading.Thread(target=self._push, args=(title, message, priority), daemon=True).start()
 
     def push_now(self, title: str, message: str) -> None:
         """馬上送、失敗就丟出原因（測試用）。"""

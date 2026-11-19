@@ -92,6 +92,11 @@ class LocalInfo:
             self._notified = set(json.loads((data_dir / "local_notified.json").read_text("utf-8")))
         except Exception:  # noqa: BLE001
             pass
+        self.arrivals: dict[str, list[dict]] = {}  # 每個清運點最近幾次車子實際到的時間
+        try:
+            self.arrivals = json.loads((data_dir / "garbage_arrivals.json").read_text("utf-8"))
+        except Exception:  # noqa: BLE001
+            pass
         try:
             cache = json.loads((data_dir / "garbage_lines.json").read_text("utf-8"))
             self.lines = cache["lines"]
@@ -220,6 +225,21 @@ class LocalInfo:
     def today_kinds(self, stop: dict, day: date) -> list[str]:
         return [label for k, label in KINDS if day.weekday() in stop["days"].get(k, [])]
 
+    def usual(self, s: dict) -> int | None:
+        """這個清運點最近幾次實際到的時間（第幾分鐘，取中間值）；還沒有紀錄就回傳 None。"""
+        got = sorted(x["m"] for x in self.arrivals.get(f"{s['lineid']}:{s['rank']}", [])[-7:])
+        return got[len(got) // 2] if got else None
+
+    def _arrived(self, s: dict, at: datetime) -> None:
+        key = f"{s['lineid']}:{s['rank']}"
+        rows = [x for x in self.arrivals.get(key, []) if x["d"] != at.date().isoformat()]
+        rows.append({"d": at.date().isoformat(), "m": at.hour * 60 + at.minute})
+        self.arrivals[key] = rows[-10:]
+        try:
+            (self.dir / "garbage_arrivals.json").write_text(json.dumps(self.arrivals), "utf-8")
+        except OSError:
+            pass
+
     def _truck_window(self) -> bool:
         s = self.my_stop()
         if not s or not self.today_kinds(s, date.today()):
@@ -229,7 +249,8 @@ class LocalInfo:
             return False
         now = datetime.now()
         sched = now.replace(hour=t // 60, minute=t % 60, second=0, microsecond=0)
-        return -WINDOW_BEFORE <= (now - sched).total_seconds() <= WINDOW_AFTER
+        early = min(0, (self.usual(s) or t) - t) * 60  # 平常比表定早到的話，提早開始看
+        return -WINDOW_BEFORE + early <= (now - sched).total_seconds() <= WINDOW_AFTER
 
     def _trucks(self) -> None:
         s = self.my_stop()
@@ -252,9 +273,16 @@ class LocalInfo:
                     "stops": ahead, "m": dist}
             t_me, t_it = _hm(s["time"]), _hm(near["time"])
             if t_me is not None and t_it is not None and ahead >= 0:
-                info["eta_min"] = max(0, t_me - t_it)
+                eta = max(0, t_me - t_it)
+                usual, now = self.usual(s), datetime.now()
+                if usual is not None and ahead > 0:  # 時刻表常常不準：參考最近幾次實際到的時間
+                    eta = min(eta, max(1, usual - (now.hour * 60 + now.minute)))
+                info["eta_min"] = eta
             if best is None or (ahead >= 0 and (best["stops"] < 0 or ahead < best["stops"])):
                 best = info
+        prev = self.truck or {}
+        if best and best["stops"] == 0 and prev.get("stops", 1) != 0 and best.get("at"):
+            self._arrived(s, datetime.strptime(best["at"], "%Y/%m/%d %H:%M:%S"))  # 第一次看到車子到這一站
         self.truck = best or {"none": True}
         key = f"{date.today()}:{s['lineid']}:{s['rank']}"
         if best and 0 <= best["stops"] <= NOTIFY_STOPS and key not in self._notified and self.cfg.get("garbage_notify", True):
@@ -383,6 +411,9 @@ class LocalInfo:
                     break
             garbage = {"stop": {k: s[k] for k in ("lineid", "line", "rank", "name", "time", "memo", "days")},
                        "today": self.today_kinds(s, today), "next": nxt, "truck": self.truck, "watching": self._truck_window()}
+            u, t = self.usual(s), _hm(s["time"])
+            if u is not None and t is not None and abs(u - t) >= 2:
+                garbage["usual"] = f"{u // 60:02d}:{u % 60:02d}"  # 最近實際到的時間（和表定差 2 分鐘以上才給）
         horizon = (datetime.now() + timedelta(days=14)).isoformat(timespec="minutes")
         return {
             "garbage": garbage,

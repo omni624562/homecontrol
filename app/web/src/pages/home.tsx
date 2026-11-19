@@ -199,7 +199,7 @@ export function HomePage() {
       {r?.configured && <Pill icon={r.ok ? Wifi : WifiOff} tone={r.ok ? undefined : "bad"}>{r.ok ? "網路正常" : "路由器連不上"}</Pill>}
       {g && g.today.length > 0 && (
         <Chip onClick={() => setSheet("life")} icon={Truck} label="垃圾車" moving={!!truck && !truck.none && (truck.stops ?? -1) >= 0}
-          sub={truck && !truck.none ? ((truck.stops ?? -1) >= 0 ? `還有 ${truck.stops} 站` : "已經過了") : g.stop.time} />
+          sub={truck && !truck.none ? ((truck.stops ?? -1) >= 0 ? `還有 ${truck.stops} 站` : "已經過了") : g.usual ? `約 ${g.usual}` : g.stop.time} />
       )}
       {roadOutages[0] && (
         <Chip onClick={() => setSheet("life")} icon={roadOutages[0].kind === "power" ? Zap : Droplets} tone="warn"
