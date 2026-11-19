@@ -437,7 +437,7 @@ function JumpChips() {
     box.scrollBy({ left: b.left + b.width / 2 - (c.left + c.width / 2), behavior: "smooth" });
   }, [active]);
   return (
-    <div ref={row} className="flex gap-2 lg:hidden">
+    <div ref={row} className="flex gap-2">
       {SECTIONS.map(([id, t]) => (
         <button
           key={id}
@@ -481,7 +481,7 @@ export function SettingsPage() {
 
   return (
     <>
-      <PageHeader title="設定" chips={<JumpChips />} />
+      <PageHeader title="設定" chips={<JumpChips />} chipsClassName="lg:hidden" />
       <div className="mx-auto grid max-w-7xl items-start gap-4 px-4 py-4 sm:px-6 lg:grid-cols-2 lg:px-8">
         <div className="min-w-0 space-y-4">
           <SCard id="s-notify" icon={Bell} title="提醒與通知">
