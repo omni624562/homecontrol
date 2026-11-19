@@ -292,6 +292,9 @@ class Assistant:
         @beta_async_tool
         async def get_energy() -> str:
             """用電和電費（估算）：今天、本月、預估月底、比上月同期、各裝置本月排行、最近 14 天每天的度數。"""
+            # 和用電頁一樣：插座的使用紀錄太舊（或剛重開還沒讀）就先向插座讀一次
+            if not hub._usage or time.time() - hub._usage_at > 600:
+                await hub.refresh_usage()
             r = hub.energy_report()
             top = sorted(r["plugs"], key=lambda p: -(p.get("month_kwh") or 0))[:8]
             return json.dumps({
