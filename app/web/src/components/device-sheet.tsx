@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { AlertCircle, CheckCircle2, ChevronDown, Loader2, Lock, RotateCcw, Timer, Trash2, WifiOff, X } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { DurationPicker } from "@/components/duration-picker";
 import { Sheet } from "@/components/responsive-sheet";
-import { Group, Row, Section, Value } from "@/components/settings-bits";
+import { Row, Section } from "@/components/settings-bits";
 import { WattsRows } from "@/components/watts-field";
 import { deviceIcon } from "@/components/icons";
 import { api } from "@/lib/api";
@@ -36,6 +36,22 @@ function signal(rssi?: number | null) {
   if (rssi == null) return null;
   const level = rssi >= -55 ? 4 : rssi >= -67 ? 3 : rssi >= -75 ? 2 : 1;
   return { level, text: ["", "差", "普通", "良好", "很好"][level] };
+}
+
+// 狀態的一格：上面小字、下面數字，置中；有連結的可以點
+function Tile({ label, children, href, warn }: { label: string; children: ReactNode; href?: string; warn?: boolean }) {
+  const cls = cn(
+    "flex min-w-0 flex-col items-center justify-center gap-0.5 rounded-xl border bg-card px-2 py-2.5 text-center",
+    href && "transition-colors hover:bg-muted/60 active:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+    warn && "border-orange-300 dark:border-orange-500/40",
+  );
+  const inner = (
+    <>
+      <span className="max-w-full truncate text-xs text-muted-foreground">{label}</span>
+      <span className={cn("max-w-full text-[15px] font-semibold whitespace-nowrap tabular-nums", warn && "text-orange-700 dark:text-orange-400")}>{children}</span>
+    </>
+  );
+  return href ? <a href={href} className={cls}>{inner}</a> : <div className={cls}>{inner}</div>;
 }
 
 function Bars({ level }: { level: number }) {
@@ -92,24 +108,9 @@ function DeviceIcon({ p }: { p: Plug }) {
   return <I className={cn(p.online && isOn(p) && "text-amber-600")} />;
 }
 
-// 副標題：區域＋連到哪個 Wi-Fi、IP、訊號（細節在「進階」）
 function DeviceSub({ p }: { p: Plug }) {
   const { state } = useHub();
-  const sig = p.online ? signal(p.rssi) : null;
-  const weak = p.rssi != null && p.rssi < -70;
-  return (
-    <span className="flex flex-wrap items-center gap-x-1.5">
-      <span>{state?.rooms.find((r) => r.id === p.room)?.name || "還沒分區域"}</span>
-      {p.online && (p.net?.ssid || p.host) && (
-        <span className={cn("inline-flex items-center gap-1 whitespace-nowrap tabular-nums", weak && "font-medium text-orange-700 dark:text-orange-400")}>
-          <span aria-hidden>・</span>{sig && <Bars level={sig.level} />}
-          <span className="whitespace-nowrap">{p.net?.ssid || p.host}</span>
-          {/* 手機放不下：IP 和訊號文字只在寬一點的畫面顯示（進階裡也有） */}
-          <span className="hidden whitespace-nowrap sm:inline">{[p.net?.ssid ? p.host : "", sig ? `訊號${sig.text}` : ""].filter(Boolean).map((x) => `・${x}`).join("")}</span>
-        </span>
-      )}
-    </span>
-  );
+  return <>{state?.rooms.find((r) => r.id === p.room)?.name || "還沒分區域"}</>;
 }
 
 // 標題列右邊的狀態：開著多久、還有多久關、關著、連不上
@@ -202,6 +203,7 @@ function DeviceBody({ p }: { p: Plug }) {
   const weakKey = net?.key_type != null && net.key_type < 3 && !onRouter;
   const ups = net?.fw_updates || [];
   const shared = (state?.plugs || []).filter((x) => x.host === p.host).length > 1;
+  const sig = signal(p.rssi);
   const nativeText = !n ? "等待同步…" : !n.ok ? n.msg || "同步失敗，稍後再試" : n.schedule ? `已寫入 ${n.schedule} 條，樹莓派離線時照樣執行` : "目前沒有排程要寫入";
 
   // 網路、韌體有沒有要注意的地方
@@ -344,24 +346,23 @@ function DeviceBody({ p }: { p: Plug }) {
         </div>
       </Section>
 
-      {/* 狀態：網路的位置在標題列、細節在進階；這裡只有要注意的事和使用時間 */}
+      {/* 狀態：三格一樣大的數字（今天、本月、Wi-Fi 訊號）；有要注意的事才在下面列出來 */}
       {p.online && (
         <Section title="狀態">
-          <Group>
-            {issues.length > 0 && (
-              <div className="space-y-1.5 px-4 py-3">
-                {issues.map((x) => (
-                  <div key={x} className="flex gap-2 text-sm leading-relaxed font-medium text-orange-700 dark:text-orange-400"><AlertCircle className="mt-0.5 size-4 shrink-0" />{x}</div>
-                ))}
-              </div>
-            )}
-            <Row label={<span className="whitespace-nowrap">使用時間</span>}>
-              <span className="flex max-w-[72%] flex-wrap items-center justify-end gap-x-3 text-right text-sm tabular-nums">
-                {usage === null ? <Value tone="muted">讀取中…</Value> : usage === false ? <Value tone="muted">讀不到</Value> : <><span className="whitespace-nowrap">今天 {fmtMin(usage.today)}</span><span className="whitespace-nowrap">本月 {fmtMin(usage.month)}</span></>}
-                <a href="#energy" className="font-medium whitespace-nowrap text-primary hover:underline">看用電 ›</a>
-              </span>
-            </Row>
-          </Group>
+          <div className="grid grid-cols-3 gap-2 sm:gap-3">
+            <Tile label="今天開了" href="#energy">{usage === null ? "…" : usage === false ? "—" : fmtMin(usage.today)}</Tile>
+            <Tile label="本月開了" href="#energy">{usage === null ? "…" : usage === false ? "—" : usage.month >= 6000 ? `${Math.round(usage.month / 60)} 小時` : fmtMin(usage.month)}</Tile>
+            <Tile label={net?.ssid ? `Wi-Fi・${net.ssid}` : "Wi-Fi 訊號"} warn={!!sig && sig.level <= 2}>
+              {sig ? <span className="inline-flex items-center gap-1.5"><Bars level={sig.level} />{sig.text}</span> : "—"}
+            </Tile>
+          </div>
+          {issues.length > 0 && (
+            <div className="mt-2 space-y-1.5 rounded-xl border border-orange-300 bg-orange-50 px-4 py-3 dark:border-orange-500/30 dark:bg-orange-500/10">
+              {issues.map((x) => (
+                <div key={x} className="flex gap-2 text-sm leading-relaxed font-medium text-orange-700 dark:text-orange-400"><AlertCircle className="mt-0.5 size-4 shrink-0" />{x}</div>
+              ))}
+            </div>
+          )}
         </Section>
       )}
 
@@ -427,18 +428,25 @@ function DeviceBody({ p }: { p: Plug }) {
                 <span className="text-right text-sm leading-relaxed">{n.kasa.map((r, i) => <span key={i} className="block">{ruleText(r)}</span>)}</span>
               </Row>
             )}
-            {p.online && (
-              <Row label={<span className="whitespace-nowrap">網路</span>}>
-                <span className="text-right text-sm text-muted-foreground tabular-nums">
-                  {[p.host, net ? (onRouter ? "WPA2 以上" : keyName(net.key_type)) : "", p.rssi != null ? `${p.rssi} dBm` : "", fwShort, cloudText].filter(Boolean).join("・")}
-                </span>
-              </Row>
-            )}
-            <Row label={<span className="whitespace-nowrap">硬體</span>}>
-              <span className="text-right text-sm text-muted-foreground">
-                {[p.model, net?.hw ? `硬體 ${net.hw}` : "", net?.fw ? `韌體 ${net.fw}` : ""].filter(Boolean).join("・")}
-              </span>
-            </Row>
+            <div className="px-4 py-3">
+              <div className="mb-2 text-[15px] font-medium">裝置資訊</div>
+              <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-3">
+                {([
+                  ["Wi-Fi", net?.ssid],
+                  ["IP 位址", p.host],
+                  ["訊號", p.rssi != null ? `${p.rssi} dBm` : ""],
+                  ["加密", net ? (onRouter ? "WPA2 以上" : keyName(net.key_type)) : ""],
+                  ["型號", [p.model, net?.hw ? `硬體 ${net.hw}` : ""].filter(Boolean).join("・")],
+                  ["韌體", [net?.fw, fwShort.replace("韌體", "")].filter(Boolean).join("・")],
+                  ["TP-Link 雲端", cloudText.replace("TP-Link 雲端", "")],
+                ] as [string, string | undefined][]).filter(([, v]) => v).map(([k, v]) => (
+                  <div key={k} className="min-w-0">
+                    <dt className="text-xs text-muted-foreground">{k}</dt>
+                    <dd className="truncate tabular-nums" title={v}>{v}</dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
             {p.online && (
               <Row label="重新啟動插座" hint={`插座卡住時用；${shared ? "整條排插都會重開，" : ""}可能短暫斷電`}>
                 <AlertDialog>
