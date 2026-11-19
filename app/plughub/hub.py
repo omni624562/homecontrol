@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import calendar
 import contextvars
+import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -116,6 +117,13 @@ class Hub:
         # 插座自己記錄的使用時間（每天、每月的分鐘數），每 30 分鐘讀一次
         self._usage: dict[str, dict[str, dict[str, int]]] = {}
         self._usage_at = 0.0
+        # 插座的使用紀錄存一份在樹莓派上：重開之後用電頁、問家裡馬上有資料
+        self._usage_file = store.dir / "usage_cache.json"
+        try:
+            cached = json.loads(self._usage_file.read_text("utf-8"))
+            self._usage, self._usage_at = cached["plugs"], float(cached["at"])
+        except Exception:  # noqa: BLE001
+            pass
         self.sensing = Sensing()
         self._sense_path = store.dir / "sensing.json.gz"
         self.sensing.load(self._sense_path)
@@ -679,6 +687,12 @@ class Hub:
                 self._usage[pid] = await native.usage_history(entry.device, native.context(entry.device, plug.child_index))
             except Exception as err:  # noqa: BLE001
                 _LOGGER.debug("讀 %s 使用時間失敗：%s", self.name(plug), err)
+        try:
+            tmp = self._usage_file.with_suffix(".tmp")
+            tmp.write_text(json.dumps({"at": self._usage_at, "plugs": self._usage}), "utf-8")
+            tmp.replace(self._usage_file)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("存使用紀錄失敗：%s", err)
 
     def energy_report(self) -> dict[str, Any]:
         """用電 dashboard：插座自己記錄的開機時間 × 瓦數（估算）。

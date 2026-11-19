@@ -90,6 +90,33 @@ class Weather:
         self.air_error: str | None = None
         self.updated = 0.0
         self._at: dict[str, float] = {}
+        # 上次查到的資料存在樹莓派上：重開之後馬上有天氣，也不用整包重抓氣象署的資料
+        self._cache = secrets_path.parent / "weather_cache.json"
+        self._load_cache()
+
+    _KEEP = ("stations", "rain_stations", "county", "town", "air_site", "obs", "rain_obs", "hourly", "daily", "periods", "air", "updated")
+
+    def _load_cache(self) -> None:
+        try:
+            d = json.loads(self._cache.read_text("utf-8"))
+        except Exception:  # noqa: BLE001
+            return
+        for k in self._KEEP:
+            if k in d:
+                setattr(self, k, d[k])
+        self.home = tuple(d["home"]) if d.get("home") else None  # type: ignore[assignment]
+        self._at = {k: float(v) for k, v in (d.get("_at") or {}).items()}
+
+    def _save_cache(self) -> None:
+        try:
+            d = {k: getattr(self, k) for k in self._KEEP}
+            d["home"] = list(self.home) if self.home else None
+            d["_at"] = self._at
+            tmp = self._cache.with_suffix(".tmp")
+            tmp.write_text(json.dumps(d, ensure_ascii=False), "utf-8")
+            tmp.replace(self._cache)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("存天氣快取失敗：%s", err)
 
     # ---- 金鑰 ----
     def _secrets(self) -> dict:
@@ -180,6 +207,7 @@ class Weather:
                 _LOGGER.warning("環境部空品查詢失敗：%s", self.air_error)
         if changed:
             self.updated = time.time()
+        self._save_cache()  # 連查詢時間一起存：重開之後不會馬上整包重抓
         return changed
 
     def _resolve(self) -> None:
