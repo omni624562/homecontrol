@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Pause, Wifi } from "lucide-react";
 import { toast } from "sonner";
 import { Switch } from "@/components/ui/switch";
@@ -28,6 +28,13 @@ export function SenseSheet({ open, onClose }: { open: boolean; onClose: () => vo
   const [range, setRange] = useState<Range>("1h");
   const [d, setD] = useState<Sensing | null>(null);
   const [tip, setTip] = useState<string | null>(null);
+  // 手機上放不下：捲到最右邊（最近）
+  const scroller = useRef<HTMLDivElement>(null);
+  const ready = !!d;
+  useEffect(() => {
+    const el = scroller.current;
+    if (el) el.scrollLeft = el.scrollWidth;
+  }, [ready, range]);
   const load = useCallback(() => {
     api<Sensing>("GET", `/api/sensing?range=${range}`).then(setD).catch(() => {});
   }, [range]);
@@ -64,13 +71,6 @@ export function SenseSheet({ open, onClose }: { open: boolean; onClose: () => vo
     const since = d.since && range !== "1h" ? new Date(d.since * 1000) : null;
     body = (
       <div className="space-y-5">
-        {!d.enabled ? (
-          <Callout icon={Pause} title="記錄已暫停" sub="打開下面的開關開始記錄" />
-        ) : d.active.length ? (
-          <Callout icon={Wifi} tone="warm" title="最近 30 秒有動靜" sub={`${d.active.join("、")} 附近`} />
-        ) : (
-          <Callout icon={Wifi} title="目前沒有偵測到動靜" sub={d.samples ? `已記錄 ${fmt(d.samples)} 筆` : "剛開始記錄，等幾分鐘"} />
-        )}
         <div className="space-y-3 rounded-xl border p-4">
           <div className="flex flex-wrap items-center gap-3">
             <h3 className="flex-1 font-semibold">{title}</h3>
@@ -85,7 +85,7 @@ export function SenseSheet({ open, onClose }: { open: boolean; onClose: () => vo
           <div className="min-h-6 text-sm tabular-nums text-muted-foreground" aria-live="polite">
             <span className={cn(tip && "font-medium text-foreground")}>{tip || `每一格是${unit}（那段時間裡最大的擾動），顏色越深擾動越大・滑過看數字`}</span>
           </div>
-          <div className="overflow-x-auto" onMouseLeave={() => setTip(null)}>
+          <div ref={scroller} className="overflow-x-auto" onMouseLeave={() => setTip(null)}>
             <div className="grid min-w-[36rem] items-center gap-[2px]" style={{ gridTemplateColumns: `minmax(4.5rem, 8rem) repeat(${d.minutes}, minmax(0, 1fr)) 2.75rem` }}>
               <span className="sticky left-0 z-10 h-full bg-background" />
               {Array.from({ length: d.minutes }, (_, i) => (
@@ -111,19 +111,30 @@ export function SenseSheet({ open, onClose }: { open: boolean; onClose: () => vo
     );
   }
   return (
-    <Sheet open={open} onOpenChange={(v) => !v && onClose()} title="Wi-Fi 感測" description="實驗：用插座的訊號擾動，猜哪裡有人在走動" icon={<Wifi />} wide="xl">
+    <Sheet
+      open={open}
+      onOpenChange={(v) => !v && onClose()}
+      title={<span className="inline-flex items-center gap-2">Wi-Fi 感測<span className="rounded-md bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground">實驗</span></span>}
+      description={<Status d={d} />}
+      icon={d && d.enabled && d.active.length ? <Wifi className="text-amber-600" /> : d && !d.enabled ? <Pause /> : <Wifi />}
+      wide="xl"
+    >
       {body}
     </Sheet>
   );
 }
 
-function Callout({ icon: I, title, sub, tone }: { icon: React.ElementType; title: string; sub: string; tone?: "warm" }) {
-  return (
-    <div className={cn("flex gap-3 rounded-xl border bg-muted/50 p-4", tone === "warm" && "border-amber-200 bg-amber-50 dark:border-amber-500/30 dark:bg-amber-500/10")}>
-      <I className={cn("mt-0.5 size-5 shrink-0 text-muted-foreground", tone === "warm" && "text-amber-600")} />
-      <div className="leading-relaxed"><div className="font-semibold">{title}</div><div className="text-sm text-muted-foreground">{sub}</div></div>
-    </div>
-  );
+// 標題下面一行：現在的狀態（固定在上面，捲動也看得到）
+function Status({ d }: { d: Sensing | null }) {
+  if (!d) return <>用插座的訊號擾動，猜哪裡有人在走動</>;
+  if (!d.enabled) return <>記錄已暫停・打開下面的「記錄訊號」開始記錄</>;
+  if (d.active.length)
+    return (
+      <span className="font-medium text-amber-700 dark:text-amber-400">
+        最近 30 秒有動靜：{d.active.join("、")} 附近
+      </span>
+    );
+  return <>目前沒有偵測到動靜・{d.samples ? `已記錄 ${fmt(d.samples)} 筆` : "剛開始記錄，等幾分鐘"}</>;
 }
 
 function SenseRow({ dev, at, onTip }: { dev: Sensing["devices"][number]; at: (i: number) => string; onTip: (t: string) => void }) {
