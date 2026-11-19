@@ -14,7 +14,7 @@ export function Sheet({
   description?: ReactNode;
   icon?: ReactNode;
   children: ReactNode;
-  wide?: boolean;
+  wide?: boolean | "xl";
 }) {
   const desktop = useMedia("(min-width: 768px)");
   const head = (
@@ -34,7 +34,7 @@ export function Sheet({
   if (desktop)
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className={cn("max-h-[88vh] grid-cols-[minmax(0,1fr)] overflow-y-auto", wide ? "sm:max-w-2xl" : "sm:max-w-md")}>
+        <DialogContent className={cn("max-h-[88vh] grid-cols-[minmax(0,1fr)] overflow-y-auto", wide === "xl" ? "sm:max-w-5xl" : wide ? "sm:max-w-2xl" : "sm:max-w-md")}>
           <DialogHeader>{head}</DialogHeader>
           <div className="min-w-0">{children}</div>
         </DialogContent>

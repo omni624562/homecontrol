@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Loader2, Pencil, Power, Truck, WifiOff, Zap, Droplets } from "lucide-react";
+import { Droplets, Gauge, Home as HomeIcon, Loader2, Pencil, Power, Truck, Wifi, WifiOff, Zap } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -18,6 +18,17 @@ import { fmt } from "@/lib/format";
 import { useHub, useMedia, useTick } from "@/lib/hub";
 import type { Plug } from "@/lib/types";
 import { cn } from "@/lib/utils";
+
+// 只顯示資訊的小標籤（誰在家、功率、網路）
+function Pill({ icon: I, children, tone }: { icon: React.ElementType; children: React.ReactNode; tone?: "ok" | "bad" }) {
+  return (
+    <span className={cn("inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-transparent bg-muted/70 px-3 text-sm whitespace-nowrap text-muted-foreground",
+      tone === "ok" && "text-emerald-700 dark:text-emerald-400", tone === "bad" && "text-orange-700 dark:text-orange-400")}>
+      <I className="size-4" />
+      {children}
+    </span>
+  );
+}
 
 // 首頁上方的小按鈕（天氣、垃圾車、停水停電）
 function Chip({ onClick, icon: I, label, sub, tone }: { onClick: () => void; icon: React.ElementType; label: string; sub?: string; tone?: "warn" }) {
@@ -160,8 +171,14 @@ export function HomePage() {
   const g = L?.garbage;
   const truck = g?.truck;
   const roadOutages = (L?.outages || []).filter((x) => x.hit === "road");
+  const people = state.people || [];
+  const home = people.filter((x) => x.home).length;
+  const r = state.router;
   const chips = (
     <>
+      {people.length > 0 && <Pill icon={HomeIcon} tone={home ? "ok" : undefined}>{home ? `${home} 人在家` : "都出門了"}</Pill>}
+      {state.summary.power != null && <Pill icon={Gauge}>{fmt(state.summary.power)} W</Pill>}
+      {r?.configured && <Pill icon={r.ok ? Wifi : WifiOff} tone={r.ok ? undefined : "bad"}>{r.ok ? "網路正常" : "路由器連不上"}</Pill>}
       {g && g.today.length > 0 && (
         <Chip onClick={() => setSheet("life")} icon={Truck} label="垃圾車"
           sub={truck && !truck.none ? ((truck.stops ?? -1) >= 0 ? `還有 ${truck.stops} 站` : "已經過了") : g.stop.time} />

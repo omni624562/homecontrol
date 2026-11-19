@@ -17,6 +17,38 @@ export interface Plug {
   timer: number | null;
   standby: boolean;
   model?: string;
+  kasa_name?: string;
+  host?: string;
+  device?: string;
+  mode?: "metered" | "estimated";
+  matter?: boolean;
+  led?: boolean;
+  rssi?: number | null;
+  cloud?: boolean | null;
+  native?: {
+    ok: boolean;
+    msg: string;
+    schedule: number;
+    kasa: KasaRule[];
+  } | null;
+  net?: {
+    fw?: string;
+    hw?: string;
+    model?: string;
+    ssid?: string;
+    key_type?: number | null;
+    cloud_bound?: boolean | null;
+    fw_updates?: { version?: string }[];
+    fw_check?: string;
+  } | null;
+}
+
+export interface KasaRule {
+  sact: number;
+  opt: number;
+  val: number;
+  wday: number[];
+  enable: number;
 }
 
 export interface Room {
@@ -146,6 +178,6 @@ export interface HubState {
   summary: { power: number | null; energy_today: number; cost_today: number; cost_month: number };
   settings: { long_on_hours?: number; [k: string]: unknown };
   calendar: { holiday: string | null; rain: string | null; weather: Weather | null; weather_show: boolean; local: Local };
-  router?: { configured: boolean; ok: boolean };
+  router?: { configured: boolean; ok: boolean; ssids?: string[] };
   assistant?: unknown;
 }
