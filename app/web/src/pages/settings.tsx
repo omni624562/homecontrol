@@ -15,7 +15,7 @@ import { PageHeader } from "@/components/app-shell";
 import { AskSetup, fmtUsd, useAsk } from "@/components/ask-sheet";
 import { CloudSheet, cloudBound } from "@/components/cloud-sheet";
 import { SenseSheet } from "@/components/sense-sheet";
-import { WeatherSheet } from "@/components/weather-sheet";
+import { WeatherKeys, WeatherSheet } from "@/components/weather-sheet";
 import { LifeSheet } from "@/components/life-sheet";
 import { SettingNumber } from "@/components/settings-bits";
 import { api } from "@/lib/api";
@@ -394,10 +394,11 @@ export function SettingsPage() {
           <SCard icon={CloudSun} title="天氣與生活資訊">
             <LinkRow
               label="天氣"
-              hint={state.calendar.weather ? `${state.calendar.weather.place || "中央氣象署"}・${state.calendar.weather_show !== false ? "首頁顯示中" : "首頁不顯示"}` : "還沒有氣象署授權碼"}
+              hint={state.calendar.weather ? `${state.calendar.weather.place || "中央氣象署"}・現在、24 小時、一週預報` : "還沒有氣象署授權碼，在下面貼上"}
               onClick={() => setSheet("weather")}
             />
             <LinkRow label="生活資訊" hint="垃圾車、停水停電；選清運點、填你家的路名、通知開關" onClick={() => setSheet("life")} />
+            <WeatherKeys />
           </SCard>
           <AskCard />
         </div>

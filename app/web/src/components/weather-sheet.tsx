@@ -18,7 +18,7 @@ function KeyRow({ k, label, has, hint, ph }: { k: "cwa" | "moenv"; label: string
   const [busy, setBusy] = useState(false);
   return (
     <form
-      className="space-y-2 px-4 py-3.5"
+      className="space-y-2 px-4 py-3.5 sm:px-5"
       onSubmit={async (e) => {
         e.preventDefault();
         if (!v.trim()) return;
@@ -47,16 +47,16 @@ function KeyRow({ k, label, has, hint, ph }: { k: "cwa" | "moenv"; label: string
 }
 
 // 授權碼、首頁顯示天氣（只存在樹莓派上，不會再傳回瀏覽器）
-function WeatherKeys() {
+export function WeatherKeys() {
   const { state } = useHub();
   const c = state?.calendar;
   const w = c?.weather;
   const on = c?.weather_show !== false;
   return (
-    <div className="divide-y overflow-hidden rounded-xl border bg-muted/30">
+    <>
       <KeyRow k="cwa" label="中央氣象署授權碼" has={!!w} hint="到 opendata.cwa.gov.tw 註冊、登入，右上角「取得授權碼」" ph="CWA- 開頭" />
       <KeyRow k="moenv" label="環境部 API 金鑰（空氣品質）" has={!!w?.air_key} hint="到 data.moenv.gov.tw 註冊、登入，會員專區「API 金鑰」申請" ph="選填" />
-      <div className="flex items-center gap-3 px-4 py-3.5">
+      <div className="flex items-center gap-3 px-4 py-3.5 sm:px-5">
         <div className="min-w-0 flex-1">
           <div className="font-medium">首頁顯示天氣</div>
           <div className="text-sm leading-relaxed text-muted-foreground">每 10 分鐘查一次附近的測站。最近的測站在樹莓派上算，家裡的位置不會送出去，氣象署只會知道查哪個測站和鄉鎮。授權碼只存在樹莓派上</div>
@@ -74,7 +74,7 @@ function WeatherKeys() {
           }}
         />
       </div>
-    </div>
+    </>
   );
 }
 
@@ -88,12 +88,12 @@ export function WeatherSheet({ open, onClose }: { open: boolean; onClose: () => 
           {!w ? (
             <div className="flex gap-3 rounded-xl border bg-muted/50 p-4">
               <KeyRound className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
-              <div className="leading-relaxed"><div className="font-semibold">還沒有氣象署授權碼</div><div className="text-sm text-muted-foreground">貼上下面的授權碼就會開始查</div></div>
+              <div className="leading-relaxed"><div className="font-semibold">還沒有氣象署授權碼</div><div className="text-sm text-muted-foreground">到「設定 → 天氣與生活資訊」貼上授權碼就會開始查</div></div>
             </div>
           ) : (
             <p className="py-6 text-center text-muted-foreground">{w.error ? `查不到天氣：${w.error}` : "查詢中，等幾秒…"}</p>
           )}
-          <WeatherKeys />
+          <Button asChild className="w-full" onClick={onClose}><a href="#settings">到設定貼上授權碼</a></Button>
         </div>
       </Sheet>
     );
@@ -142,7 +142,7 @@ export function WeatherSheet({ open, onClose }: { open: boolean; onClose: () => 
         {w.hourly.length > 0 && (
           <section className="rounded-2xl border p-3">
             <h3 className="mb-2 px-1 text-sm font-semibold">接下來 24 小時</h3>
-            <div className="-mx-1 flex gap-1 overflow-x-auto pb-1 [scrollbar-width:thin]">
+            <div className="scroll-area -mx-1 flex gap-1 overflow-x-auto pb-1 [scrollbar-gutter:auto]">
               {w.hourly.map((h, i) => {
                 const I = weatherIcon(h.code, h.text, h.day);
                 return (
@@ -189,7 +189,6 @@ export function WeatherSheet({ open, onClose }: { open: boolean; onClose: () => 
           {w.error && <><br />最近一次查詢失敗：{w.error}</>}
         </p>
         {rainSched && <div className="space-y-1.5 rounded-xl border p-4"><div className="mb-1 text-sm font-semibold">下雨不執行的排程</div><RainLines /></div>}
-        <WeatherKeys />
       </div>
     </Sheet>
   );
