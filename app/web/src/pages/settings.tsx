@@ -24,6 +24,7 @@ import { api } from "@/lib/api";
 import { pad2 } from "@/lib/format";
 import { useHub } from "@/lib/hub";
 import { setLook, useLook } from "@/lib/look";
+import { previewStandby, setStandbyMin, useStandbyMin } from "@/components/standby";
 import { Segmented } from "@/components/schedule-bits";
 import type { HubState } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -465,6 +466,7 @@ function JumpChips() {
 
 export function SettingsPage() {
   const look = useLook();
+  const standby = useStandbyMin();
   const { state, connected } = useHub();
   const [sheet, setSheet] = useState<"sense" | "cloud" | "weather" | "life" | "line" | "keys" | null>(null);
   const [finding, setFinding] = useState(false);
@@ -574,6 +576,16 @@ export function SettingsPage() {
           <SCard id="s-look" icon={Palette} title="外觀">
             <SRow wrap label="畫面風格" hint="只換這台裝置的樣子；功能和資料都一樣，隨時可以換回來">
               <div className="w-56"><Segmented label="畫面風格" value={look} onChange={setLook} options={[["classic", "原本"], ["tech", "科技感"]]} /></div>
+            </SRow>
+            <SRow wrap label="待機畫面" hint="這台裝置沒人碰這麼久，就換成大時鐘和公車、垃圾車這些當下有用的事；碰一下回來。適合牆上的平板">
+              <Select value={String(standby)} onValueChange={(v) => setStandbyMin(Number(v))}>
+                <SelectTrigger className="w-32 bg-background" aria-label="待機畫面"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="0">不用</SelectItem>
+                  {[1, 2, 5, 10, 30].map((n) => <SelectItem key={n} value={String(n)}>{n} 分鐘後</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <Button variant="outline" size="sm" onClick={previewStandby}>預覽</Button>
             </SRow>
             <SRow label="深色、淺色" hint="跟著手機或電腦的系統設定自動切換，兩種風格都有深淺兩套" />
           </SCard>

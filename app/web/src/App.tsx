@@ -10,6 +10,7 @@ import { MapPage } from "@/pages/map";
 import { AskProvider } from "@/components/ask-sheet";
 import { TruckRush } from "@/components/truck-rush";
 import { FxLayer } from "@/components/fx";
+import { Standby } from "@/components/standby";
 
 export default function App() {
   const [tab, setTab] = useState(() => location.hash.slice(1) || "plugs");
@@ -25,6 +26,7 @@ export default function App() {
       </AppShell>
       <TruckRush />
       <FxLayer />
+      <Standby />
     </AskProvider>
   );
 }

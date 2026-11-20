@@ -422,6 +422,10 @@ html[data-look="tech"] body {
   background-image: linear-gradient(var(--tech-grid) 1px, transparent 1px), linear-gradient(90deg, var(--tech-grid) 1px, transparent 1px);
   background-size: 32px 32px;
 }
+/* 待機畫面的大數字：兩種外觀都用等寬字 */
+.tech-mono {
+  font-family: "JetBrains Mono", "DejaVu Sans Mono", "Noto Sans Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
 html[data-look="tech"] .tabular-nums,
 html[data-look="tech"] .tech-mono {
   font-family: var(--tech-mono);
