@@ -579,8 +579,8 @@ html[data-look="tech"].dark .tech-dot {
   box-shadow: 0 0 8px currentColor;
 }
 
-/* 首頁右欄已經有「問家裡」時，右下角那顆浮動按鈕就不用了 */
-html[data-ask-panel="1"] .ask-fab {
+/* 首頁右欄已經有「問家裡」時，標題列那顆就不用了 */
+html[data-ask-panel="1"] .ask-head {
   display: none;
 }
 

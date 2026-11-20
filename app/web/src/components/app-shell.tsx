@@ -48,7 +48,6 @@ function useRail(): boolean {
 export function AppShell({ tab: raw, children }: { tab: string; children: ReactNode }) {
   const tab = raw === "edit" ? "plugs" : raw === "map" ? "net" : raw;
   const { connected, state } = useHub();
-  const ask = useAsk();
   const mini = useRail();
   const connText = connected ? "已連線" : state ? "重新連線中…" : "連線中…";
   const status = (
@@ -109,19 +108,8 @@ export function AppShell({ tab: raw, children }: { tab: string; children: ReactN
         </div>
       </aside>
 
-      <main className={cn("pb-[calc(5.5rem+env(safe-area-inset-bottom))] transition-[padding] duration-200 lg:pb-28", mini ? "lg:pl-16" : "lg:pl-60")}>{children}</main>
+      <main className={cn("pb-[calc(5.5rem+env(safe-area-inset-bottom))] transition-[padding] duration-200 lg:pb-10", mini ? "lg:pl-16" : "lg:pl-60")}>{children}</main>
 
-      {/* 問家裡：每一頁右下角都有 */}
-      {state?.assistant && (
-        <button
-          onClick={ask.open}
-          aria-label="問家裡"
-          className="ask-fab fixed right-4 bottom-[calc(5rem+env(safe-area-inset-bottom))] z-30 hidden lg:inline-flex size-14 items-center justify-center gap-2 rounded-full bg-primary sm:h-12 sm:w-auto sm:px-5 font-medium text-primary-foreground shadow-lg transition-all hover:bg-primary/90 hover:shadow-xl focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ring/40 active:scale-95 lg:right-8 lg:bottom-8"
-        >
-          <MessageSquareText className="size-6 sm:size-5" />
-          <span className="max-sm:hidden">問家裡</span>
-        </button>
-      )}
 
       {/* 手機、平板：下方分頁 */}
       <nav
@@ -151,11 +139,11 @@ export function AppShell({ tab: raw, children }: { tab: string; children: ReactN
 export function PageHeader({ title, sub, actions, chips, chipsClassName, hideTitle, lead }: { title: ReactNode; sub?: ReactNode; actions?: ReactNode; chips?: ReactNode; chipsClassName?: string; hideTitle?: boolean; lead?: ReactNode }) {
   const { state } = useHub();
   const ask = useAsk();
-  // 手機、平板沒有右下角的「問家裡」圓鈕（會壓到開關）：首頁用 lead 放一條，其他頁在標題列右邊放一顆小的
-  const askBtn = state?.assistant && !lead ? (
+  // 「問家裡」放在標題列（右下角浮動圓鈕會壓到開關）：手機首頁用 lead 放一條，其他情況在右邊放一顆
+  const askBtn = state?.assistant ? (
     <button onClick={ask.open} aria-label="問家裡" title="問家裡"
-      className="inline-flex size-9 items-center justify-center rounded-full border bg-background text-primary transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:hidden">
-      <MessageSquareText className="size-[18px]" />
+      className={cn("ask-head inline-flex size-9 shrink-0 items-center justify-center gap-1.5 rounded-full border bg-background text-sm font-medium text-primary transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:w-auto lg:px-3.5", lead && "max-lg:hidden")}>
+      <MessageSquareText className="size-[18px]" /><span className="max-lg:hidden">問家裡</span>
     </button>
   ) : null;
   return (
