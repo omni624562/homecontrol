@@ -370,7 +370,7 @@ export function MapPage() {
   return (
     <>
       {head}
-      <div className="mx-auto grid max-w-[112rem] items-start gap-4 px-4 py-4 sm:px-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:px-8">
+      <div className="mx-auto grid max-w-[112rem] grid-cols-[minmax(0,1fr)] items-start gap-4 px-4 py-4 sm:px-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:px-8">
         <Card className="gap-3 px-3 py-3 sm:px-4 sm:py-4">
           {edit ? (
             <div className="flex flex-wrap gap-2">
@@ -433,10 +433,13 @@ export function MapPage() {
           <div className="min-h-6 text-sm tabular-nums text-muted-foreground" aria-live="polite">
             <span className={cn(tip && "font-medium text-foreground")}>{tip || dflt}</span>
           </div>
-          <MapCanvas
-            fp={fp} devs={devs} links={links} layer={layer} edit={edit} sel={sel} motion={motion}
-            onChange={setFp} onDragEnd={save} onPick={pick} onTip={setTip}
-          />
+          {/* 手機：地圖放大到 600px 寬，可以左右滑 */}
+          <div className="-mx-4 overflow-x-auto px-4 pb-1 sm:mx-0 sm:overflow-visible sm:px-0 sm:pb-0">
+            <MapCanvas
+              fp={fp} devs={devs} links={links} layer={layer} edit={edit} sel={sel} motion={motion}
+              onChange={setFp} onDragEnd={save} onPick={pick} onTip={setTip}
+            />
+          </div>
         </Card>
 
         <div ref={sideRef} className="min-w-0 space-y-4">

@@ -41,10 +41,51 @@ export function MapCanvas({
 
   const W = fp.w;
   const H = fp.h;
-  const k = Math.max(1, Math.min(2.1, (W / px) * 0.85));
-  const showNames = k < 1.9;
+  // 標記的字在畫面上大約 12px：k = 地圖單位／畫面像素 × 1.1
+  const k = Math.max(1, Math.min(2.6, (W / px) * 1.1));
+  const showNames = k < 2.3;
   const rooms = fp.rooms || [];
   const placed = devs.filter((d) => fp.items[d.key]);
+
+  // 看的時候（不是編輯）：疊在一起的裝置稍微推開，數字才看得清楚；Wi-Fi 基地台不動。實際位置不變
+  const pos: Record<string, { x: number; y: number }> = {};
+  for (const d of placed) pos[d.key] = { x: fp.items[d.key].x, y: fp.items[d.key].y };
+  if (!edit) {
+    // 每個裝置連同下面的名字當成一個方框（中心在圓圈下方一點），重疊就往重疊比較少的方向推開
+    const bw = (showNames ? 66 : 34) * k, bh = (showNames ? 48 : 34) * k, cy = (showNames ? 9 : 0) * k;
+    const fixed = fp.aps.map((a) => fp.items[`ap:${a.id}`]).filter(Boolean);
+    const keys = Object.keys(pos);
+    for (let it = 0; it < 200; it++) {
+      let moved = false;
+      for (let i = 0; i < keys.length; i++) {
+        const a = pos[keys[i]];
+        for (let j = i + 1; j < keys.length; j++) {
+          const b = pos[keys[j]];
+          const dx = b.x - a.x, dy = b.y - a.y;
+          const ox = bw - Math.abs(dx), oy = bh - Math.abs(dy);
+          if (ox <= 0 || oy <= 0) continue;
+          // 沿著兩個裝置的連線方向推開（一直線排隊的會散開成一圈，比較不會卡住）
+          let ux = dx, uy = dy;
+          const len = Math.hypot(ux, uy);
+          if (len < 0.01) { ux = j % 2 ? 1 : -1; uy = 0.6; } else { ux /= len; uy /= len; }
+          const p = Math.min(ox, oy) / 2 + 0.5;
+          a.x -= ux * p; a.y -= uy * p; b.x += ux * p; b.y += uy * p;
+          moved = true;
+        }
+        for (const f of fixed) {
+          const dx = a.x - f.x, dy = (a.y + cy) - (f.y + 8 * k);
+          const ox = (bw + 80 * k) / 2 - Math.abs(dx), oy = (bh + 54 * k) / 2 - Math.abs(dy);
+          if (ox <= 0 || oy <= 0) continue;
+          if (ox < oy) a.x += (ox + 0.5) * (dx >= 0 ? 1 : -1);
+          else a.y += (oy + 0.5) * (dy >= 0 ? 1 : -1);
+          moved = true;
+        }
+        a.x = Math.max(bw / 2, Math.min(W - bw / 2, a.x));
+        a.y = Math.max(16 * k, Math.min(H - bh + 16 * k, a.y));
+      }
+      if (!moved) break;
+    }
+  }
   const glowR = Math.max(60, Math.min(220, 2.2 / ((fp.meters || 12) / W)));
 
   const point = (e: { clientX: number; clientY: number }) => {
@@ -103,7 +144,7 @@ export function MapCanvas({
       viewBox={`0 0 ${W} ${H}`}
       role="img"
       aria-label="訊號地圖"
-      className="block h-auto w-full touch-none rounded-xl bg-muted select-none"
+      className={cn("block h-auto w-full min-w-[600px] rounded-xl bg-muted select-none sm:min-w-0", edit && "touch-none")}
       onClick={(e) => e.target === e.currentTarget && !edit && onPick(null)}
     >
       <defs>
@@ -190,7 +231,7 @@ export function MapCanvas({
         );
       })}
       {placed.map((d) => {
-        const it = fp.items[d.key];
+        const it = pos[d.key];
         const m = motion[d.key];
         const q = d.online && d.rssi != null ? sigQ(d.rssi) : null;
         const isSel = sel?.kind === "dev" && sel.id === d.key;
