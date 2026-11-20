@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { AlertCircle, BarChart3, ChevronLeft, ChevronRight, CircleHelp, Home, Info, Plug, Plus, ShieldCheck, User, Wand2, Wifi } from "lucide-react";
+import { Fragment, useCallback, useEffect, useState, type ReactNode } from "react";
+import { AlertCircle, BarChart3, Cable, ChevronLeft, ChevronRight, CircleHelp, Home, Info, Plug, Plus, ShieldCheck, Router, User, Wand2, Wifi, WifiOff } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -140,16 +140,30 @@ export function NetPage() {
   const order = (a: NetClient, b: NetClient) => Number(raw(a)) - Number(raw(b)) || netName(a).localeCompare(netName(b), "zh-Hant");
   const shown = online.filter(match).sort(order);
   const gear = online.filter((c) => devKind(c) === "network");
+  // 按連線方式分區：Wi-Fi 連主機、Wi-Fi 連各個節點、有線
+  const subNodes = net.nodes.filter((x) => !x.main);
+  const sections: { key: string; title: string; icon: React.ElementType; list: NetClient[] }[] = [
+    { key: "main", title: subNodes.length ? "Wi-Fi・主機" : "Wi-Fi", icon: Wifi, list: shown.filter((c) => !c.wired && !subNodes.some((x) => x.mac === c.node)) },
+    ...subNodes.map((x, i) => ({ key: x.mac, title: `Wi-Fi・節點${subNodes.length > 1 ? ` ${i + 1}` : ""}`, icon: Wifi, list: shown.filter((c) => !c.wired && c.node === x.mac) })),
+    { key: "wired", title: "有線", icon: Cable, list: shown.filter((c) => c.wired) },
+  ].filter((g) => g.list.length > 0);
+  const SecHead = ({ icon: I, title, n }: { icon: React.ElementType; title: string; n: number }) => (
+    <div className="flex items-center gap-2 border-t bg-muted/40 px-4 py-2 text-sm font-semibold text-muted-foreground sm:px-5">
+      <I className="size-4" />{title}<span className="ml-auto font-normal tabular-nums">{n} 台</span>
+    </div>
+  );
   const offline = net.clients.filter((c) => !c.online && !c.plug && (c.person || c.map || c.label));
   const unnamed = online.filter(raw).length;
-  const nodes = Object.fromEntries(net.nodes.map((x) => [x.mac, x]));
   const sig = (v: number | null) => (v == null ? "" : v >= -60 ? "訊號好" : v >= -70 ? "訊號普通" : "訊號弱");
 
   const DevRow = ({ c }: { c: NetClient }) => {
     const k = devKind(c);
     const I = KIND[k].icon;
     const isRaw = raw(c);
-    const where = [c.wired ? "有線" : [c.band, c.node && nodes[c.node] && !nodes[c.node].main ? "連在節點" : "", c.online ? sig(c.rssi) : ""].filter(Boolean).join("・"), c.online && c.ip ? c.ip : ""].filter(Boolean).join("・");
+    // 連線中的已經按「Wi-Fi・主機／節點／有線」分區，這裡不用再說連在哪
+    const where = c.online
+      ? [c.wired ? "" : [c.band, sig(c.rssi)].filter(Boolean).join("・"), c.ip || ""].filter(Boolean).join("・")
+      : c.wired ? "有線" : c.band || "";
     const sub = [isRaw ? KIND[k].label : c.vendor && c.vendor !== c.name && !/dhcp|MSFT/i.test(c.vendor) ? c.vendor : "", where, c.online ? "" : c.seen ? `最後看到 ${netAgo(c.seen, net.now)}` : ""].filter(Boolean).join("・");
     return (
       <button
@@ -314,17 +328,22 @@ export function NetPage() {
             {filter === "unnamed" && unnamed > 0 && (
               <p className="px-4 pb-2 text-sm leading-relaxed text-muted-foreground sm:px-5">點一下取個好認的名字。不知道是哪一台：右邊是它今天用的網路量；也可以把懷疑的裝置的 Wi-Fi 關掉，看哪一台消失。</p>
             )}
-            <div className="divide-y border-t">{shown.length ? shown.map((c) => <DevRow key={c.mac} c={c} />) : <p className="px-4 py-4 text-muted-foreground sm:px-5">沒有這類的裝置</p>}</div>
+            {sections.length ? sections.map((g) => (
+              <Fragment key={g.key}>
+                <SecHead icon={g.icon} title={g.title} n={g.list.length} />
+                <div className="divide-y border-t">{g.list.map((c) => <DevRow key={c.mac} c={c} />)}</div>
+              </Fragment>
+            )) : <p className="border-t px-4 py-4 text-muted-foreground sm:px-5">沒有這類的裝置</p>}
             {filter === "all" && gear.length > 0 && (
               <>
-                <div className="border-t bg-muted/40 px-4 py-2 text-sm font-semibold text-muted-foreground sm:px-5">網路設備</div>
-                <div className="divide-y">{gear.map((c) => <DevRow key={c.mac} c={c} />)}</div>
+                <SecHead icon={Router} title="網路設備" n={gear.length} />
+                <div className="divide-y border-t">{gear.map((c) => <DevRow key={c.mac} c={c} />)}</div>
               </>
             )}
             {filter === "all" && offline.length > 0 && (
               <>
-                <div className="border-t bg-muted/40 px-4 py-2 text-sm font-semibold text-muted-foreground sm:px-5">現在沒連線</div>
-                <div className="divide-y">{offline.map((c) => <DevRow key={c.mac} c={c} />)}</div>
+                <SecHead icon={WifiOff} title="現在沒連線" n={offline.length} />
+                <div className="divide-y border-t">{offline.map((c) => <DevRow key={c.mac} c={c} />)}</div>
               </>
             )}
             {plugCount > 0 && <div className="border-t"><Foot icon={Plug}>另外還有 {plugCount} 台插座（在首頁管理）</Foot></div>}
