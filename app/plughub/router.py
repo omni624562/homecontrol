@@ -203,12 +203,18 @@ class Router:
     def _read_list(self, data: dict[str, Any]) -> None:
         now = time.time()
         main = self.main_mac()
+        # 節點用網路線接回主路由器時，連節點 Wi-Fi 的裝置也會出現在主路由器的「有線」清單裡（從網路線那頭過來）。
+        # 同一份清單裡只要在哪個 Wi-Fi 頻段看到，就以 Wi-Fi 為準；主路由器 Wi-Fi 的即時資料也算。
+        wireless = {norm(mac) for bands in data.values() for bkey, members in (bands or {}).items()
+                    if not bkey.startswith("wired") for mac in (members or {})}
         for node, bands in data.items():
             node = norm(node)
             for bkey, members in (bands or {}).items():
                 wired = bkey.startswith("wired")
                 for mac, info in (members or {}).items():
                     mac = norm(mac)
+                    if wired and (mac in wireless or now - self.clients.get(mac, {}).get("live", 0) < 15):
+                        continue
                     c = self.clients.setdefault(mac, {"mac": mac})
                     # 主路由器的 Wi-Fi 裝置有即時資料（每 4 秒），不要被比較舊的清單蓋掉
                     if node == main and not wired and now - c.get("live", 0) < 15:
