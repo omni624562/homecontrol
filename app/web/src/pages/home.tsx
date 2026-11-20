@@ -182,7 +182,7 @@ export function HomePage() {
       );
     return (
       <>
-        <PageHeader title="我的家" sub={<Skeleton className="mt-1.5 h-4 w-36" />} />
+        <PageHeader title="我的家" />
         <HomeSkeleton />
       </>
     );
@@ -340,7 +340,6 @@ export function HomePage() {
     <>
       <PageHeader
         title="我的家"
-        sub={<>{onCount ? <b className="font-semibold text-amber-600 dark:text-amber-400">{onCount} 個開著</b> : "全部關著"}・共 {state.plugs.length} 個裝置</>}
         chips={compact ? <>{sceneBar}{sep}{headChips}</> : headChips}
         chipsClassName={compact ? "xl:justify-start" : look === "tech" ? "xl:justify-start xl:[&>:first-child]:ml-auto" : undefined}
         actions={<>
