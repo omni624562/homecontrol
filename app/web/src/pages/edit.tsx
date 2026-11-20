@@ -217,7 +217,7 @@ export function EditPage() {
         sub="改名稱、換區域、拖拉調順序"
         actions={<Button asChild className="h-10"><a href="#plugs"><Check />完成</a></Button>}
       />
-      <div className="mx-auto max-w-7xl space-y-4 px-4 py-4 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-[112rem] space-y-4 px-4 py-4 sm:px-6 lg:px-8">
         <p className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm leading-relaxed">
           按住右邊的 <GripVertical className="inline size-4 align-text-bottom" /> 拖拉排順序，也可以把裝置拖到別的區域；用鍵盤的話，在把手上按空白鍵拿起、↑↓ 移動、再按空白鍵放下。點名稱修改設定。
         </p>

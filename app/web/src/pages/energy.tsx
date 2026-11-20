@@ -122,7 +122,7 @@ function DayDetail({ e, i, onClose, onOpen }: { e: Energy; i: number; onClose: (
 
 function EnergySkeleton() {
   return (
-    <div className="mx-auto max-w-7xl space-y-4 px-4 py-4 sm:px-6 lg:px-8" aria-busy="true" aria-label="載入中">
+    <div className="mx-auto max-w-[112rem] space-y-4 px-4 py-4 sm:px-6 lg:px-8" aria-busy="true" aria-label="載入中">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-28 rounded-xl" />)}</div>
       <Skeleton className="h-72 rounded-xl" />
       <div className="grid gap-4 lg:grid-cols-[3fr_2fr]"><Skeleton className="h-72 rounded-xl" /><Skeleton className="h-72 rounded-xl" /></div>
@@ -220,7 +220,7 @@ export function EnergyPage() {
   return (
     <>
       <PageHeader title="用電" sub={sub} />
-      <div className="mx-auto max-w-7xl space-y-4 px-4 py-4 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-[112rem] space-y-4 px-4 py-4 sm:px-6 lg:px-8">
         {/* 重點數字 */}
         {/* 科技感：同一條、細線隔開；原本：四張卡片 */}
         <div className={tech ? "grid grid-cols-2 overflow-hidden rounded-xl border bg-card lg:grid-cols-4 [&>*]:border-border max-lg:[&>*:nth-child(-n+2)]:border-b [&>*:not(:last-child)]:lg:border-r max-lg:[&>*:nth-child(odd)]:border-r" : "grid grid-cols-2 gap-3 lg:grid-cols-4"}>

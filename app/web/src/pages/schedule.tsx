@@ -105,7 +105,7 @@ function NowLine({ now, left }: { now: string; left: string | null }) {
 
 function SchedSkeleton() {
   return (
-    <div className="mx-auto grid max-w-7xl gap-4 px-4 py-4 sm:px-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:px-8" aria-busy="true" aria-label="載入中">
+    <div className="mx-auto grid max-w-[112rem] gap-4 px-4 py-4 sm:px-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:px-8" aria-busy="true" aria-label="載入中">
       <Card className="gap-2 p-4">
         {Array.from({ length: 4 }, (_, i) => (
           <div key={i} className="flex gap-4 py-2"><Skeleton className="h-8 w-16" /><div className="flex-1 space-y-2"><Skeleton className="h-4 w-1/3" /><Skeleton className="h-4 w-2/3" /></div><Skeleton className="h-5 w-9 rounded-full" /></div>
@@ -259,7 +259,7 @@ export function SchedulePage() {
         chipsClassName="xl:justify-start xl:[&>:first-child]:ml-auto"
         actions={<Button className="h-10 transition-all active:scale-95" onClick={() => setSched({})}><Plus />新增</Button>}
       />
-      <div className="mx-auto grid max-w-7xl items-start gap-4 px-4 py-4 sm:px-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:px-8">
+      <div className="mx-auto grid max-w-[112rem] items-start gap-4 px-4 py-4 sm:px-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:px-8">
         <div className="min-w-0 space-y-4">
           {narrow && habitCard}
           <Card className="gap-0 overflow-hidden py-0">

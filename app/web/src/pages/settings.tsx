@@ -108,15 +108,6 @@ function netReport(s: HubState) {
   return { main, devices: devices.size, issues, fwUnknown };
 }
 
-function routerLine(s: HubState) {
-  const r = s.router;
-  if (!r?.configured) return "還沒連到路由器";
-  if (!r.ok) return `連不上路由器${r.error ? `：${r.error}` : ""}`;
-  const people = s.people || [];
-  const home = people.filter((x) => x.home).length;
-  return `${(r.nodes || []).map((n) => n.model).join(" + ")}${people.length ? `・${home ? `${home} 人在家` : "大家都出門了"}` : "・看誰在家、陌生裝置通知"}`;
-}
-
 // 手機通知：LINE 官方的 Messaging API（自己的機器人；權杖只存在樹莓派上）
 function LineSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { state } = useHub();
@@ -474,7 +465,7 @@ export function SettingsPage() {
     return (
       <>
         <PageHeader title="設定" />
-        <div className="mx-auto grid max-w-7xl gap-4 px-4 py-4 sm:px-6 lg:grid-cols-2 lg:px-8" aria-busy="true" aria-label="載入中">
+        <div className="mx-auto grid max-w-[112rem] gap-4 px-4 py-4 sm:px-6 lg:grid-cols-2 lg:px-8" aria-busy="true" aria-label="載入中">
           {[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-64 rounded-xl" />)}
         </div>
       </>
@@ -489,7 +480,7 @@ export function SettingsPage() {
   return (
     <>
       <PageHeader title="設定" chips={<JumpChips />} chipsClassName="lg:hidden" />
-      <div className="mx-auto grid max-w-7xl items-start gap-4 px-4 py-4 sm:px-6 lg:grid-cols-2 lg:px-8">
+      <div className="mx-auto grid max-w-[112rem] items-start gap-4 px-4 py-4 sm:px-6 lg:grid-cols-2 lg:px-8">
         <div className="min-w-0 space-y-4">
           <SCard id="s-notify" icon={Bell} title="提醒與通知">
             <SRow wrap label="開太久提醒" hint="插座開超過這麼久，名稱下方會變橘色（常開的不算）">
@@ -604,7 +595,6 @@ export function SettingsPage() {
           <SCard id="s-dev" icon={Search} title="裝置">
             <NetCheck s={state} />
             <LinkRow label="訊號地圖" hint="在平面圖上看每個裝置的 Wi-Fi 訊號、哪裡有動靜" href="#map" />
-            <LinkRow label="網路裝置與在家的人" hint={routerLine(state)} href="#net" />
             <LinkRow label={<>Wi-Fi 感測 <Badge variant="secondary">實驗</Badge></>} hint="用插座的訊號擾動，猜哪裡有人在走動" onClick={() => setSheet("sense")} />
             <LinkRow label="TP-Link 雲端" hint={`${bound ? `${bound} 個插座綁著 TP-Link 帳號` : "已和 TP-Link 帳號解除綁定"}・家庭中控和 Google Home 都不需要它`} onClick={() => setSheet("cloud")} />
             <SRow label="找新插座" hint="每分鐘會自動找一次；剛插上的插座可以按這裡馬上找">

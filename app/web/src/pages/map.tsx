@@ -193,7 +193,7 @@ export function MapPage() {
     return (
       <>
         {head}
-        <div className="mx-auto max-w-7xl px-4 py-4 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-[112rem] px-4 py-4 sm:px-6 lg:px-8">
           {failed ? <p className="py-16 text-center text-muted-foreground">讀不到地圖，稍後再試。</p> : <Skeleton className="aspect-[10/7] w-full rounded-xl" />}
         </div>
       </>
@@ -369,7 +369,7 @@ export function MapPage() {
   return (
     <>
       {head}
-      <div className="mx-auto grid max-w-7xl items-start gap-4 px-4 py-4 sm:px-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:px-8">
+      <div className="mx-auto grid max-w-[112rem] items-start gap-4 px-4 py-4 sm:px-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:px-8">
         <Card className="gap-3 px-3 py-3 sm:px-4 sm:py-4">
           {edit ? (
             <div className="flex flex-wrap gap-2">

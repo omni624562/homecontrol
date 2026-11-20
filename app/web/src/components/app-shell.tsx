@@ -1,5 +1,5 @@
 import { useSyncExternalStore, type ReactNode } from "react";
-import { BarChart3, Clock, Home, MessageSquareText, PanelLeftClose, PanelLeftOpen, Settings } from "lucide-react";
+import { BarChart3, Clock, Home, MessageSquareText, PanelLeftClose, PanelLeftOpen, Settings, Wifi } from "lucide-react";
 import { useLook } from "@/lib/look";
 import { useAsk } from "@/components/ask-sheet";
 import { useHub } from "@/lib/hub";
@@ -10,6 +10,7 @@ export const TABS = [
   { key: "plugs", label: "首頁", icon: Home },
   { key: "schedule", label: "排程", icon: Clock },
   { key: "energy", label: "用電", icon: BarChart3 },
+  { key: "net", label: "網路裝置", icon: Wifi },
   { key: "settings", label: "設定", icon: Settings },
 ] as const;
 
@@ -43,7 +44,7 @@ function useRail(): boolean {
 }
 
 export function AppShell({ tab: raw, children }: { tab: string; children: ReactNode }) {
-  const tab = raw === "edit" ? "plugs" : ["map", "net"].includes(raw) ? "settings" : raw;
+  const tab = raw === "edit" ? "plugs" : raw === "map" ? "settings" : raw;
   const { connected, state } = useHub();
   const ask = useAsk();
   const mini = useRail();
@@ -148,7 +149,7 @@ export function AppShell({ tab: raw, children }: { tab: string; children: ReactN
 export function PageHeader({ title, sub, actions, chips, chipsClassName }: { title: ReactNode; sub?: ReactNode; actions?: ReactNode; chips?: ReactNode; chipsClassName?: string }) {
   return (
     <header className="page-header sticky top-0 z-20 bg-neutral-50/85 backdrop-blur-md dark:bg-background/85">
-      <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-x-4 gap-y-2 px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-3 sm:px-6 lg:px-8 lg:py-4">
+      <div className="mx-auto flex max-w-[112rem] flex-wrap items-center gap-x-4 gap-y-2 px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-3 sm:px-6 lg:px-8 lg:py-4">
         <div className="min-w-0 flex-1 xl:max-w-full xl:flex-none">
           <h1 className="text-2xl font-bold tracking-tight">{title}</h1>
           {sub && <div className="text-sm leading-relaxed text-muted-foreground">{sub}</div>}

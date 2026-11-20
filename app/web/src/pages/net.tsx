@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useState, type ReactNode } from "react";
-import { AlertCircle, BarChart3, Cable, ChevronLeft, ChevronRight, CircleHelp, Home, Info, Plug, Plus, ShieldCheck, Router, User, Wand2, Wifi, WifiOff } from "lucide-react";
+import { AlertCircle, BarChart3, Cable, ChevronRight, CircleHelp, Home, Info, Plug, Plus, ShieldCheck, Router, User, Wand2, Wifi, WifiOff } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -81,7 +81,7 @@ export function NetPage() {
       : `${(r.nodes || []).map((n) => n.model).join(" + ")}${people.length ? `・${people.some((x) => x.home) ? `${people.filter((x) => x.home).length} 人在家` : "大家都出門了"}` : "・看誰在家、陌生裝置通知"}`;
   const head = (chips?: ReactNode[]) => (
     <PageHeader
-      title={<span className="flex items-center gap-1"><a href="#settings" className="-ml-2 rounded-lg p-1 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="回設定"><ChevronLeft className="size-6" /></a>網路裝置</span>}
+      title="網路裝置"
       sub={routerLine}
       chips={chips?.length ? chips : undefined}
       chipsClassName="xl:justify-start xl:[&>:first-child]:ml-auto"
@@ -89,12 +89,12 @@ export function NetPage() {
   );
   const header = head();
   if (!state) return header;
-  if (!r?.configured) return <>{header}<div className="mx-auto max-w-7xl px-4 py-10 text-center text-muted-foreground">還沒設定要讀哪一台路由器。</div></>;
+  if (!r?.configured) return <>{header}<div className="mx-auto max-w-[112rem] px-4 py-10 text-center text-muted-foreground">還沒設定要讀哪一台路由器。</div></>;
   if (!net)
     return (
       <>
         {header}
-        <div className="mx-auto grid max-w-7xl gap-4 px-4 py-4 sm:px-6 lg:grid-cols-2 lg:px-8" aria-busy="true" aria-label="載入中">
+        <div className="mx-auto grid max-w-[112rem] gap-4 px-4 py-4 sm:px-6 lg:grid-cols-2 lg:px-8" aria-busy="true" aria-label="載入中">
           {[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-56 rounded-xl" />)}
         </div>
       </>
@@ -203,7 +203,7 @@ export function NetPage() {
   return (
     <>
       {head(chips)}
-      <div className="mx-auto max-w-7xl space-y-4 px-4 py-4 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-[112rem] space-y-4 px-4 py-4 sm:px-6 lg:px-8">
         {!net.ok && (
           <div className="flex gap-2 rounded-xl border border-orange-300 bg-orange-50 px-4 py-3 text-sm leading-relaxed text-orange-800 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-300">
             <AlertCircle className="mt-0.5 size-4 shrink-0" />連不上路由器{net.error ? `：${net.error}` : ""}。下面是最後讀到的資料。

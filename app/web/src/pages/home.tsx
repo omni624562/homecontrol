@@ -54,7 +54,7 @@ function Chip({ onClick, icon: I, label, sub, tone, moving }: { onClick: () => v
 
 function HomeSkeleton() {
   return (
-    <div className="mx-auto max-w-7xl space-y-5 px-4 py-4 sm:px-6 lg:px-8" aria-busy="true" aria-label="載入中">
+    <div className="mx-auto max-w-[112rem] space-y-5 px-4 py-4 sm:px-6 lg:px-8" aria-busy="true" aria-label="載入中">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-16 rounded-xl" />)}
       </div>
@@ -100,11 +100,20 @@ export function HomePage() {
     const timer = setTimeout(() => setArrived(false), 3400);
     return () => clearTimeout(timer);
   }, [homeCount]);
-  const wide3 = useMedia("(min-width: 1536px)");
-  const wide2 = useMedia("(min-width: 768px)");
+  // 房間欄數：看放房間的那塊有多寬，一欄至少 20rem，放得下幾欄就幾欄
+  const [gridW, setGridW] = useState(0);
+  const roRef = useRef<ResizeObserver | null>(null);
+  const gridRef = (el: HTMLDivElement | null) => {
+    roRef.current?.disconnect();
+    roRef.current = null;
+    if (!el) return;
+    const ro = new ResizeObserver(([e]) => setGridW(Math.round(e.contentRect.width)));
+    ro.observe(el);
+    roRef.current = ro;
+  };
   const wideSide = useMedia("(min-width: 1280px)"); // 科技感：這麼寬才有右邊那一欄
   const side = look === "tech" && wideSide;
-  const cols = side ? (wide3 ? 2 : 1) : wide3 ? 3 : wide2 ? 2 : 1;
+  const cols = gridW ? Math.max(1, Math.floor((gridW + 16) / (20 * 16 + 16))) : 1;
   useEffect(() => {
     if (!side) return;
     document.documentElement.dataset.askPanel = "1";
@@ -295,7 +304,7 @@ export function HomePage() {
           </Button>
         </>}
       />
-      <div className="mx-auto max-w-7xl px-4 pt-2 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-[112rem] px-4 pt-2 sm:px-6 lg:px-8">
         <MorningCard onLeave={() => setLeave(true)} onSheet={setSheet} />
         <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-[repeat(auto-fit,minmax(10rem,1fr))]">
           <button
@@ -327,7 +336,7 @@ export function HomePage() {
         </div>
 
         <div className={cn(side && "grid grid-cols-[minmax(0,1fr)_20rem] items-start gap-4")}>
-          <div className="grid items-start gap-4" style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))` }}>
+          <div ref={gridRef} className="grid items-start gap-4" style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))` }}>
             {columns.map((c, i) => (
               <div key={i}>
                 {c.items.map((grp) => <RoomCard key={grp.id || "none"} g={grp} onOpen={(p) => setDevice(p.id)} onToggle={toggle} />)}
