@@ -710,6 +710,21 @@ async def set_settings(body: dict = Body(...)) -> dict[str, Any]:
         if settings["weather"]:
             hub.recheck_calendar()
             hub.weather.reset()
+    if "life_layout" in body:  # 生活頁的卡片排列：三欄，每欄是卡片代號的順序；hidden 是藏起來的
+        lay = body["life_layout"]
+        cards = {"alerts", "weather", "bike", "bus", "garbage", "outage"}
+        if lay is None:
+            settings.pop("life_layout", None)
+        elif isinstance(lay, dict) and isinstance(lay.get("cols"), list):
+            seen: set[str] = set()
+            cols = []
+            for col in lay["cols"][:3]:
+                cols.append([c for c in (col if isinstance(col, list) else []) if c in cards and not (c in seen or seen.add(c))])
+            while len(cols) < 3:
+                cols.append([])
+            for c in sorted(cards - seen):  # 漏掉的補在最後一欄
+                cols[2].append(c)
+            settings["life_layout"] = {"cols": cols, "hidden": sorted({c for c in lay.get("hidden") or [] if c in cards})}
     if "weekly" in body:  # 每週日晚上的摘要推播
         settings["weekly"] = bool(body["weekly"])
     if "matter_scenes" in body:  # 情境也放到 Google Home（打開 = 執行）
