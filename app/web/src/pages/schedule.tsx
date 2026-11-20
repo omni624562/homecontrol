@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { AlertCircle, CalendarClock, Check, ChevronRight, Home, Info, Loader2, Plus, PlugZap, ShieldCheck, Sparkles, Timer, Trash2, Droplets, X } from "lucide-react";
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
+import { AlertCircle, CalendarClock, Check, ChevronRight, Clock, Home, Info, Loader2, Moon, Plus, PlugZap, ShieldCheck, SkipForward, Sparkles, Sun, Timer, Trash2, Droplets, X } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -19,6 +19,7 @@ import { SunIcon, Tag, daysText, hmsSec, kasaDays, minText, showT, sunLabel, use
 import { api } from "@/lib/api";
 import { fmtLeft, fmtSec, pad2 } from "@/lib/format";
 import { useHub, useMedia, useTick } from "@/lib/hub";
+import { useLook } from "@/lib/look";
 import type { KasaRule, Plug, Schedule } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -59,8 +60,8 @@ const Foot = ({ icon: I, children }: { icon?: React.ElementType; children: React
 );
 
 // 排程清單的一列（整列可以點開編輯；右邊的開關直接啟用／暫停）
-function SchedItem({ time, sec, top, desc, tags, enabled, onOpen, onToggle, label, rain }: {
-  time: ReactNode; sec?: string; top: ReactNode; desc: ReactNode; tags: ReactNode; enabled: boolean; onOpen: () => void; onToggle: (v: boolean) => void; label: string; rain?: boolean;
+function SchedItem({ time, sec, top, desc, tags, enabled, onOpen, onToggle, label, rain, next }: {
+  time: ReactNode; sec?: string; top: ReactNode; desc: ReactNode; tags: ReactNode; enabled: boolean; onOpen: () => void; onToggle: (v: boolean) => void; label: string; rain?: boolean; next?: boolean;
 }) {
   return (
     <div
@@ -75,7 +76,7 @@ function SchedItem({ time, sec, top, desc, tags, enabled, onOpen, onToggle, labe
       )}
     >
       {rain && <Rain />}
-      <div className="w-16 shrink-0 pt-0.5 text-2xl font-semibold tabular-nums tracking-tight sm:w-20 sm:text-[1.7rem]">
+      <div className={cn("w-16 shrink-0 pt-0.5 text-2xl font-semibold tabular-nums tracking-tight sm:w-20 sm:text-[1.7rem]", next && "text-primary")}>
         {time}
         {sec && <span className="text-sm font-normal text-muted-foreground">:{sec}</span>}
       </div>
@@ -87,6 +88,17 @@ function SchedItem({ time, sec, top, desc, tags, enabled, onOpen, onToggle, labe
       <div className="pt-1" onClick={(e) => e.stopPropagation()}>
         <Switch checked={enabled} onCheckedChange={onToggle} aria-label={`啟用：${label}`} />
       </div>
+    </div>
+  );
+}
+
+// 科技感：排程清單裡「現在」的位置
+function NowLine({ now, left }: { now: string; left: string | null }) {
+  return (
+    <div className="flex items-center gap-2 px-3 py-1 text-xs tabular-nums text-primary" aria-label={`現在 ${now}`}>
+      <span className="size-2 rounded-full bg-primary shadow-[0_0_0_3px_color-mix(in_srgb,var(--primary)_25%,transparent)]" />
+      <span className="whitespace-nowrap">現在 {now}{left ? `・下一條 ${left}後` : "・今天的排程都跑完了"}</span>
+      <span className="h-px flex-1 bg-primary/40" />
     </div>
   );
 }
@@ -113,6 +125,7 @@ export function SchedulePage() {
   const [kasa, setKasa] = useState<KasaOpen>(null);
   const [away, setAway] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const tech = useLook() === "tech";
   // 按下開關先顯示新的狀態，等伺服器更新
   const [flip, setFlip] = useState<Record<string, boolean>>({});
   useEffect(() => setFlip({}), [state?.version]);
@@ -139,6 +152,15 @@ export function SchedulePage() {
   const awayN = (a?.plugs || []).filter((id) => plug(id)).length;
   const kasaAway = state.plugs.flatMap((p) => (p.native?.kasa_away || []).map((r) => ({ p, r })));
   const t = now();
+  // 現在在清單裡的位置、下一條（啟用中、今天會跑）
+  const nd = new Date(t * 1000);
+  const nowSec = nd.getHours() * 3600 + nd.getMinutes() * 60 + nd.getSeconds();
+  const runsToday = (it: (typeof rows)[number]) => it.s
+    ? (flip[it.key] ?? it.s.enabled) && it.s.days.includes(today) && !it.s.skipped && !it.s.skip_today
+    : (flip[it.key] ?? !!it.r!.enable) && kasaDays(it.r!.wday).includes(today);
+  const nowAt = rows.findIndex((it) => it.sec > nowSec);
+  const nextIdx = rows.findIndex((it) => it.sec > nowSec && runsToday(it));
+  const nextLeft = nextIdx >= 0 ? (() => { const m = Math.round((rows[nextIdx].sec - nowSec) / 60); return m >= 60 ? `${Math.floor(m / 60)} 小時 ${m % 60} 分` : `${m} 分鐘`; })() : null;
 
   const desc = (x: Schedule) => {
     let s: string;
@@ -171,6 +193,24 @@ export function SchedulePage() {
     setFlip((f) => ({ ...f, [key]: v }));
     call(() => api("PUT", "/api/kasa-rules", { plug: p.id, match: ruleMatch(r), set: { enable: v } })).then((ok) => !ok && setFlip((f) => ({ ...f, [key]: !v })));
   };
+
+  // 科技感：標題右邊一行摘要（和首頁一樣的小格子）
+  const chips: ReactNode[] = [];
+  if (tech) {
+    const cls = "tech-item";
+    if (nextIdx >= 0) {
+      const it = rows[nextIdx];
+      const what = it.s ? desc(it.s) : `${it.r!.sact ? "打開" : "關閉"} ${it.p!.name}`;
+      chips.push(<span key="next" className={cn(cls, "[&_b]:text-primary")} title={`下一條：${what}`}><Clock className="size-4" /><b>{minText(Math.floor(it.sec / 60))}</b><span className="tech-item-sub max-w-48 truncate">{what}</span></span>);
+    }
+    const skipped = state.schedules.filter((x) => x.enabled && x.days.includes(today) && (x.skipped || x.skip_today));
+    if (skipped.length) chips.push(<span key="skip" className={cn(cls, "tech-item-warn")} title={skipped.map((x) => `${desc(x)}：${x.skipped || x.skip_today}`).join("\n")}><SkipForward className="size-4" /><b>{skipped.length}</b><small>條</small><span className="tech-item-sub">今天跳過</span></span>);
+    if (state.sun?.sunrise != null && state.sun?.sunset != null)
+      chips.push(<span key="sun" className={cls} title="今天的日出、日落"><Sun className="size-4" /><b>{minText(state.sun.sunrise)}</b><Moon className="ml-1 size-4" /><b>{minText(state.sun.sunset)}</b></span>);
+    const bad = state.schedules.filter((x) => x.enabled && x.backup !== false && x.backup_status && x.backup_status.total && x.backup_status.ok < x.backup_status.total && !x.backup_status.issues.every((i) => i.pending));
+    if (bad.length) chips.push(<span key="bk" className={cn(cls, "tech-item-warn")} title="這些排程沒有完整寫進插座，樹莓派離線時可能不會執行"><AlertCircle className="size-4" /><b>{bad.length}</b><small>條</small><span className="tech-item-sub">備援沒寫全</span></span>);
+    if (timers.length) chips.push(<span key="tm" className={cn(cls, "tech-item-on")} title={timers.map((p) => `${p.name} 還有 ${fmtLeft(p.timer! - t)}`).join("\n")}><Timer className="size-4" /><b>{timers.length}</b><small>個</small><span className="tech-item-sub">定時關閉中</span></span>);
+  }
 
   const calParts: string[] = [];
   if (c.holiday) calParts.push(`今天是「${c.holiday}」`);
@@ -215,6 +255,8 @@ export function SchedulePage() {
       <PageHeader
         title="排程"
         sub="在固定的時間自動開關插座"
+        chips={chips.length ? chips : undefined}
+        chipsClassName="xl:justify-start xl:[&>:first-child]:ml-auto"
         actions={<Button className="h-10 transition-all active:scale-95" onClick={() => setSched({})}><Plus />新增</Button>}
       />
       <div className="mx-auto grid max-w-7xl items-start gap-4 px-4 py-4 sm:px-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:px-8">
@@ -252,7 +294,9 @@ export function SchedulePage() {
             )}
             {rows.length ? (
               <div className="px-1 sm:px-2">
-                {rows.map((it) => {
+                {rows.map((it, idx) => {
+                  const line = tech && idx === nowAt ? <NowLine key="now" now={`${pad2(nd.getHours())}:${pad2(nd.getMinutes())}`} left={nextLeft} /> : null;
+                  const item = (() => {
                   if (it.s) {
                     const x = it.s;
                     const en = flip[it.key] ?? x.enabled;
@@ -280,6 +324,7 @@ export function SchedulePage() {
                         enabled={en}
                         onOpen={() => setSched({ id: x.id })}
                         onToggle={(v) => toggleSched(x, v)}
+                        next={tech && idx === nextIdx}
                       />
                     );
                   }
@@ -305,9 +350,13 @@ export function SchedulePage() {
                       enabled={en}
                       onOpen={() => setKasa({ pid: p.id, rule: r })}
                       onToggle={(v) => toggleKasa(it.key, p, r, v)}
+                      next={tech && idx === nextIdx}
                     />
                   );
+                  })();
+                  return line ? <Fragment key={it.key}>{line}{item}</Fragment> : item;
                 })}
+                {tech && nowAt < 0 && <NowLine now={`${pad2(nd.getHours())}:${pad2(nd.getMinutes())}`} left={null} />}
               </div>
             ) : (
               <div className="space-y-3 px-4 pb-2 sm:px-5">
@@ -317,6 +366,14 @@ export function SchedulePage() {
                     <Button key={k} variant="outline" className="rounded-full" onClick={() => setSched({ template: k })}>{l}</Button>
                   ))}
                 </div>
+              </div>
+            )}
+            {tech && rows.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 border-t px-4 py-3 sm:px-5">
+                <span className="text-sm text-muted-foreground">從範本新增：</span>
+                {([["night", "每晚 23:00 關燈"], ["leave", "平日 08:30 執行「出門」"], ["water", "每天 06:30 澆水 1 分鐘"]] as const).map(([k, l]) => (
+                  <Button key={k} variant="outline" size="sm" className="rounded-full" onClick={() => setSched({ template: k })}>{l}</Button>
+                ))}
               </div>
             )}
             {!habits.length && habitDays < 14 && (
