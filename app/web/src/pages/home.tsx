@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Bus, Droplets, Gauge, Home as HomeIcon, Loader2, Pencil, Power, Truck, Wifi, WifiOff, Zap } from "lucide-react";
+import { Bike, Bus, Droplets, Gauge, Home as HomeIcon, Loader2, Pencil, Power, Truck, Wifi, WifiOff, Zap } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -79,7 +79,7 @@ export function HomePage() {
   const [device, setDevice] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<Plug | null>(null);
   const [allOff, setAllOff] = useState(false);
-  const [sheet, setSheet] = useState<"weather" | "life" | "bus" | null>(null);
+  const [sheet, setSheet] = useState<"weather" | "life" | "bus" | "bike" | null>(null);
   const [running, setRunning] = useState<string | null>(null);
   // 有人回家：在家人數變多的時候，小人走進門幾秒
   const fun = useFun();
@@ -194,6 +194,7 @@ export function HomePage() {
     for (const d of rt.dirs)
       if (d.stop && d.sec != null && d.sec >= 0 && d.sec <= 1800) soon.set(rt.base, Math.min(soon.get(rt.base) ?? Infinity, d.sec));
   const buses = [...soon].map(([n, sec]) => `${n} ${busEta(sec)}`);
+  const bikeMain = L?.bike?.show ? L.bike.near.find((x) => x.sno === L.bike!.main) : undefined;
   const roadOutages = (L?.outages || []).filter((x) => x.hit === "road");
   const people = state.people || [];
   const home = people.filter((x) => x.home).length;
@@ -208,6 +209,10 @@ export function HomePage() {
           sub={truck && !truck.none ? ((truck.stops ?? -1) >= 0 ? `還有 ${truck.stops} 站` : "已經過了") : g.usual ? `約 ${g.usual}` : g.stop.time} />
       )}
       {(L?.bus?.routes.length ?? 0) > 0 && <Chip onClick={() => setSheet("bus")} icon={Bus} label="公車" sub={buses.join("・") || "30 分內沒車"} />}
+      {bikeMain && (
+        <Chip onClick={() => setSheet("bike")} icon={Bike} label="YouBike" tone={bikeMain.ok && bikeMain.bikes > 0 ? undefined : "warn"}
+          sub={!bikeMain.ok ? `${bikeMain.name} 暫停` : `${bikeMain.name} ${bikeMain.bikes ? `${bikeMain.bikes} 台` : "沒車"}`} />
+      )}
       {roadOutages[0] && (
         <Chip onClick={() => setSheet("life")} icon={roadOutages[0].kind === "power" ? Zap : Droplets} tone="warn"
           label={`${new Date(roadOutages[0].start).getMonth() + 1}/${new Date(roadOutages[0].start).getDate()} ${roadOutages[0].kind === "power" ? "停電" : "停水"}`}
@@ -273,7 +278,7 @@ export function HomePage() {
 
       <DeviceSheet id={device} onClose={() => setDevice(null)} />
       <WeatherSheet open={sheet === "weather"} onClose={() => setSheet(null)} />
-      <LifeSheet open={sheet === "life" || sheet === "bus"} busFirst={sheet === "bus"} onClose={() => setSheet(null)} />
+      <LifeSheet open={sheet === "life" || sheet === "bus" || sheet === "bike"} first={sheet === "bus" || sheet === "bike" ? sheet : undefined} onClose={() => setSheet(null)} />
 
       <AlertDialog open={allOff} onOpenChange={setAllOff}>
         <AlertDialogContent>

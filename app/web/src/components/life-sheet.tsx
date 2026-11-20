@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Bus, Droplets, Home, Loader2, Truck, Zap, ZapOff } from "lucide-react";
+import { Bike, Bus, Droplets, Home, Loader2, Truck, Zap, ZapOff } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -24,7 +24,7 @@ function range(x: Outage) {
   return `${a.getMonth() + 1}/${a.getDate()}（${WEEK[a.getDay()]}）${t(a)}～${same ? "" : `${b.getMonth() + 1}/${b.getDate()} `}${t(b)}`;
 }
 
-export function LifeSheet({ open, onClose, busFirst }: { open: boolean; onClose: () => void; busFirst?: boolean }) {
+export function LifeSheet({ open, onClose, first }: { open: boolean; onClose: () => void; first?: "bus" | "bike" }) {
   const { state } = useHub();
   const L = state?.calendar.local;
   const [roads, setRoads] = useState<string | null>(null);
@@ -33,6 +33,7 @@ export function LifeSheet({ open, onClose, busFirst }: { open: boolean; onClose:
   if (!L) return null;
   const g = L.garbage;
   const B = L.bus;
+  const Y = L.bike;
   const t = g?.truck;
 
   const put = async (body: object, ok?: string) => {
@@ -125,7 +126,7 @@ export function LifeSheet({ open, onClose, busFirst }: { open: boolean; onClose:
           )}
         </section>
 
-        <section className={cn("rounded-2xl border p-4", busFirst && "order-first")}>
+        <section className={cn("rounded-2xl border p-4", first === "bus" && "order-first")}>
           <h3 className="mb-3 flex items-center gap-2 font-semibold">
             <Bus className="size-5 text-primary" />
             公車
@@ -177,6 +178,42 @@ export function LifeSheet({ open, onClose, busFirst }: { open: boolean; onClose:
             </form>
             <p className="text-xs leading-relaxed text-muted-foreground">新北市的公車。每分鐘更新，站牌預設選離家最近的。</p>
           </div>
+        </section>
+
+        <section className={cn("rounded-2xl border p-4", first === "bike" && "order-first")}>
+          <h3 className="mb-3 flex items-center gap-2 font-semibold">
+            <Bike className="size-5 text-primary" />
+            YouBike
+            {Y?.show && Y.updated && <span className="text-xs font-normal text-muted-foreground tabular-nums">{new Date(Y.updated * 1000).toTimeString().slice(0, 5)} 更新</span>}
+            <Switch className="ml-auto" checked={Y?.show ?? true} onCheckedChange={(v) => put({ bike_show: v })} aria-label="顯示 YouBike" />
+          </h3>
+          {!Y?.show ? (
+            <p className="text-sm text-muted-foreground">沒有開啟</p>
+          ) : !Y.near.length ? (
+            <p className="text-sm text-muted-foreground">{Y.error ? `查詢失敗：${Y.error}` : Y.updated ? "你家 600 公尺內沒有站" : L.garbage_supported ? "查詢中…" : "YouBike 目前只支援新北市"}</p>
+          ) : (
+            <>
+              <div role="radiogroup" aria-label="首頁顯示哪一站" className="divide-y">
+                {Y.near.map((x) => {
+                  const on = x.sno === Y.main;
+                  return (
+                    <button key={x.sno} role="radio" aria-checked={on} onClick={() => put({ bike_station: x.sno })}
+                      className="flex w-full items-center gap-3 py-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                      <span className={cn("flex size-4 shrink-0 items-center justify-center rounded-full border", on && "border-primary")}>{on && <i className="size-2 rounded-full bg-primary" />}</span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-medium">{x.name}</span>
+                        <span className="text-sm text-muted-foreground tabular-nums">{x.m} 公尺・空位 {x.docks}{x.ebikes > 0 && `・電輔 ${x.ebikes}`}</span>
+                      </span>
+                      <span className={cn("shrink-0 text-lg font-bold whitespace-nowrap tabular-nums", (!x.ok || !x.bikes) && "text-base font-medium text-muted-foreground", x.ok && x.bikes > 0 && x.bikes <= 2 && "text-amber-600 dark:text-amber-400")}>
+                        {!x.ok ? "暫停" : x.bikes ? `${x.bikes} 台` : "沒車"}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="mt-2 text-xs leading-relaxed text-muted-foreground">圓點選的那一站會顯示在首頁。每 2 分鐘更新。</p>
+            </>
+          )}
         </section>
 
         <section className="rounded-2xl border p-4">
@@ -235,7 +272,7 @@ export function LifeSheet({ open, onClose, busFirst }: { open: boolean; onClose:
           )}
         </section>
         <p className="text-xs leading-relaxed text-muted-foreground">
-          資料來源：新北市交通局（公車）、新北市環保局（垃圾車路線、即時位置）、台灣自來水公司、臺北自來水事業處、台電（計畫性工作停電）。整份資料下載到樹莓派上比對，不會送出家裡的位置或地址。
+          資料來源：新北市交通局（公車、YouBike）、新北市環保局（垃圾車路線、即時位置）、台灣自來水公司、臺北自來水事業處、台電（計畫性工作停電）。整份資料下載到樹莓派上比對，不會送出家裡的位置或地址。
         </p>
       </div>
     </Sheet>
