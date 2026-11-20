@@ -242,7 +242,7 @@ export function Tag({ children, tone, icon: I }: { children: ReactNode; tone?: "
     <span
       className={cn(
         "inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-xs leading-5 text-muted-foreground",
-        tone === "warn" && "bg-orange-100 text-orange-800 dark:bg-orange-500/15 dark:text-orange-300",
+        tone === "warn" && "bg-red-100 text-red-800 dark:bg-red-500/15 dark:text-red-300",
         tone === "ok" && "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300",
         tone === "home" && "bg-primary/10 text-primary",
       )}

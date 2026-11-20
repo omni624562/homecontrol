@@ -688,6 +688,11 @@ async def set_settings(body: dict = Body(...)) -> dict[str, Any]:
         settings["ntfy_topic"] = str(body["ntfy_topic"]).strip()
     if "new_device_alert" in body:
         settings["new_device_alert"] = bool(body["new_device_alert"])
+    if isinstance(body.get("remind"), dict):  # 主動提醒：開太久、早上會下雨、明天停水停電
+        rem = settings.setdefault("remind", {})
+        for key in ("long_on", "rain", "outage_eve"):
+            if key in body["remind"]:
+                rem[key] = bool(body["remind"][key])
     if isinstance(body.get("presence"), dict):
         pres = settings.setdefault("presence", {})
         for key in ("away_scene", "home_scene"):

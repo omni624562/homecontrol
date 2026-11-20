@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Bike, Bus, Droplets, Gauge, Home as HomeIcon, Loader2, Pencil, Power, Truck, Wifi, WifiOff, Zap } from "lucide-react";
+import { Bike, Bus, DoorOpen, Droplets, Gauge, Home as HomeIcon, Loader2, Pencil, Power, Truck, Wifi, WifiOff, Zap } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -12,6 +12,7 @@ import { DeviceSheet, needsConfirm } from "@/components/device-sheet";
 import { WalkIn, playFx, useFun } from "@/components/fx";
 import { mdiIcon, weatherIcon } from "@/components/icons";
 import { AskPanel, EnergyPanel, NextPanel } from "@/components/home-side";
+import { LeaveSheet, MorningCard } from "@/components/leave-check";
 import { LifeSheet, type LifeTopic } from "@/components/life-sheet";
 import { RoomCard, type Group } from "@/components/room-card";
 import { WeatherSheet } from "@/components/weather-sheet";
@@ -41,10 +42,10 @@ function Chip({ onClick, icon: I, label, sub, tone, moving }: { onClick: () => v
       className={cn(
         "inline-flex h-9 shrink-0 items-center gap-2 rounded-full border bg-background px-3.5 text-sm whitespace-nowrap shadow-xs transition-all",
         "hover:bg-muted hover:shadow-sm active:scale-[.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        tone === "warn" && "border-orange-300 dark:border-orange-500/40",
+        tone === "warn" && "border-red-300 dark:border-red-500/40",
       )}
     >
-      <I className={cn("size-4.5", tone === "warn" ? "text-orange-600" : "text-foreground/60", moving && "truck-run text-amber-600")} />
+      <I className={cn("size-4.5", tone === "warn" ? "text-red-600 dark:text-red-400" : "text-foreground/60", moving && "truck-run text-amber-600")} />
       <span className="font-medium">{label}</span>
       {sub && <span className="text-muted-foreground">{sub}</span>}
     </button>
@@ -82,6 +83,7 @@ export function HomePage() {
   const [confirm, setConfirm] = useState<Plug | null>(null);
   const [allOff, setAllOff] = useState(false);
   const [sheet, setSheet] = useState<"weather" | LifeTopic | null>(null);
+  const [leave, setLeave] = useState(false);
   const [running, setRunning] = useState<string | null>(null);
   // 有人回家：在家人數變多的時候，小人走進門幾秒
   const fun = useFun();
@@ -284,13 +286,17 @@ export function HomePage() {
         sub={<>{onCount ? <b className="font-semibold text-amber-600 dark:text-amber-400">{onCount} 個開著</b> : "全部關著"}・共 {state.plugs.length} 個裝置</>}
         chips={look === "tech" ? items : chips}
         chipsClassName={look === "tech" ? "xl:justify-start xl:[&>:first-child]:ml-auto" : undefined}
-        actions={
+        actions={<>
+          <Button variant="outline" className="h-9 rounded-full bg-background" onClick={() => setLeave(true)} title="出門前檢查：還開著的電器、要不要帶傘、垃圾車、停水停電">
+            <DoorOpen /><span className="max-sm:sr-only">出門前檢查</span>
+          </Button>
           <Button variant="outline" asChild className="h-9 rounded-full bg-background">
             <a href="#edit" title="排順序、換區域、改情境"><Pencil />編輯</a>
           </Button>
-        }
+        </>}
       />
       <div className="mx-auto max-w-7xl px-4 pt-2 sm:px-6 lg:px-8">
+        <MorningCard onLeave={() => setLeave(true)} onSheet={setSheet} />
         <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-[repeat(auto-fit,minmax(10rem,1fr))]">
           <button
             onClick={() => setAllOff(true)}
@@ -339,6 +345,7 @@ export function HomePage() {
       </div>
 
       <DeviceSheet id={device} onClose={() => setDevice(null)} />
+      <LeaveSheet open={leave} onClose={() => setLeave(false)} />
       <WeatherSheet open={sheet === "weather"} onClose={() => setSheet(null)} />
       <LifeSheet open={!!sheet && sheet !== "weather"} topic={sheet && sheet !== "weather" ? sheet : undefined} onClose={() => setSheet(null)} />
 

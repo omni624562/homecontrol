@@ -483,6 +483,8 @@ export function SettingsPage() {
   const metered = state.plugs.some((p) => p.mode === "metered");
   const bound = cloudBound(state.plugs).length;
   const weekly = set.weekly !== false;
+  const remind = (set.remind || {}) as { long_on?: boolean; rain?: boolean; outage_eve?: boolean };
+  const putRemind = (k: keyof typeof remind, v: boolean, label: string) => put({ remind: { [k]: v } }, `${label}${v ? "已打開" : "已關閉"}`);
 
   return (
     <>
@@ -492,6 +494,15 @@ export function SettingsPage() {
           <SCard id="s-notify" icon={Bell} title="提醒與通知">
             <SRow wrap label="開太久提醒" hint="插座開超過這麼久，名稱下方會變橘色（常開的不算）">
               <SettingNumber k="long_on_hours" step={1} unit="小時" label="開太久提醒" />
+            </SRow>
+            <SRow label="開太久也通知手機" hint="每次開著只講一次；常開的、「出門」情境裡設成不動的不算">
+              <Switch checked={remind.long_on !== false} onCheckedChange={(v) => putRemind("long_on", v, "開太久通知")} aria-label="開太久也通知手機" />
+            </SRow>
+            <SRow label="早上下雨提醒" hint="今天白天降雨機率 60% 以上，早上 7 點通知帶傘">
+              <Switch checked={remind.rain !== false} onCheckedChange={(v) => putRemind("rain", v, "下雨提醒")} aria-label="早上下雨提醒" />
+            </SRow>
+            <SRow label="停水停電前一晚提醒" hint="明天你家附近要停水停電，前一天晚上 8 點再通知一次">
+              <Switch checked={remind.outage_eve !== false} onCheckedChange={(v) => putRemind("outage_eve", v, "前一晚提醒")} aria-label="停水停電前一晚提醒" />
             </SRow>
             {metered && (
               <SRow wrap label="功率過高通知" hint="有計量的插座超過這個瓦數 1 分鐘就通知">

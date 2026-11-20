@@ -669,14 +669,18 @@ html[data-look="tech"] .logo-mark {
 .tech-item-on svg {
   color: var(--tech-on);
 }
+/* 警告用紅色，和「開著」的琥珀色分開 */
 .tech-item-warn {
-  border-color: color-mix(in srgb, #ea580c 55%, transparent);
+  border-color: color-mix(in srgb, #dc2626 50%, transparent);
 }
 .tech-item-warn b,
 .tech-item-warn svg {
-  color: #ea580c;
+  color: #dc2626;
+}
+html.dark .tech-item-warn {
+  border-color: color-mix(in srgb, #f87171 50%, transparent);
 }
 html.dark .tech-item-warn b,
 html.dark .tech-item-warn svg {
-  color: #fb923c;
+  color: #f87171;
 }

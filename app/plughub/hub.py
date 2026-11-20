@@ -1656,6 +1656,10 @@ class Hub:
             self.weather.reset()
 
     async def _calendar_tick(self) -> None:
+        try:
+            self._check_reminders(time.time())
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("主動提醒失敗：%s", err)
         today = date.today()
         if today != self._today:  # 過了午夜：跳過的日子變了，重寫插座裡的規則
             self._today = today
@@ -1674,6 +1678,57 @@ class Hub:
         elif self.weather.updated != before:  # 只有天氣更新：畫面更新就好
             await self.changed()
         self._check_weekly()
+
+    def _check_reminders(self, now: float) -> None:
+        """主動提醒（固定規則，不用 AI）：開太久、早上會下雨、明天停水停電。每件事只講一次，講過的存在樹莓派上。"""
+        settings = self.store.data["settings"]
+        cfg = settings.get("remind") or {}
+        sent: dict[str, float] = self.store.data.setdefault("remind_sent", {})
+        dt = datetime.now()
+        before = len(sent)
+
+        # 開太久：開超過「開太久提醒」的時數，這次開著只講一次；同時好幾個就併成一則
+        # 常開、有最長開啟時間、「出門」情境裡設成不動的（本來就要一直開）不算
+        if cfg.get("long_on", True):
+            limit = float(settings.get("long_on_hours") or 6) * 3600
+            away = self.store.scene((settings.get("presence") or {}).get("away_scene") or "") or {}
+            keep = {pid for pid, act in (away.get("actions") or {}).items() if act == "keep"}
+            long = []
+            for plug in self.ordered():
+                meta = self.store.meta(plug.id)
+                since = self.store.data["on_since"].get(plug.id)
+                if not (plug.online and plug.is_on and since) or meta.keep_on or meta.max_on_s or plug.id in keep or now - since < limit:
+                    continue
+                key = f"long:{plug.id}:{int(since)}"
+                if key not in sent:
+                    sent[key] = now
+                    long.append(f"{self.name(plug)}（{(now - since) / 3600:.0f} 小時）")
+            if long:
+                self.notifier.send("電器開很久了", "、".join(long[:6]) + (f" 等 {len(long)} 個" if len(long) > 6 else "") + "。要關的話打開家庭中控")
+
+        # 早上 7～10 點：今天白天降雨機率高，提醒帶傘（一天一次）
+        key = f"rain:{dt.date().isoformat()}"
+        if cfg.get("rain", True) and settings.get("weather", True) and 7 <= dt.hour < 10 and key not in sent:
+            pop = self.weather.day_pop(dt.date())
+            if pop is not None and pop >= 60:
+                sent[key] = now
+                self.notifier.send("今天可能會下雨", f"白天降雨機率 {pop:.0f}%，出門記得帶傘")
+
+        # 晚上 8～11 點：明天家裡這條路要停水停電，前一晚再提醒一次
+        if cfg.get("outage_eve", True) and 20 <= dt.hour < 23:
+            tomorrow = (dt.date() + timedelta(days=1)).isoformat()
+            for x in self.local.outages:
+                key = f"eve:{x['id']}"
+                if x.get("hit") == "road" and x["start"][:10] == tomorrow and key not in sent:
+                    sent[key] = now
+                    what = "停電" if x["kind"] == "power" else "停水"
+                    self.notifier.send(f"明天要{what}", f"明天 {x['start'][11:16]}～{x['end'][11:16]} 你家附近{what}，記得先準備"
+                                       + ("（儲水）" if x["kind"] == "water" else "（手機充電、冰箱少開）"))
+
+        for k in [k for k, v in sent.items() if now - v > 7 * 86400]:
+            del sent[k]
+        if len(sent) != before:
+            self._dirty = True
 
     def _check_weekly(self) -> None:
         """每週日晚上 8 點後推播這一週的摘要（一週一次）。"""
