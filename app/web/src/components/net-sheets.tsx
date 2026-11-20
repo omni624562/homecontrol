@@ -80,14 +80,14 @@ export function NetDevSheet({ mac, net, onClose, onSaved }: { mac: string | null
 
   return (
     <Sheet open onOpenChange={(v) => !v && onClose()} title={c.name}
-      description={c.plug ? `插座：${c.plug}` : c.vendor || undefined}
+      description={c.plug ? `插座：${c.plug}` : c.vendor || c.guess || undefined}
       icon={<I />}
       wide
       aside={<StatePill on={c.online} text={c.online ? `連線中・${c.wired ? "有線" : c.band || "Wi-Fi"}` : "沒連線"} />}
     >
       <form className="space-y-5" onSubmit={(e) => { e.preventDefault(); save(); }}>
         <Section title="名字">
-          <Input value={label} maxLength={30} placeholder={c.router_name || "例如：客廳電視、爸爸的手機"} aria-label="名字" onChange={(e) => setLabel(e.target.value)} className="h-11" />
+          <Input value={label} maxLength={30} placeholder={c.guess || c.router_name || "例如：客廳電視、爸爸的手機"} aria-label="名字" onChange={(e) => setLabel(e.target.value)} className="h-11" />
         </Section>
         {people.length > 0 && !c.plug && (
           <Section title="這是誰的手機・用來判斷誰在家">
@@ -106,7 +106,9 @@ export function NetDevSheet({ mac, net, onClose, onSaved }: { mac: string | null
           </Group>
         )}
         <Group>
+          <Row label="IP"><Value>{c.ip || "—"}</Value></Row>
           <Row label="MAC"><Value>{c.mac}</Value></Row>
+          {c.guess && <Row label="自動辨識" hint="樹莓派在家裡網路直接問它的（網頁標題、憑證上的公司），可能不準"><Value>{c.guess}</Value></Row>}
           <Row label="廠商"><Value>{c.vendor || "—"}</Value></Row>
           <Row label="路由器上的名字"><Value>{c.router_name || "—"}</Value></Row>
           <Row label="連在">

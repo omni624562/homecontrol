@@ -1,5 +1,5 @@
 // 路由器讀到的網路裝置
-import { HelpCircle, Laptop, Smartphone, Speaker, Tablet, Tv, Watch, Wifi, type LucideIcon } from "lucide-react";
+import { Cctv, HardDrive, HelpCircle, Laptop, Printer, Smartphone, Speaker, Tablet, Tv, Watch, Wifi, type LucideIcon } from "lucide-react";
 import { fmt, pad2 } from "@/lib/format";
 
 export interface NetClient {
@@ -8,6 +8,9 @@ export interface NetClient {
   router_name: string | null;
   label: string | null;
   vendor: string | null;
+  guess: string | null; // 樹莓派在家裡網路直接問出來的（例如「Foscam 攝影機」）
+  guess_kind: string | null;
+  ip: string | null;
   node: string | null;
   band: string | null;
   ssid: string | null;
@@ -31,7 +34,7 @@ export interface NetData {
   clients: NetClient[];
 }
 
-export type Kind = "phone" | "tablet" | "watch" | "computer" | "tv" | "speaker" | "network" | "other";
+export type Kind = "phone" | "tablet" | "watch" | "computer" | "tv" | "speaker" | "camera" | "nas" | "printer" | "network" | "other";
 export const KIND: Record<Kind, { icon: LucideIcon; label: string }> = {
   phone: { icon: Smartphone, label: "手機" },
   tablet: { icon: Tablet, label: "平板" },
@@ -39,11 +42,15 @@ export const KIND: Record<Kind, { icon: LucideIcon; label: string }> = {
   computer: { icon: Laptop, label: "電腦" },
   tv: { icon: Tv, label: "電視" },
   speaker: { icon: Speaker, label: "音箱" },
+  camera: { icon: Cctv, label: "攝影機" },
+  nas: { icon: HardDrive, label: "NAS" },
+  printer: { icon: Printer, label: "印表機" },
   network: { icon: Wifi, label: "網路設備" },
   other: { icon: HelpCircle, label: "不明裝置" },
 };
 
-export function devKind(c: Pick<NetClient, "label" | "name" | "router_name" | "vendor">): Kind {
+export function devKind(c: Pick<NetClient, "label" | "name" | "router_name" | "vendor"> & { guess_kind?: string | null }): Kind {
+  if (c.guess_kind && c.guess_kind in KIND) return c.guess_kind as Kind;
   const t = `${c.label || ""} ${c.name || ""} ${c.router_name || ""} ${c.vendor || ""}`.toLowerCase();
   if (/watch/.test(t)) return "watch";
   if (/\btab\b|tab-|ipad|pad\b/.test(t)) return "tablet";

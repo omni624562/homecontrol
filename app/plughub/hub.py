@@ -20,7 +20,7 @@ from typing import Any, Callable
 
 from kasa import Device, Discover, Module
 
-from . import habits, native, sun, tariff
+from . import habits, native, netprobe, sun, tariff
 from .sensing import INTERVAL as SENSE_INTERVAL, SAVE_EVERY as SENSE_SAVE_EVERY, Sensing
 from .notify import Notifier
 from .daysoff import DaysOff
@@ -288,6 +288,7 @@ class Hub:
             asyncio.create_task(self._loop(self._sense_tick, SENSE_INTERVAL)),
             asyncio.create_task(self._loop(self._local_tick, 15)),
             asyncio.create_task(self.router.run()),
+            asyncio.create_task(self._loop(self._probe_tick, 120)),
         ]
 
     async def stop(self) -> None:
@@ -1317,6 +1318,52 @@ class Hub:
         sset = 1050 if sset is None else sset
         return m >= sset - 30 or m < rise
 
+    def _ip_of(self, mac: str) -> str | None:
+        """路由器給的 IP；有線的路由器有時沒給，就看樹莓派自己的 ARP 表。"""
+        ip = self.router.clients.get(mac, {}).get("ip")
+        if ip:
+            return ip
+        try:
+            with open("/proc/net/arp") as f:
+                for line in f.read().splitlines()[1:]:
+                    x = line.split()
+                    if len(x) >= 4 and x[3].lower() == mac.lower() and x[2] != "0x0":
+                        return x[0]
+        except OSError:
+            pass
+        return None
+
+    async def _probe_tick(self) -> None:
+        """路由器也說不出名字的裝置：直接在家裡網路問它一下是什麼（只讀，不登入）。問過的記在樹莓派上，一週後才再問。"""
+        r = self.router
+        if not r.ok:
+            return
+        probes: dict[str, dict[str, Any]] = self.store.data.setdefault("net_probe", {})
+        known = self.store.data["net_devices"]
+        now = time.time()
+        todo = []
+        for mac in list(r.clients):
+            if not r.online(mac) or mac in self.devices or known.get(mac, {}).get("label"):
+                continue
+            n = r.names.get(mac, {})
+            if n.get("custom") or not netprobe.raw_name(n.get("name")):
+                continue
+            p = probes.get(mac)
+            if p and now - p.get("at", 0) < (30 if p.get("guess") else 7) * 86400:
+                continue
+            ip = self._ip_of(mac)
+            if ip:
+                todo.append((mac, ip))
+        for mac, ip in todo[:4]:  # 一次最多問 4 台，慢慢來
+            res = await netprobe.probe(ip)
+            probes[mac] = {"at": now, **(res or {})}
+            if res and res.get("guess"):
+                _LOGGER.info("認出網路裝置：%s", res["guess"])
+            self._dirty = True
+        if len(probes) > 300:
+            for m, _ in sorted(probes.items(), key=lambda kv: kv[1].get("at", 0))[: len(probes) - 300]:
+                del probes[m]
+
     def net_report(self) -> dict[str, Any]:
         r = self.router
         known = self.store.data["net_devices"]
@@ -1325,6 +1372,7 @@ class Hub:
         models = {n["mac"]: n for n in r.nodes}
         now = time.time()
         usage_today = self.store.data.get("net_usage", {}).get(date.today().isoformat(), {})
+        probes = self.store.data.get("net_probe", {})
         clients = []
         for mac in set(r.clients) | {m for m, v in known.items() if v.get("map") or v.get("label")} | set(owner):
             c = r.clients.get(mac, {})
@@ -1333,10 +1381,13 @@ class Hub:
             node = models.get(c.get("node") or "")
             clients.append({
                 "mac": mac,
-                "name": k.get("label") or plug_names.get(mac) or r.name_of(mac),
+                "name": k.get("label") or plug_names.get(mac) or (probes.get(mac, {}).get("guess") if netprobe.raw_name(names.get("custom") or names.get("name")) else None) or r.name_of(mac),
                 "router_name": names.get("custom") or names.get("name"),
                 "label": k.get("label"),
                 "vendor": names.get("vendor"),
+                "guess": probes.get(mac, {}).get("guess"),
+                "guess_kind": probes.get(mac, {}).get("kind"),
+                "ip": self._ip_of(mac) if r.online(mac) else c.get("ip"),
                 "node": c.get("node"),
                 "node_model": node["model"] if node else None,
                 "node_main": node["main"] if node else None,

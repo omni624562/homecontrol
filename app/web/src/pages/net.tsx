@@ -149,7 +149,7 @@ export function NetPage() {
     const k = devKind(c);
     const I = KIND[k].icon;
     const isRaw = raw(c);
-    const where = c.wired ? "有線" : [c.band, c.node && nodes[c.node] && !nodes[c.node].main ? "連在節點" : "", c.online ? sig(c.rssi) : ""].filter(Boolean).join("・");
+    const where = [c.wired ? "有線" : [c.band, c.node && nodes[c.node] && !nodes[c.node].main ? "連在節點" : "", c.online ? sig(c.rssi) : ""].filter(Boolean).join("・"), c.online && c.ip ? c.ip : ""].filter(Boolean).join("・");
     const sub = [isRaw ? KIND[k].label : c.vendor && c.vendor !== c.name && !/dhcp|MSFT/i.test(c.vendor) ? c.vendor : "", where, c.online ? "" : c.seen ? `最後看到 ${netAgo(c.seen, net.now)}` : ""].filter(Boolean).join("・");
     return (
       <button
