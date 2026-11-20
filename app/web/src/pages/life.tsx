@@ -1,5 +1,8 @@
 import { useState } from "react";
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Check, Eye, EyeOff, LayoutGrid, RotateCcw } from "lucide-react";
+import { DndContext, KeyboardSensor, PointerSensor, closestCorners, useDroppable, useSensor, useSensors, type DragEndEvent, type DragOverEvent } from "@dnd-kit/core";
+import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Check, Eye, EyeOff, GripVertical, LayoutGrid, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/app-shell";
 import { AlertsCard } from "@/components/alerts";
@@ -29,6 +32,33 @@ const split = (list: CardId[], n: number) => {
   list.forEach((x, i) => cols[i % n].push(x));
   return cols;
 };
+
+// 排列模式的一條：拖左邊的握把移動（手機上只有握把能拖，其他地方照常捲動）
+function Bar({ id, children }: { id: CardId; children: (grip: React.ReactNode) => React.ReactNode }) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id });
+  const grip = (
+    <button ref={setActivatorNodeRef} type="button" aria-label={`拖拉移動「${NAMES[id]}」（或按空白鍵後用方向鍵）`}
+      className="-ml-1 flex size-10 shrink-0 cursor-grab touch-none items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing"
+      {...attributes} {...listeners}>
+      <GripVertical className="size-5" />
+    </button>
+  );
+  return (
+    <div ref={setNodeRef} style={{ transform: CSS.Translate.toString(transform), transition }} className={cn("relative", isDragging && "z-10 opacity-80 [&>div]:shadow-lg [&>div]:ring-2 [&>div]:ring-primary")}>
+      {children(grip)}
+    </div>
+  );
+}
+
+function Column({ id, children, empty }: { id: string; children: React.ReactNode; empty: boolean }) {
+  const { setNodeRef, isOver } = useDroppable({ id });
+  return (
+    <div ref={setNodeRef} className={cn("flex min-h-14 min-w-0 flex-col gap-2 rounded-xl", empty && "border-2 border-dashed", empty && isOver && "border-primary bg-primary/5")}>
+      {children}
+      {empty && <p className="m-auto text-sm text-muted-foreground">拖到這裡</p>}
+    </div>
+  );
+}
 
 // 生活：天氣、YouBike、公車、垃圾車、停水停電攤開在一頁（首頁上方的小標籤點開是同樣的內容）
 // 每一直欄各自往下排；按「排列」可以自己移動、藏起卡片（存在樹莓派上，每台裝置都一樣）
@@ -86,29 +116,52 @@ export function LifePage() {
     outage: <LifeSheet inline open onClose={noop} topic="outage" />,
   };
 
-  const card = (id: CardId, ci: number, i: number, col: CardId[]) => {
+  // 排列模式：大螢幕三欄（可以拖到別欄），窄畫面一條清單
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
+  const [dragCols, setDragCols] = useState<CardId[][] | null>(null);
+  const editCols = dragCols || (n === 3 ? lay.cols : [flat(lay.cols)]);
+  const colOf = (cols: CardId[][], id: string) => (id.startsWith("col-") ? Number(id.slice(4)) : cols.findIndex((c) => c.includes(id as CardId)));
+  const onOver = ({ active, over }: DragOverEvent) => {
+    if (!over) return;
+    const from = colOf(editCols, String(active.id)), to = colOf(editCols, String(over.id));
+    if (from < 0 || to < 0 || from === to) return;
+    const c = editCols.map((x) => [...x]);
+    c[from] = c[from].filter((x) => x !== active.id);
+    const at = String(over.id).startsWith("col-") ? c[to].length : Math.max(0, c[to].indexOf(over.id as CardId));
+    c[to].splice(at, 0, active.id as CardId);
+    setDragCols(c);
+  };
+  const onEnd = ({ active, over }: DragEndEvent) => {
+    let c = editCols.map((x) => [...x]);
+    if (over && !String(over.id).startsWith("col-")) {
+      const ci = colOf(c, String(active.id));
+      const a = c[ci].indexOf(active.id as CardId), b = c[ci].indexOf(over.id as CardId);
+      if (b >= 0 && a !== b) c = c.map((x, i) => (i === ci ? arrayMove(x, a, b) : x));
+    }
+    setDragCols(null);
+    const next = n === 3 ? c : refill(c[0], lay.cols);
+    if (JSON.stringify(next) !== JSON.stringify(lay.cols)) save({ ...lay, cols: next });
+  };
+
+  const bar = (id: CardId, ci: number, i: number, col: CardId[]) => {
     const hidden = lay.hidden.includes(id);
-    if (hidden && !edit) return null;
-    const fi = flat(lay.cols).indexOf(id);
-    const last = n === 3 ? i === col.length - 1 : fi === flat(lay.cols).length - 1;
-    const first = n === 3 ? i === 0 : fi === 0;
     const btn = (I: React.ElementType, label: string, onClick: () => void, disabled?: boolean) => (
-      <Button size="icon" variant="ghost" className="size-8" onClick={onClick} disabled={disabled} aria-label={`${NAMES[id]}${label}`} title={label}><I /></Button>
+      <Button size="icon" variant="ghost" className="size-8 max-sm:hidden" onClick={onClick} disabled={disabled} aria-label={`${NAMES[id]}${label}`} title={label}><I /></Button>
     );
     return (
-      <div key={id}>
-        {edit && (
-          <div className={cn("flex h-14 items-center gap-1 rounded-xl border bg-card px-3 shadow-xs", hidden && "border-dashed bg-transparent shadow-none")}>
-            <span className={cn("mr-auto font-semibold", hidden && "text-muted-foreground")}>{NAMES[id]}{hidden && <span className="ml-2 text-sm font-normal">已藏起來</span>}</span>
+      <Bar key={id} id={id}>
+        {(grip) => (
+          <div className={cn("flex h-14 items-center gap-1 rounded-xl border bg-card pr-2 pl-2 shadow-xs", hidden && "border-dashed bg-background/60 shadow-none")}>
+            {grip}
+            <span className={cn("mr-auto truncate font-semibold", hidden && "text-muted-foreground")}>{NAMES[id]}{hidden && <span className="ml-2 text-sm font-normal">已藏起來</span>}</span>
             {n === 3 && btn(ArrowLeft, "往左一欄", () => move(id, "left"), ci === 0)}
-            {btn(ArrowUp, "往上", () => move(id, "up"), first)}
-            {btn(ArrowDown, "往下", () => move(id, "down"), last)}
+            {btn(ArrowUp, "往上", () => move(id, "up"), i === 0)}
+            {btn(ArrowDown, "往下", () => move(id, "down"), i === col.length - 1)}
             {n === 3 && btn(ArrowRight, "往右一欄", () => move(id, "right"), ci === 2)}
-            {btn(hidden ? Eye : EyeOff, hidden ? "顯示" : "藏起來", () => toggleHide(id))}
+            <Button size="icon" variant="ghost" className="size-9" onClick={() => toggleHide(id)} aria-label={`${NAMES[id]}${hidden ? "顯示" : "藏起來"}`} title={hidden ? "顯示" : "藏起來"}>{hidden ? <Eye /> : <EyeOff />}</Button>
           </div>
         )}
-        {!edit && body[id]}
-      </div>
+      </Bar>
     );
   };
 
@@ -125,12 +178,24 @@ export function LifePage() {
         )}
       />
       <div className="mx-auto max-w-[112rem] px-4 py-4 sm:px-6 lg:px-8">
-        {edit && <p className="mb-4 text-sm text-muted-foreground">用箭頭移動卡片{n === 3 ? "（左右換欄、上下換順序）" : "；在大螢幕上可以左右換欄"}，眼睛圖示可以藏起不需要的卡片。排好的位置每台裝置都一樣。</p>}
-        <div className={cn("grid items-start gap-4", n === 3 ? "grid-cols-3" : n === 2 ? "grid-cols-2" : "grid-cols-1")}>
-          {cols.map((col, ci) => (
-            <div key={ci} className={cn("flex min-w-0 flex-col", edit ? "gap-2" : "gap-4")}>{col.map((id, i) => card(id, ci, i, col))}</div>
-          ))}
-        </div>
+        {edit && <p className="mb-4 text-sm text-muted-foreground">按住左邊的握把拖到想要的位置{n === 3 ? "，可以拖到別欄" : ""}；眼睛圖示可以藏起不需要的卡片。排好的位置每台裝置都一樣。</p>}
+        {edit ? (
+          <DndContext sensors={sensors} collisionDetection={closestCorners} onDragOver={onOver} onDragEnd={onEnd} onDragCancel={() => setDragCols(null)}>
+            <div className={cn("grid items-start gap-4", n === 3 ? "grid-cols-3" : "mx-auto max-w-xl grid-cols-1")}>
+              {editCols.map((col, ci) => (
+                <SortableContext key={ci} id={`col-${ci}`} items={col} strategy={verticalListSortingStrategy}>
+                  <Column id={`col-${ci}`} empty={!col.length}>{col.map((id, i) => bar(id, ci, i, col))}</Column>
+                </SortableContext>
+              ))}
+            </div>
+          </DndContext>
+        ) : (
+          <div className={cn("grid items-start gap-4", n === 3 ? "grid-cols-3" : n === 2 ? "grid-cols-2" : "grid-cols-1")}>
+            {cols.map((col, ci) => (
+              <div key={ci} className="flex min-w-0 flex-col gap-4">{col.filter((id) => !lay.hidden.includes(id)).map((id) => <div key={id}>{body[id]}</div>)}</div>
+            ))}
+          </div>
+        )}
       </div>
     </>
   );
