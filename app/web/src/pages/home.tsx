@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Bike, Bus, DoorOpen, Droplets, Gauge, Home as HomeIcon, Loader2, Pencil, Power, Truck, Wifi, WifiOff, Zap } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -111,6 +111,31 @@ export function HomePage() {
     ro.observe(el);
     roRef.current = ro;
   };
+  // 大螢幕：情境按鈕縮小放進標題列。標題、情境、狀態、按鈕一行放得下才這樣，放不下就維持原本的大按鈕
+  const [compact, setCompact] = useState(false);
+  const sceneRef = useRef<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    const fit = () => {
+      const row = document.querySelector<HTMLElement>(".page-header > div");
+      const sc = sceneRef.current;
+      if (!row || !sc) return;
+      if (window.innerWidth < 1280) return setCompact(false);
+      const w = (sel: string) => row.querySelector<HTMLElement>(`:scope > [data-ph="${sel}"]`)?.offsetWidth ?? 0;
+      const chipsEl = row.querySelector<HTMLElement>(':scope > [data-ph="chips"]');
+      const own = chipsEl ? [...chipsEl.children].filter((x) => !(x as HTMLElement).dataset.scene) as HTMLElement[] : [];
+      const chipsW = own.reduce((a, x) => a + x.offsetWidth, 0) + Math.max(0, own.length - 1) * 8;
+      const cs = getComputedStyle(row);
+      const inner = row.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+      const need = w("title") + w("actions") + chipsW + sc.offsetWidth + 8 + 1 + 8 + 32 + 16;
+      setCompact(need <= inner);
+    };
+    fit();
+    const row = document.querySelector<HTMLElement>(".page-header > div");
+    if (!row) return;
+    const ro = new ResizeObserver(fit);
+    ro.observe(row);
+    return () => ro.disconnect();
+  });
   const wideSide = useMedia("(min-width: 1280px)"); // 科技感：這麼寬才有右邊那一欄
   const side = look === "tech" && wideSide;
   const cols = gridW ? Math.max(1, Math.floor((gridW + 16) / (20 * 16 + 16))) : 1;
@@ -288,13 +313,36 @@ export function HomePage() {
       { onClick: () => setSheet("outage"), tone: "warn", title: `${roadOutages[0].kind === "power" ? "停電" : "停水"} ${d0.getMonth() + 1}/${d0.getDate()} ${pad2(d0.getHours())}:${pad2(d0.getMinutes())}` });
   }
 
+  const pill = cn(
+    "inline-flex h-9 shrink-0 items-center gap-1.5 border bg-card px-3 text-[13px] font-semibold shadow-xs transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60",
+    look === "tech" ? "rounded-[10px]" : "rounded-full",
+  );
+  const sceneBar = (
+    <div ref={sceneRef} data-scene="1" className="flex shrink-0 items-center gap-2" role="group" aria-label="情境">
+      <button onClick={() => setAllOff(true)} disabled={running === "all"} className={cn(pill, "text-destructive hover:border-destructive/40 hover:bg-destructive/5")}>
+        {running === "all" ? <Loader2 className="size-4 animate-spin" /> : <Power className="size-4" />}全部關閉
+      </button>
+      {state.scenes.map((sc) => {
+        const I = mdiIcon(sc.icon);
+        return (
+          <button key={sc.id} onClick={() => runScene(sc.id, sc.name)} disabled={running === sc.id} className={pill}>
+            {running === sc.id ? <Loader2 className="size-4 animate-spin" /> : <I className="size-4 text-foreground/70" />}
+            <span className="max-w-32 truncate">{sc.name}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+  const sep = <span key="sep" data-scene="1" aria-hidden className="ml-auto h-6 w-px shrink-0 bg-border" />;
+  const headChips = look === "tech" ? items : chips;
+
   return (
     <>
       <PageHeader
         title="我的家"
         sub={<>{onCount ? <b className="font-semibold text-amber-600 dark:text-amber-400">{onCount} 個開著</b> : "全部關著"}・共 {state.plugs.length} 個裝置</>}
-        chips={look === "tech" ? items : chips}
-        chipsClassName={look === "tech" ? "xl:justify-start xl:[&>:first-child]:ml-auto" : undefined}
+        chips={compact ? <>{sceneBar}{sep}{headChips}</> : headChips}
+        chipsClassName={compact ? "xl:justify-start" : look === "tech" ? "xl:justify-start xl:[&>:first-child]:ml-auto" : undefined}
         actions={<>
           <Button variant="outline" className="h-9 rounded-full bg-background" onClick={() => setLeave(true)} title="出門前檢查：還開著的電器、要不要帶傘、垃圾車、停水停電">
             <DoorOpen /><span className="max-sm:sr-only">出門前檢查</span>
@@ -306,7 +354,9 @@ export function HomePage() {
       />
       <div className="mx-auto max-w-[112rem] px-4 pt-2 sm:px-6 lg:px-8">
         <MorningCard onLeave={() => setLeave(true)} onSheet={setSheet} />
-        <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-[repeat(auto-fit,minmax(10rem,1fr))]">
+        {/* 不放進標題列時：在畫面外量情境按鈕要多寬，用來判斷放不放得下 */}
+        {!compact && <div aria-hidden className="pointer-events-none invisible fixed top-0 -left-[9999px]">{sceneBar}</div>}
+        {!compact && <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-[repeat(auto-fit,minmax(10rem,1fr))]">
           <button
             onClick={() => setAllOff(true)}
             disabled={running === "all"}
@@ -333,7 +383,7 @@ export function HomePage() {
               </button>
             );
           })}
-        </div>
+        </div>}
 
         <div className={cn(side && "grid grid-cols-[minmax(0,1fr)_20rem] items-start gap-4")}>
           <div ref={gridRef} className="grid items-start gap-4" style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))` }}>
