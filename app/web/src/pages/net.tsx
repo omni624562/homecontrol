@@ -245,7 +245,7 @@ export function NetPage() {
                       <Switch checked={!!pres.home_dark_only} onCheckedChange={(v) => putPres({ home_dark_only: v })} aria-label="只在天黑後" />
                     </SRow>
                   )}
-                  <SRow label="沒人在家還有電器開著" hint="設成「常開」的不算">
+                  <SRow label="沒人在家還有電器開著" hint="設成「常開」的、「出門」情境裡設成不動的不算；同一次出門只講一次">
                     <PSelect value={pres.left_on || "notify"} opts={[["notify", "通知我"], ["off", "自動關掉"], ["none", "不用管"]]} onChange={(v) => putPres({ left_on: v })} label="怎麼處理" />
                   </SRow>
                   <SRow label="離開多久才算出門" hint="手機睡著時偶爾會斷線一下，太短會誤判">

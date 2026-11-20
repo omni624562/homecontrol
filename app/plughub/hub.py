@@ -1182,7 +1182,7 @@ class Hub:
         self._dirty = True
 
     def _check_left_on(self, now: float) -> None:
-        """大家都出門 10 分鐘後，還有電器開著：通知（或直接關掉）。常開的不算。
+        """大家都出門 10 分鐘後，還有電器開著：通知（或直接關掉）。常開的、「出門」情境裡設成不動的不算。
 
         同一次出門，同一個電器只講一次：手機 Wi-Fi 睡著又醒來（短暫「回家」）、樹莓派重開都不會再講；
         有人真的在家待滿 15 分鐘，才算這次出門結束。講過哪些存在樹莓派上。
@@ -1206,8 +1206,11 @@ class Hub:
         since = max((p.get("since") or 0) for p in people)
         if now - since < 600:
             return
+        # 「出門」情境裡設成「不動」的，代表出門時本來就要讓它開著
+        away = self.store.scene(cfg.get("away_scene") or "") or {}
+        keep = {pid for pid, act in (away.get("actions") or {}).items() if act == "keep"}
         on = [p for p in self.ordered() if p.online and p.is_on and not self.store.meta(p.id).keep_on
-              and p.id not in notice["plugs"]]
+              and p.id not in keep and p.id not in notice["plugs"]]
         if not on:
             return
         notice.update(plugs=sorted(set(notice["plugs"]) | {p.id for p in on}), at=now)
