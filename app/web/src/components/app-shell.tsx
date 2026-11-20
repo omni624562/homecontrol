@@ -109,14 +109,14 @@ export function AppShell({ tab: raw, children }: { tab: string; children: ReactN
         </div>
       </aside>
 
-      <main className={cn("pb-[calc(9rem+env(safe-area-inset-bottom))] transition-[padding] duration-200 lg:pb-28", mini ? "lg:pl-16" : "lg:pl-60")}>{children}</main>
+      <main className={cn("pb-[calc(5.5rem+env(safe-area-inset-bottom))] transition-[padding] duration-200 lg:pb-28", mini ? "lg:pl-16" : "lg:pl-60")}>{children}</main>
 
       {/* 問家裡：每一頁右下角都有 */}
       {state?.assistant && (
         <button
           onClick={ask.open}
           aria-label="問家裡"
-          className="ask-fab fixed right-4 bottom-[calc(5rem+env(safe-area-inset-bottom))] z-30 inline-flex size-14 items-center justify-center gap-2 rounded-full bg-primary sm:h-12 sm:w-auto sm:px-5 font-medium text-primary-foreground shadow-lg transition-all hover:bg-primary/90 hover:shadow-xl focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ring/40 active:scale-95 lg:right-8 lg:bottom-8"
+          className="ask-fab fixed right-4 bottom-[calc(5rem+env(safe-area-inset-bottom))] z-30 hidden lg:inline-flex size-14 items-center justify-center gap-2 rounded-full bg-primary sm:h-12 sm:w-auto sm:px-5 font-medium text-primary-foreground shadow-lg transition-all hover:bg-primary/90 hover:shadow-xl focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ring/40 active:scale-95 lg:right-8 lg:bottom-8"
         >
           <MessageSquareText className="size-6 sm:size-5" />
           <span className="max-sm:hidden">問家裡</span>
@@ -148,11 +148,21 @@ export function AppShell({ tab: raw, children }: { tab: string; children: ReactN
 }
 
 // 每一頁的標題列：捲動時固定在上面
-export function PageHeader({ title, sub, actions, chips, chipsClassName, hideTitle }: { title: ReactNode; sub?: ReactNode; actions?: ReactNode; chips?: ReactNode; chipsClassName?: string; hideTitle?: boolean }) {
+export function PageHeader({ title, sub, actions, chips, chipsClassName, hideTitle, lead }: { title: ReactNode; sub?: ReactNode; actions?: ReactNode; chips?: ReactNode; chipsClassName?: string; hideTitle?: boolean; lead?: ReactNode }) {
+  const { state } = useHub();
+  const ask = useAsk();
+  // 手機、平板沒有右下角的「問家裡」圓鈕（會壓到開關）：首頁用 lead 放一條，其他頁在標題列右邊放一顆小的
+  const askBtn = state?.assistant && !lead ? (
+    <button onClick={ask.open} aria-label="問家裡" title="問家裡"
+      className="inline-flex size-9 items-center justify-center rounded-full border bg-background text-primary transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:hidden">
+      <MessageSquareText className="size-[18px]" />
+    </button>
+  ) : null;
   return (
     <header className="page-header sticky top-0 z-20 bg-neutral-50/85 backdrop-blur-md dark:bg-background/85">
       <div className="mx-auto flex max-w-[112rem] flex-wrap items-center gap-x-4 gap-y-2 px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-3 sm:px-6 lg:px-8 lg:py-4">
         {/* hideTitle：標題只給螢幕閱讀器（首頁：左邊選單已經標出在哪一頁） */}
+        {hideTitle && lead && <div className="min-w-0 flex-1 lg:hidden">{lead}</div>}
         {hideTitle ? <h1 className="sr-only">{title}</h1> : (
           <div data-ph="title" className="min-w-0 flex-1 xl:max-w-full xl:flex-none">
             <h1 className="text-2xl font-bold tracking-tight">{title}</h1>
@@ -160,7 +170,7 @@ export function PageHeader({ title, sub, actions, chips, chipsClassName, hideTit
           </div>
         )}
         {/* 手機、平板：標題右邊，小標籤在下一列（放不下就左右滑）；寬螢幕：全部同一列 */}
-        {actions && <div data-ph="actions" className="ml-auto flex shrink-0 items-center gap-2 self-start xl:order-last xl:self-center">{actions}</div>}
+        {(actions || askBtn) && <div data-ph="actions" className="ml-auto flex shrink-0 items-center gap-2 self-start xl:order-last xl:self-center">{askBtn}{actions}</div>}
         {chips && <div data-ph="chips" className={cn("-mx-4 flex w-[calc(100%+2rem)] items-center gap-2 overflow-x-auto px-4 pb-0.5 [scrollbar-width:none] xl:mx-0 xl:w-auto xl:min-w-0 xl:flex-1 xl:justify-end xl:px-0", chipsClassName)}>{chips}</div>}
       </div>
     </header>

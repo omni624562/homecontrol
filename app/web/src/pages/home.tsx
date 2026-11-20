@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Bike, Bus, Clock, DoorOpen, Droplets, Gauge, Home as HomeIcon, Loader2, Pencil, Power, Truck, Wifi, WifiOff, Zap } from "lucide-react";
+import { Bike, Bus, Clock, DoorOpen, MessageSquareText, Droplets, Gauge, Home as HomeIcon, Loader2, Pencil, Power, Truck, Wifi, WifiOff, Zap } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/app-shell";
+import { useAsk } from "@/components/ask-sheet";
 import { DeviceSheet, needsConfirm } from "@/components/device-sheet";
 import { WalkIn, playFx, useFun } from "@/components/fx";
 import { mdiIcon, weatherIcon } from "@/components/icons";
@@ -78,6 +79,7 @@ function HomeSkeleton() {
 
 export function HomePage() {
   const { state, failed, isOn, setPower, now } = useHub();
+  const ask = useAsk();
   useTick(30000);
   const [device, setDevice] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<Plug | null>(null);
@@ -341,6 +343,11 @@ export function HomePage() {
       <PageHeader
         title="我的家"
         hideTitle
+        lead={state.assistant ? (
+          <button onClick={ask.open} className="flex h-9 w-full items-center gap-2 rounded-full border bg-background px-3.5 text-left text-sm text-muted-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <MessageSquareText className="size-4 shrink-0 text-primary" /><span className="truncate">問家裡…</span>
+          </button>
+        ) : undefined}
         chips={compact ? <>{sceneBar}{sep}{headChips}</> : headChips}
         chipsClassName={compact ? "xl:justify-start" : look === "tech" ? "xl:justify-start xl:[&>:first-child]:ml-auto" : undefined}
         actions={<>
@@ -360,11 +367,11 @@ export function HomePage() {
         <MorningCard onLeave={() => setLeave(true)} onSheet={setSheet} />
         {/* 不放進標題列時：在畫面外量情境按鈕要多寬，用來判斷放不放得下 */}
         {!compact && <div aria-hidden className="pointer-events-none invisible fixed top-0 -left-[9999px]">{sceneBar}</div>}
-        {!compact && <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-[repeat(auto-fit,minmax(10rem,1fr))]">
+        {!compact && <div className="mb-5 grid grid-cols-4 gap-2 sm:grid-cols-[repeat(auto-fit,minmax(10rem,1fr))] sm:gap-3">
           <button
             onClick={() => setAllOff(true)}
             disabled={running === "all"}
-            className="flex h-16 items-center gap-3 rounded-xl border bg-card px-4 text-left font-semibold text-destructive shadow-xs transition-all hover:border-destructive/40 hover:bg-destructive/5 hover:shadow-sm active:scale-[.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+            className="flex flex-col items-center justify-center gap-1.5 rounded-xl border bg-card px-1 py-2.5 text-[13px] font-semibold text-destructive sm:h-16 sm:flex-row sm:justify-start sm:gap-3 sm:px-4 sm:py-0 sm:text-left sm:text-base shadow-xs transition-all hover:border-destructive/40 hover:bg-destructive/5 hover:shadow-sm active:scale-[.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
           >
             <span className="flex size-9 items-center justify-center rounded-lg bg-destructive/10">
               {running === "all" ? <Loader2 className="size-5 animate-spin" /> : <Power className="size-5" />}
@@ -378,12 +385,12 @@ export function HomePage() {
                 key={sc.id}
                 onClick={() => runScene(sc.id, sc.name)}
                 disabled={running === sc.id}
-                className="flex h-16 items-center gap-3 rounded-xl border bg-card px-4 text-left font-semibold shadow-xs transition-all hover:border-foreground/20 hover:bg-muted/60 hover:shadow-sm active:scale-[.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+                className="flex min-w-0 flex-col items-center justify-center gap-1.5 rounded-xl border bg-card px-1 py-2.5 text-[13px] font-semibold shadow-xs sm:h-16 sm:flex-row sm:justify-start sm:gap-3 sm:px-4 sm:py-0 sm:text-left sm:text-base transition-all hover:border-foreground/20 hover:bg-muted/60 hover:shadow-sm active:scale-[.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
               >
                 <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-foreground/70">
                   {running === sc.id ? <Loader2 className="size-5 animate-spin" /> : <I className="size-5" />}
                 </span>
-                <span className="truncate">{sc.name}</span>
+                <span className="max-w-full truncate">{sc.name}</span>
               </button>
             );
           })}
