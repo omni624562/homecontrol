@@ -258,7 +258,7 @@ export interface HubState {
   schedules: Schedule[];
   habits?: { suggestions: HabitSuggestion[]; days: number };
   sun?: { sunrise: number | null; sunset: number | null; located?: boolean };
-  calendar: { holiday: string | null; day_off?: boolean; rain: string | null; weather: Weather | null; weather_show: boolean; local: Local };
+  calendar: { holiday: string | null; day_off?: boolean; rain: string | null; weather: Weather | null; weather_show: boolean; local: Local; alerts?: Alerts };
   router?: { configured: boolean; ok: boolean; error?: string | null; ssids?: string[]; nodes?: { mac: string; model: string; ip: string; main: boolean }[] };
   assistant?: Assistant;
   notify?: { line: boolean; name: string; error: string | null };
@@ -317,4 +317,21 @@ export interface AskAction {
   body?: unknown;
   state?: "done" | "skip" | "err";
   err?: string;
+}
+
+// 停班停課、天氣特報、地震、供電、空品預報（後端 alerts.py）
+export interface DayOff { text: string; work: boolean; school: boolean; part: string | null; full: boolean }
+export interface Alerts {
+  county: string | null;
+  town: string | null;
+  dayoff: { today: DayOff | null; tomorrow: DayOff | null };
+  dgpa_any: boolean;
+  warnings: { name: string; phen: string; start: string | null; end: string | null }[];
+  quake: { no: number; time: string; text: string; mag: number | null; depth: number | null; where: string; county_intensity: string | null; station: { name: string; km: number; intensity: string } | null; here: string | null; rank: number } | null;
+  power: { rate: number | null; light: string | null; light_name: string | null; peak: string | null; load: string | null; util: string | null; published: string | null } | null;
+  air: { date: string; aqi: number; status: string; pollutant: string | null; zone: string }[];
+  air_key: boolean;
+  cwa_key: boolean;
+  errors: Record<string, string>;
+  updated: Record<string, number>;
 }

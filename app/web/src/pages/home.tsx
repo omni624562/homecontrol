@@ -14,6 +14,7 @@ import { WalkIn, playFx, useFun } from "@/components/fx";
 import { mdiIcon, weatherIcon } from "@/components/icons";
 import { AskPanel, EnergyPanel, NextPanel } from "@/components/home-side";
 import { LeaveSheet, MorningCard } from "@/components/leave-check";
+import { alertItems } from "@/components/alerts";
 import { LifeSheet, type LifeTopic } from "@/components/life-sheet";
 import { RoomCard, type Group } from "@/components/room-card";
 import { WeatherSheet } from "@/components/weather-sheet";
@@ -247,8 +248,11 @@ export function HomePage() {
   const people = state.people || [];
   const home = people.filter((x) => x.home).length;
   const r = state.router;
+  const alerts = alertItems(state);
+  const toLife = () => { location.hash = "life"; };
   const chips = (
     <>
+      {alerts.map((a) => <Chip key={a.key} onClick={toLife} icon={a.icon} label={a.label} sub={a.sub} tone={a.warn ? "warn" : undefined} />)}
       {people.length > 0 && <Pill icon={HomeIcon} tone={home ? "ok" : undefined}>{home ? `${home} 人在家` : "都出門了"}{arrived && fun && <WalkIn />}</Pill>}
       {state.summary.power != null && <Pill icon={Gauge}>{fmt(state.summary.power)} W</Pill>}
       {r?.configured && <Pill icon={r.ok ? Wifi : WifiOff} tone={r.ok ? undefined : "bad"}>{r.ok ? "網路正常" : "路由器連不上"}</Pill>}
@@ -287,6 +291,8 @@ export function HomePage() {
     const inner = <><I className="size-4 shrink-0" />{body}</>;
     items.push(opts.href ? <a key={key} href={opts.href} title={opts.title} className={cls}>{inner}</a> : <button key={key} onClick={opts.onClick} title={opts.title} className={cls}>{inner}</button>);
   };
+  for (const a of alerts)
+    it(`al-${a.key}`, a.icon, <><b className="!font-sans !text-[14px]">{a.label}</b>{a.sub && <span className="tech-item-sub">{a.sub}</span>}</>, { href: "#life", tone: a.warn ? "warn" : "on", title: a.title });
   if (state.summary.power != null)
     it("pw", Zap, <><b>{fmt(state.summary.power)}</b><small>W</small><span className="tech-item-sub max-2xl:hidden">今天 {fmt(state.summary.energy_today, 1)} 度</span></>, { href: "#energy", tone: "acc", title: `即時用電；今天 ${fmt(state.summary.energy_today, 1)} 度・$${fmt(state.summary.cost_today)}` });
   if (w && w.temp != null) {

@@ -1,5 +1,6 @@
 import { PageHeader } from "@/components/app-shell";
 import { LifeSheet } from "@/components/life-sheet";
+import { AlertsCard } from "@/components/alerts";
 import { WeatherSheet } from "@/components/weather-sheet";
 import { useHub, useMedia } from "@/lib/hub";
 
@@ -13,6 +14,7 @@ export function LifePage() {
   const wide3 = useMedia("(min-width: 1536px)");
   const wide2 = useMedia("(min-width: 1024px)");
   const weather = <WeatherSheet inline open onClose={noop} />;
+  const alerts = <AlertsCard A={state?.calendar.alerts} />;
   const bike = <LifeSheet inline open onClose={noop} topic="bike" />;
   const bus = <LifeSheet inline open onClose={noop} topic="bus" />;
   const garbage = <LifeSheet inline open onClose={noop} topic="garbage" />;
@@ -23,11 +25,11 @@ export function LifePage() {
       <PageHeader title="生活" sub={L?.place ? `${L.place}・政府開放資料，每幾分鐘更新` : "政府開放資料，每幾分鐘更新"} />
       <div className="mx-auto max-w-[112rem] px-4 py-4 sm:px-6 lg:px-8">
         {wide3 ? (
-          <div className="grid grid-cols-3 items-start gap-4">{col(weather)}{col(bike, garbage)}{col(bus, outage)}</div>
+          <div className="grid grid-cols-3 items-start gap-4">{col(alerts, weather)}{col(bike, garbage)}{col(bus, outage)}</div>
         ) : wide2 ? (
-          <div className="flex flex-col gap-4">{weather}<div className="grid grid-cols-2 items-start gap-4">{col(bike, garbage)}{col(bus, outage)}</div></div>
+          <div className="flex flex-col gap-4"><div className="grid grid-cols-2 items-start gap-4">{col(alerts, bike, garbage)}{col(weather, bus, outage)}</div></div>
         ) : (
-          col(weather, bike, bus, garbage, outage)
+          col(alerts, weather, bike, bus, garbage, outage)
         )}
       </div>
     </>

@@ -24,6 +24,7 @@ from . import habits, native, netprobe, sun, tariff
 from .sensing import INTERVAL as SENSE_INTERVAL, SAVE_EVERY as SENSE_SAVE_EVERY, Sensing
 from .notify import Notifier
 from .daysoff import DaysOff
+from .alerts import Alerts, quake_age_h
 from .localinfo import LocalInfo
 from .weather import Weather
 from .router import Router
@@ -155,10 +156,12 @@ class Hub:
         # 放假日、天氣（排程的「國定假日不執行」「下雨不執行」）
         self.weather = Weather(store.dir / "secrets.json")
         self.daysoff = DaysOff(store.dir, self.weather)
+        self.alerts = Alerts(store.dir, self.weather.key, self.weather.air_key)
         self.local = LocalInfo(store.dir, lambda: store.data["settings"].setdefault("local", {}),
                                lambda: (self.weather.county, self.weather.town),
                                lambda title, msg: self.notifier.send(title, msg))
         self._calendar_at = 0.0
+        self._alerts_busy = False
         self._today = date.today()
         self.sched_skipped: dict[str, str] = {}  # 排程 ID → 今天為什麼沒執行
         store.sched_skip = self.skip_days  # 寫進插座的備援規則也要跳過那幾天
@@ -1689,6 +1692,9 @@ class Hub:
             h = self.daysoff.holiday(day)
             if h:
                 return h
+            off = self.alerts.dayoff(self.weather.county, self.weather.town, day)
+            if off and off["full"]:
+                return f"停止上班（{off['text'][:30]}）"
         if sched.get("skip_rain"):
             r = self.daysoff.rainy(day)
             if r:
@@ -1711,6 +1717,18 @@ class Hub:
             self._check_reminders(time.time())
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning("主動提醒失敗：%s", err)
+        if not self._alerts_busy:
+            self._alerts_busy = True
+            try:
+                sig = self._dayoff_sig()
+                if await asyncio.to_thread(self.alerts.refresh, self.weather.county, self.location()):
+                    if self._dayoff_sig() != sig:
+                        self.mark_native()  # 停班停課變了：插座裡的備援規則跟著改
+                    await self.changed()
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning("讀取停班停課、特報、地震、供電失敗：%s", err)
+            finally:
+                self._alerts_busy = False
         today = date.today()
         if today != self._today:  # 過了午夜：跳過的日子變了，重寫插座裡的規則
             self._today = today
@@ -1729,6 +1747,10 @@ class Hub:
         elif self.weather.updated != before:  # 只有天氣更新：畫面更新就好
             await self.changed()
         self._check_weekly()
+
+    def _dayoff_sig(self) -> tuple:
+        today = date.today()
+        return tuple(bool((self.alerts.dayoff(self.weather.county, self.weather.town, today + timedelta(days=i)) or {}).get("full")) for i in range(2))
 
     def _check_reminders(self, now: float) -> None:
         """主動提醒（固定規則，不用 AI）：開太久、早上會下雨、明天停水停電。每件事只講一次，講過的存在樹莓派上。"""
@@ -1776,10 +1798,64 @@ class Hub:
                     self.notifier.send(f"明天要{what}", f"明天 {x['start'][11:16]}～{x['end'][11:16]} 你家附近{what}，記得先準備"
                                        + ("（儲水）" if x["kind"] == "water" else "（手機充電、冰箱少開）"))
 
+        self._check_alerts_notify(now, dt, cfg, sent)
+
         for k in [k for k, v in sent.items() if now - v > 7 * 86400]:
             del sent[k]
         if len(sent) != before:
             self._dirty = True
+
+    def _check_alerts_notify(self, now: float, dt: datetime, cfg: dict[str, Any], sent: dict[str, float]) -> None:
+        """停班停課、天氣特報、地震、供電吃緊、明天空品不好：各講一次。"""
+        A = self.alerts
+        county, town = self.weather.county, self.weather.town
+        # 停班停課：今天、明天有發布就通知（同一段文字只講一次）
+        if cfg.get("dayoff", True):
+            for i, word in ((0, "今天"), (1, "明天")):
+                day = dt.date() + timedelta(days=i)
+                off = A.dayoff(county, town, day)
+                if off:
+                    key = f"dayoff:{day.isoformat()}:{off['text'][:40]}"
+                    if key not in sent:
+                        sent[key] = now
+                        note = "「國定假日不執行」的排程會跳過" if off["full"] else ""
+                        self.notifier.send(f"{word}{county or ''}停班停課", off["text"] + (f"。{note}" if note else ""), "high")
+        # 天氣特報：新發布的才講
+        if cfg.get("warn", True):
+            for w in A.warnings:
+                key = f"warn:{w.get('name')}:{w.get('start')}"
+                if key not in sent:
+                    sent[key] = now
+                    end = (w.get("end") or "")[5:16].replace("-", "/")
+                    self.notifier.send(f"{county or ''}{w.get('name')}", f"氣象署發布{w.get('name')}" + (f"，到 {end}" if end else ""), "high")
+        # 地震：你家附近 3 級以上、1 小時內的
+        q = A.quake
+        age = quake_age_h(q)
+        if cfg.get("quake", True) and q and q.get("rank", 0) >= 3 and age is not None and age < 1:
+            key = f"quake:{q.get('no')}"
+            if key not in sent:
+                sent[key] = now
+                on = [self.name(p) for p in self.ordered() if p.online and p.is_on and not self.store.meta(p.id).keep_on]
+                msg = f"你家附近震度 {q.get('here')}（規模 {q.get('mag')}，{q.get('where')}）。"
+                msg += f"現在開著：{'、'.join(on[:8])}{'…' if len(on) > 8 else ''}" if on else "家裡的電器都關著"
+                self.notifier.send("剛剛有地震", msg, "high")
+        # 供電吃緊：今天預估尖峰備轉到橘燈以下
+        pw = A.power
+        if cfg.get("power", True) and pw and pw.get("light") in ("O", "R", "B"):
+            key = f"power:{dt.date().isoformat()}:{pw['light']}"
+            if key not in sent:
+                sent[key] = now
+                self.notifier.send(f"今天供電吃緊（{pw.get('light_name')}）",
+                                   f"台電預估尖峰備轉容量率 {pw.get('rate')}%（{pw.get('peak') or ''}）。用不到的電器可以先關")
+        # 明天空品不好：晚上 8～11 點講一次
+        if cfg.get("air", True) and 20 <= dt.hour < 23:
+            tm = A.air_on(dt.date() + timedelta(days=1))
+            if tm and tm["aqi"] > 100:
+                key = f"air:{tm['date']}"
+                if key not in sent:
+                    sent[key] = now
+                    self.notifier.send("明天空氣品質不好", f"{tm['zone']}空品區預報 AQI {tm['aqi']:.0f}（{tm['status']}）"
+                                       + (f"，主要是{tm['pollutant']}" if tm.get("pollutant") else "") + "。記得關窗、可以開清淨機")
 
     def _check_weekly(self) -> None:
         """每週日晚上 8 點後推播這一週的摘要（一週一次）。"""
@@ -1956,6 +2032,7 @@ class Hub:
                 "weather": self.weather.report(),  # 沒有氣象署授權碼是 None
                 "weather_show": self.store.data["settings"].get("weather", True),
                 "local": self.local.report(),
+                "alerts": self.alerts.report(self.weather.county, self.weather.town),
             },
             "sun": {"sunrise": self._sun_min(1, date.today()), "sunset": self._sun_min(2, date.today()), "located": self.location() is not None},
             "settings": settings,

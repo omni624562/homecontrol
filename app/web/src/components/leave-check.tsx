@@ -1,4 +1,5 @@
 import { useState, useSyncExternalStore } from "react";
+import { alertItems } from "@/components/alerts";
 import { Bus, DoorOpen, Droplets, Loader2, Power, Sun, Truck, Umbrella, X, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -201,6 +202,7 @@ export function MorningCard({ onLeave, onSheet }: { onLeave: () => void; onSheet
   bus.sort((a, b) => a[1] - b[1]);
 
   const items: { key: string; icon: React.ElementType; text: React.ReactNode; warn?: boolean; onClick?: () => void }[] = [];
+  for (const a of alertItems(state)) items.push({ key: a.key, icon: a.icon, warn: a.warn, text: a.sub ? `${a.label}・${a.sub}` : a.label, onClick: () => { location.hash = "life"; } });
   if (w) {
     const WI = weatherIcon(w.code, w.obs_text || w.text, w.day);
     items.push({ key: "wx", icon: WI, onClick: () => onSheet("weather"),

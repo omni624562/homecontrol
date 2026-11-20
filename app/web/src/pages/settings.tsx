@@ -474,7 +474,7 @@ export function SettingsPage() {
   const metered = state.plugs.some((p) => p.mode === "metered");
   const bound = cloudBound(state.plugs).length;
   const weekly = set.weekly !== false;
-  const remind = (set.remind || {}) as { long_on?: boolean; rain?: boolean; outage_eve?: boolean };
+  const remind = (set.remind || {}) as { long_on?: boolean; rain?: boolean; outage_eve?: boolean; dayoff?: boolean; warn?: boolean; quake?: boolean; power?: boolean; air?: boolean };
   const putRemind = (k: keyof typeof remind, v: boolean, label: string) => put({ remind: { [k]: v } }, `${label}${v ? "已打開" : "已關閉"}`);
 
   return (
@@ -494,6 +494,21 @@ export function SettingsPage() {
             </SRow>
             <SRow label="停水停電前一晚提醒" hint="明天你家附近要停水停電，前一天晚上 8 點再通知一次">
               <Switch checked={remind.outage_eve !== false} onCheckedChange={(v) => putRemind("outage_eve", v, "前一晚提醒")} aria-label="停水停電前一晚提醒" />
+            </SRow>
+            <SRow label="停班停課" hint="人事行政總處發布你家縣市（或你家的區）今天、明天停班停課就通知；停止上班的那天，「國定假日不執行」的排程也會跳過">
+              <Switch checked={remind.dayoff !== false} onCheckedChange={(v) => putRemind("dayoff", v, "停班停課通知")} aria-label="停班停課通知" />
+            </SRow>
+            <SRow label="天氣特報" hint="氣象署對你家縣市發布豪雨、颱風、低溫、強風等特報時通知（每一則講一次）">
+              <Switch checked={remind.warn !== false} onCheckedChange={(v) => putRemind("warn", v, "天氣特報通知")} aria-label="天氣特報通知" />
+            </SRow>
+            <SRow label="地震" hint="你家附近震度 3 級以上就通知，順便列出當時開著的電器">
+              <Switch checked={remind.quake !== false} onCheckedChange={(v) => putRemind("quake", v, "地震通知")} aria-label="地震通知" />
+            </SRow>
+            <SRow label="供電吃緊" hint="台電預估今天備轉容量率掉到橘燈（6% 以下）就通知">
+              <Switch checked={remind.power !== false} onCheckedChange={(v) => putRemind("power", v, "供電吃緊通知")} aria-label="供電吃緊通知" />
+            </SRow>
+            <SRow label="明天空氣品質不好" hint="明天你家空品區預報 AQI 超過 100，前一晚 8 點通知">
+              <Switch checked={remind.air !== false} onCheckedChange={(v) => putRemind("air", v, "空品通知")} aria-label="明天空氣品質不好通知" />
             </SRow>
             {metered && (
               <SRow wrap label="功率過高通知" hint="有計量的插座超過這個瓦數 1 分鐘就通知">
