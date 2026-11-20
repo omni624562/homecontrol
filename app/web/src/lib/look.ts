@@ -7,9 +7,9 @@ const listeners = new Set<() => void>();
 
 export function getLook(): Look {
   try {
-    return localStorage.getItem(KEY) === "tech" ? "tech" : "classic";
+    return localStorage.getItem(KEY) === "classic" ? "classic" : "tech"; // 沒選過的裝置預設科技感
   } catch {
-    return "classic";
+    return "tech";
   }
 }
 
