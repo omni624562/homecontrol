@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { AlertCircle, BarChart3, ChevronLeft, ChevronRight, Home, Info, Plug, Plus, ShieldCheck, User, Wand2, Wifi } from "lucide-react";
+import { AlertCircle, BarChart3, ChevronLeft, ChevronRight, CircleHelp, Home, Info, Plug, Plus, ShieldCheck, User, Wand2, Wifi } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,7 @@ import { NetDevSheet, PersonSheet } from "@/components/net-sheets";
 import { ChoiceChip } from "@/components/schedule-bits";
 import { api } from "@/lib/api";
 import { useHub } from "@/lib/hub";
+import { useLook } from "@/lib/look";
 import { KIND, devKind, fmtBytes, isRawName, netAgo, netName, type NetClient, type NetData } from "@/lib/net";
 import { cn } from "@/lib/utils";
 
@@ -61,6 +62,7 @@ export function NetPage() {
   const [filter, setFilter] = useState<Filter>("all");
   const [dev, setDev] = useState<string | null>(null);
   const [person, setPerson] = useState<string | null>(null);
+  const tech = useLook() === "tech";
   const load = useCallback(() => {
     api<NetData>("GET", "/api/net").then(setNet).catch(() => {});
   }, []);
@@ -77,12 +79,15 @@ export function NetPage() {
     : !r.ok
       ? `連不上路由器${r.error ? `：${r.error}` : ""}`
       : `${(r.nodes || []).map((n) => n.model).join(" + ")}${people.length ? `・${people.some((x) => x.home) ? `${people.filter((x) => x.home).length} 人在家` : "大家都出門了"}` : "・看誰在家、陌生裝置通知"}`;
-  const header = (
+  const head = (chips?: ReactNode[]) => (
     <PageHeader
       title={<span className="flex items-center gap-1"><a href="#settings" className="-ml-2 rounded-lg p-1 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="回設定"><ChevronLeft className="size-6" /></a>網路裝置</span>}
       sub={routerLine}
+      chips={chips?.length ? chips : undefined}
+      chipsClassName="xl:justify-start xl:[&>:first-child]:ml-auto"
     />
   );
+  const header = head();
   if (!state) return header;
   if (!r?.configured) return <>{header}<div className="mx-auto max-w-7xl px-4 py-10 text-center text-muted-foreground">還沒設定要讀哪一台路由器。</div></>;
   if (!net)
@@ -171,9 +176,19 @@ export function NetPage() {
   const newAlert = state.settings.new_device_alert !== false;
   const sceneOpts = [["none", "不做事"], ...state.scenes.map((s) => [s.id, `執行「${s.name}」`])];
 
+  // 科技感：標題右邊一行摘要（在家、連線中、還沒取名字、今天用最多）
+  const chips: ReactNode[] = [];
+  if (tech) {
+    const homeN = people.filter((x) => x.home).length;
+    if (people.length) chips.push(<span key="pp" className={cn("tech-item", homeN && "[&_b]:text-emerald-600 dark:[&_b]:text-emerald-400")} title={homeN ? `${homeN} 人在家` : "大家都出門了"}><Home className="size-4" /><b>{homeN}</b><small>/ {people.length} 人</small><span className="tech-item-sub">在家</span></span>);
+    chips.push(<span key="on" className="tech-item [&_b]:text-primary" title={`另外還有 ${plugCount} 台插座`}><Wifi className="size-4" /><b>{online.length}</b><small>台</small><span className="tech-item-sub">連線中</span></span>);
+    if (unnamed) chips.push(<button key="un" className="tech-item tech-item-warn" onClick={() => setFilter("unnamed")} title="點一下只看還沒取名字的"><CircleHelp className="size-4" /><b>{unnamed}</b><small>台</small><span className="tech-item-sub">還沒取名字</span></button>);
+    if (heavy[0]) chips.push(<button key="hv" className="tech-item" onClick={() => setDev(heavy[0].mac)} title="今天用最多網路的裝置"><BarChart3 className="size-4" /><b>{fmtBytes(heavy[0].today_bytes!)}</b><span className="tech-item-sub max-w-40 truncate">{netName(heavy[0])}</span></button>);
+  }
+
   return (
     <>
-      {header}
+      {head(chips)}
       <div className="mx-auto max-w-7xl space-y-4 px-4 py-4 sm:px-6 lg:px-8">
         {!net.ok && (
           <div className="flex gap-2 rounded-xl border border-orange-300 bg-orange-50 px-4 py-3 text-sm leading-relaxed text-orange-800 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-300">
