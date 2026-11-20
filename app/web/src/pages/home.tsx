@@ -182,7 +182,7 @@ export function HomePage() {
       );
     return (
       <>
-        <PageHeader title="我的家" />
+        <PageHeader title="我的家" hideTitle />
         <HomeSkeleton />
       </>
     );
@@ -340,6 +340,7 @@ export function HomePage() {
     <>
       <PageHeader
         title="我的家"
+        hideTitle
         chips={compact ? <>{sceneBar}{sep}{headChips}</> : headChips}
         chipsClassName={compact ? "xl:justify-start" : look === "tech" ? "xl:justify-start xl:[&>:first-child]:ml-auto" : undefined}
         actions={<>

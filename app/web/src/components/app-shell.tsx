@@ -148,14 +148,17 @@ export function AppShell({ tab: raw, children }: { tab: string; children: ReactN
 }
 
 // 每一頁的標題列：捲動時固定在上面
-export function PageHeader({ title, sub, actions, chips, chipsClassName }: { title: ReactNode; sub?: ReactNode; actions?: ReactNode; chips?: ReactNode; chipsClassName?: string }) {
+export function PageHeader({ title, sub, actions, chips, chipsClassName, hideTitle }: { title: ReactNode; sub?: ReactNode; actions?: ReactNode; chips?: ReactNode; chipsClassName?: string; hideTitle?: boolean }) {
   return (
     <header className="page-header sticky top-0 z-20 bg-neutral-50/85 backdrop-blur-md dark:bg-background/85">
       <div className="mx-auto flex max-w-[112rem] flex-wrap items-center gap-x-4 gap-y-2 px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-3 sm:px-6 lg:px-8 lg:py-4">
-        <div data-ph="title" className="min-w-0 flex-1 xl:max-w-full xl:flex-none">
-          <h1 className="text-2xl font-bold tracking-tight">{title}</h1>
-          {sub && <div className="text-sm leading-relaxed text-muted-foreground">{sub}</div>}
-        </div>
+        {/* hideTitle：標題只給螢幕閱讀器（首頁：左邊選單已經標出在哪一頁） */}
+        {hideTitle ? <h1 className="sr-only">{title}</h1> : (
+          <div data-ph="title" className="min-w-0 flex-1 xl:max-w-full xl:flex-none">
+            <h1 className="text-2xl font-bold tracking-tight">{title}</h1>
+            {sub && <div className="text-sm leading-relaxed text-muted-foreground">{sub}</div>}
+          </div>
+        )}
         {/* 手機、平板：標題右邊，小標籤在下一列（放不下就左右滑）；寬螢幕：全部同一列 */}
         {actions && <div data-ph="actions" className="ml-auto flex shrink-0 items-center gap-2 self-start xl:order-last xl:self-center">{actions}</div>}
         {chips && <div data-ph="chips" className={cn("-mx-4 flex w-[calc(100%+2rem)] items-center gap-2 overflow-x-auto px-4 pb-0.5 [scrollbar-width:none] xl:mx-0 xl:w-auto xl:min-w-0 xl:flex-1 xl:justify-end xl:px-0", chipsClassName)}>{chips}</div>}
