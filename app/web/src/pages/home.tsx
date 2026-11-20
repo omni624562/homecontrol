@@ -16,7 +16,7 @@ import { LifeSheet, type LifeTopic } from "@/components/life-sheet";
 import { RoomCard, type Group } from "@/components/room-card";
 import { WeatherSheet } from "@/components/weather-sheet";
 import { api } from "@/lib/api";
-import { busEta, fmt, pad2, WEEK } from "@/lib/format";
+import { busEta, fmt, pad2 } from "@/lib/format";
 import { useHub, useMedia, useTick } from "@/lib/hub";
 import { useLook } from "@/lib/look";
 import type { Plug } from "@/lib/types";
@@ -235,94 +235,55 @@ export function HomePage() {
     </>
   );
 
-  // 「科技感」外觀：上面那排小按鈕改成一條狀態列（資訊和點了會開的面板都一樣）
-  const nowD = new Date();
-  const bikeTxt = bikeMain ? (!bikeMain.ok ? "暫停" : bikeMain.bikes ? String(bikeMain.bikes) : "0") : "";
+  // 「科技感」外觀：上面那排小按鈕改成標題右邊的一行（資訊和點了會開的面板都一樣）
   const soonList = [...soon].sort((a, b) => a[1] - b[1]);
-  const cells: React.ReactNode[] = [];
+  const items: React.ReactNode[] = [];
+  const it = (key: string, I: React.ElementType, body: React.ReactNode, opts: { onClick?: () => void; href?: string; tone?: "acc" | "on" | "warn" | "ok"; title: string }) => {
+    const cls = cn(
+      "tech-item",
+      opts.tone === "acc" && "[&_b]:text-primary",
+      opts.tone === "on" && "tech-item-on",
+      opts.tone === "warn" && "tech-item-warn",
+      opts.tone === "ok" && "[&_b]:text-emerald-600 dark:[&_b]:text-emerald-400",
+    );
+    const inner = <><I className="size-4 shrink-0" />{body}</>;
+    items.push(opts.href ? <a key={key} href={opts.href} title={opts.title} className={cls}>{inner}</a> : <button key={key} onClick={opts.onClick} title={opts.title} className={cls}>{inner}</button>);
+  };
   if (state.summary.power != null)
-    cells.push(
-      <a key="pw" href="#energy" className="tech-cell block">
-        <div className="tech-k"><i className="tech-dot text-primary" />即時用電</div>
-        <div className="tech-v text-primary">{fmt(state.summary.power)}<small>W</small></div>
-        <div className="tech-s">{fmt(state.summary.energy_today, 1)} 度・${fmt(state.summary.cost_today)}</div>
-      </a>,
-    );
-  if (people.length > 0 || r?.configured)
-    cells.push(
-      <a key="pp" href="#net" className="tech-cell block">
-        <div className="tech-k">在家</div>
-        <div className={cn("tech-v", home > 0 && "text-emerald-600 dark:text-emerald-400")}>
-          {people.length ? <>{home}<small>人</small></> : "—"}{arrived && fun && <WalkIn />}
-        </div>
-        <div className={cn("tech-s", r?.configured && !r.ok && "text-orange-700 dark:text-orange-400")}>
-          {r?.configured ? (r.ok ? "網路正常" : "路由器連不上") : people.length && !home ? "都出門了" : ""}
-        </div>
-      </a>,
-    );
-  if (w && w.temp != null)
-    cells.push(
-      <button key="wx" className="tech-cell" onClick={() => setSheet("weather")}>
-        <div className="tech-k">天氣</div>
-        <div className="tech-v">{fmt(w.temp)}°</div>
-        <div className="tech-s">{w.text || w.obs_text || ""}{(w.hourly[0]?.pop ?? 0) >= 30 ? `・降雨 ${w.hourly[0].pop}%` : ""}</div>
-      </button>,
-    );
+    it("pw", Zap, <><b>{fmt(state.summary.power)}</b><small>W</small><span className="tech-item-sub max-2xl:hidden">今天 {fmt(state.summary.energy_today, 1)} 度</span></>, { href: "#energy", tone: "acc", title: `即時用電；今天 ${fmt(state.summary.energy_today, 1)} 度・$${fmt(state.summary.cost_today)}` });
+  if (w && w.temp != null) {
+    const WI = weatherIcon(w.code, w.obs_text || w.text, w.day);
+    const rain = (w.hourly[0]?.pop ?? 0) >= 30 ? `降雨 ${w.hourly[0].pop}%` : "";
+    it("wx", WI, <><b>{fmt(w.temp)}°</b><span className="tech-item-sub">{rain || w.text || w.obs_text}</span></>, { onClick: () => setSheet("weather"), title: `天氣：${w.text || w.obs_text || ""}${rain ? `・${rain}` : ""}` });
+  }
   if (g && g.today.length > 0) {
     const coming = !!truck && !truck.none && (truck.stops ?? -1) >= 0;
-    cells.push(
-      <button key="tr" className="tech-cell" onClick={() => setSheet("garbage")}>
-        <div className="tech-k">{coming && <i className="tech-dot text-amber-500" />}垃圾車</div>
-        <div className={cn("tech-v", coming && "text-amber-600 dark:text-amber-400")}>
-          {coming ? <>{truck!.stops}<small>站</small></> : truck && !truck.none ? "過了" : g.usual || g.stop.time}
-        </div>
-        <div className="tech-s">{coming ? (truck!.eta_min != null ? `約 ${truck!.eta_min} 分鐘` : `表定 ${g.stop.time}`) : g.today.join("、")}</div>
-      </button>,
-    );
+    const passed = !!truck && !truck.none && !coming;
+    it("tr", Truck, coming ? <><b>{truck!.stops}</b><small>站</small>{truck!.eta_min != null && <span className="tech-item-sub">約 {truck!.eta_min} 分</span>}</> : <b>{passed ? "已過" : g.usual || g.stop.time}</b>,
+      { onClick: () => setSheet("garbage"), tone: coming ? "on" : undefined, title: `垃圾車：${g.today.join("、")}` });
   }
   if ((L?.bus?.routes.length ?? 0) > 0)
-    cells.push(
-      <button key="bus" className="tech-cell" onClick={() => setSheet("bus")}>
-        <div className="tech-k">公車{soonList[0] ? `・${soonList[0][0]}` : ""}</div>
-        <div className="tech-v">{soonList[0] ? (soonList[0][1] < 60 ? "進站" : <>{Math.round(soonList[0][1] / 60)}<small>分</small></>) : "—"}</div>
-        <div className="tech-s">{soonList[1] ? `${soonList[1][0]} ${busEta(soonList[1][1])}` : soonList[0] ? "" : "30 分內沒車"}</div>
-      </button>,
-    );
+    it("bus", Bus, soonList[0] ? <><span className="tech-item-sub !ml-0">{soonList[0][0]}</span><b>{soonList[0][1] < 60 ? "進站" : Math.round(soonList[0][1] / 60)}</b>{soonList[0][1] >= 60 && <small>分</small>}</> : <span className="tech-item-sub !ml-0">30 分內沒車</span>,
+      { onClick: () => setSheet("bus"), title: soonList.map(([n, sec]) => `${n} ${busEta(sec)}`).join("・") || "公車：30 分鐘內沒車" });
   if (bikeMain)
-    cells.push(
-      <button key="yb" className="tech-cell" onClick={() => setSheet("bike")}>
-        <div className="tech-k">YouBike</div>
-        <div className={cn("tech-v", (!bikeMain.ok || !bikeMain.bikes) && "text-orange-700 dark:text-orange-400")}>{bikeTxt}{bikeMain.ok && <small>台</small>}</div>
-        <div className="tech-s">{bikeMain.name}・{bikeMain.m} 公尺</div>
-      </button>,
-    );
+    it("yb", Bike, bikeMain.ok ? <><b>{bikeMain.bikes}</b><small>台</small></> : <b>暫停</b>,
+      { onClick: () => setSheet("bike"), tone: !bikeMain.ok || !bikeMain.bikes ? "warn" : undefined, title: `YouBike ${bikeMain.name}・${bikeMain.m} 公尺・空位 ${bikeMain.docks}` });
+  if (people.length > 0)
+    it("pp", HomeIcon, <><b>{home}</b><small>人</small>{arrived && fun && <WalkIn />}</>, { href: "#net", tone: home ? "ok" : undefined, title: home ? `${home} 人在家` : "都出門了" });
+  if (r?.configured && !r.ok) it("net", WifiOff, <b>路由器連不上</b>, { href: "#net", tone: "warn", title: r.error || "路由器連不上" });
   if (roadOutages[0]) {
     const d0 = new Date(roadOutages[0].start);
-    cells.push(
-      <button key="out" className="tech-cell" onClick={() => setSheet("outage")}>
-        <div className="tech-k"><i className="tech-dot text-orange-500" />{roadOutages[0].kind === "power" ? "停電" : "停水"}</div>
-        <div className="tech-v text-orange-700 dark:text-orange-400">{d0.getMonth() + 1}/{d0.getDate()}</div>
-        <div className="tech-s">{pad2(d0.getHours())}:{pad2(d0.getMinutes())} 起{roadOutages.length > 1 ? `・還有 ${roadOutages.length - 1} 件` : ""}</div>
-      </button>,
-    );
+    it("out", roadOutages[0].kind === "power" ? Zap : Droplets, <><b>{d0.getMonth() + 1}/{d0.getDate()}</b><span className="tech-item-sub">{roadOutages[0].kind === "power" ? "停電" : "停水"}{roadOutages.length > 1 ? ` 等 ${roadOutages.length} 件` : ""}</span></>,
+      { onClick: () => setSheet("outage"), tone: "warn", title: `${roadOutages[0].kind === "power" ? "停電" : "停水"} ${d0.getMonth() + 1}/${d0.getDate()} ${pad2(d0.getHours())}:${pad2(d0.getMinutes())}` });
   }
-  const strip = (
-    <div className="tech-strip mb-4" style={{ "--cells": cells.length } as React.CSSProperties}>
-      <div className="tech-cell max-sm:hidden sm:max-xl:col-span-2">
-        <div className="tech-k">{nowD.getMonth() + 1}/{nowD.getDate()} 週{WEEK[nowD.getDay()]}</div>
-        <div className="tech-v !text-[30px] !leading-tight">{pad2(nowD.getHours())}<b className="font-semibold text-primary">:</b>{pad2(nowD.getMinutes())}</div>
-        <div className="tech-s">{onCount ? <span className="font-medium text-amber-600 dark:text-amber-400">{onCount} 個開著</span> : "全部關著"}・共 {state.plugs.length} 個裝置</div>
-      </div>
-      {cells}
-    </div>
-  );
 
   return (
     <>
       <PageHeader
         title="我的家"
-        sub={look === "tech" ? <span className="sm:hidden">{onCount ? <b className="font-semibold text-amber-600 dark:text-amber-400">{onCount} 個開著</b> : "全部關著"}・共 {state.plugs.length} 個裝置</span> : <>{onCount ? <b className="font-semibold text-amber-600 dark:text-amber-400">{onCount} 個開著</b> : "全部關著"}・共 {state.plugs.length} 個裝置</>}
-        chips={look === "tech" ? undefined : chips}
+        sub={<>{onCount ? <b className="font-semibold text-amber-600 dark:text-amber-400">{onCount} 個開著</b> : "全部關著"}・共 {state.plugs.length} 個裝置</>}
+        chips={look === "tech" ? items : chips}
+        chipsClassName={look === "tech" ? "xl:justify-start xl:[&>:first-child]:ml-auto" : undefined}
         actions={
           <Button variant="outline" asChild className="h-9 rounded-full bg-background">
             <a href="#edit" title="排順序、換區域、改情境"><Pencil />編輯</a>
@@ -330,7 +291,6 @@ export function HomePage() {
         }
       />
       <div className="mx-auto max-w-7xl px-4 pt-2 sm:px-6 lg:px-8">
-        {look === "tech" && strip}
         <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-[repeat(auto-fit,minmax(10rem,1fr))]">
           <button
             onClick={() => setAllOff(true)}

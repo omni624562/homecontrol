@@ -625,3 +625,58 @@ html[data-look="tech"] .logo-mark {
   color: var(--primary);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 14%, transparent);
 }
+
+/* 科技感：標題右邊那一行（即時用電、天氣、垃圾車、公車、YouBike、在家…） */
+.tech-item {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--muted-foreground);
+  font-size: 13px;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s;
+}
+.tech-item:hover,
+.tech-item:focus-visible {
+  background: var(--muted);
+  outline: none;
+}
+.tech-item:focus-visible {
+  box-shadow: 0 0 0 2px var(--ring);
+}
+.tech-item b {
+  font: 600 16px/1 var(--tech-mono);
+  color: var(--foreground);
+}
+.tech-item small {
+  margin-left: -3px;
+  font-size: 11.5px;
+}
+.tech-item-sub {
+  margin-left: 2px;
+}
+.tech-item-on {
+  border-color: var(--tech-on);
+  background: var(--tech-on-bg);
+}
+.tech-item-on b,
+.tech-item-on svg {
+  color: var(--tech-on);
+}
+.tech-item-warn {
+  border-color: color-mix(in srgb, #ea580c 55%, transparent);
+}
+.tech-item-warn b,
+.tech-item-warn svg {
+  color: #ea580c;
+}
+html.dark .tech-item-warn b,
+html.dark .tech-item-warn svg {
+  color: #fb923c;
+}
