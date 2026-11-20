@@ -12,7 +12,7 @@ import { DeviceSheet, needsConfirm } from "@/components/device-sheet";
 import { WalkIn, playFx, useFun } from "@/components/fx";
 import { mdiIcon, weatherIcon } from "@/components/icons";
 import { AskPanel, EnergyPanel, NextPanel } from "@/components/home-side";
-import { LifeSheet } from "@/components/life-sheet";
+import { LifeSheet, type LifeTopic } from "@/components/life-sheet";
 import { RoomCard, type Group } from "@/components/room-card";
 import { WeatherSheet } from "@/components/weather-sheet";
 import { api } from "@/lib/api";
@@ -81,7 +81,7 @@ export function HomePage() {
   const [device, setDevice] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<Plug | null>(null);
   const [allOff, setAllOff] = useState(false);
-  const [sheet, setSheet] = useState<"weather" | "life" | "bus" | "bike" | null>(null);
+  const [sheet, setSheet] = useState<"weather" | LifeTopic | null>(null);
   const [running, setRunning] = useState<string | null>(null);
   // 有人回家：在家人數變多的時候，小人走進門幾秒
   const fun = useFun();
@@ -215,7 +215,7 @@ export function HomePage() {
       {state.summary.power != null && <Pill icon={Gauge}>{fmt(state.summary.power)} W</Pill>}
       {r?.configured && <Pill icon={r.ok ? Wifi : WifiOff} tone={r.ok ? undefined : "bad"}>{r.ok ? "網路正常" : "路由器連不上"}</Pill>}
       {g && g.today.length > 0 && (
-        <Chip onClick={() => setSheet("life")} icon={Truck} label="垃圾車" moving={!!truck && !truck.none && (truck.stops ?? -1) >= 0}
+        <Chip onClick={() => setSheet("garbage")} icon={Truck} label="垃圾車" moving={!!truck && !truck.none && (truck.stops ?? -1) >= 0}
           sub={truck && !truck.none ? ((truck.stops ?? -1) >= 0 ? `還有 ${truck.stops} 站` : "已經過了") : g.usual ? `約 ${g.usual}` : g.stop.time} />
       )}
       {(L?.bus?.routes.length ?? 0) > 0 && <Chip onClick={() => setSheet("bus")} icon={Bus} label="公車" sub={buses.join("・") || "30 分內沒車"} />}
@@ -224,7 +224,7 @@ export function HomePage() {
           sub={!bikeMain.ok ? `${bikeMain.name} 暫停` : `${bikeMain.name} ${bikeMain.bikes ? `${bikeMain.bikes} 台` : "沒車"}`} />
       )}
       {roadOutages[0] && (
-        <Chip onClick={() => setSheet("life")} icon={roadOutages[0].kind === "power" ? Zap : Droplets} tone="warn"
+        <Chip onClick={() => setSheet("outage")} icon={roadOutages[0].kind === "power" ? Zap : Droplets} tone="warn"
           label={`${new Date(roadOutages[0].start).getMonth() + 1}/${new Date(roadOutages[0].start).getDate()} ${roadOutages[0].kind === "power" ? "停電" : "停水"}`}
           sub={roadOutages.length > 1 ? `還有 ${roadOutages.length - 1} 件` : undefined} />
       )}
@@ -271,7 +271,7 @@ export function HomePage() {
   if (g && g.today.length > 0) {
     const coming = !!truck && !truck.none && (truck.stops ?? -1) >= 0;
     cells.push(
-      <button key="tr" className="tech-cell" onClick={() => setSheet("life")}>
+      <button key="tr" className="tech-cell" onClick={() => setSheet("garbage")}>
         <div className="tech-k">{coming && <i className="tech-dot text-amber-500" />}垃圾車</div>
         <div className={cn("tech-v", coming && "text-amber-600 dark:text-amber-400")}>
           {coming ? <>{truck!.stops}<small>站</small></> : truck && !truck.none ? "過了" : g.usual || g.stop.time}
@@ -299,7 +299,7 @@ export function HomePage() {
   if (roadOutages[0]) {
     const d0 = new Date(roadOutages[0].start);
     cells.push(
-      <button key="out" className="tech-cell" onClick={() => setSheet("life")}>
+      <button key="out" className="tech-cell" onClick={() => setSheet("outage")}>
         <div className="tech-k"><i className="tech-dot text-orange-500" />{roadOutages[0].kind === "power" ? "停電" : "停水"}</div>
         <div className="tech-v text-orange-700 dark:text-orange-400">{d0.getMonth() + 1}/{d0.getDate()}</div>
         <div className="tech-s">{pad2(d0.getHours())}:{pad2(d0.getMinutes())} 起{roadOutages.length > 1 ? `・還有 ${roadOutages.length - 1} 件` : ""}</div>
@@ -380,7 +380,7 @@ export function HomePage() {
 
       <DeviceSheet id={device} onClose={() => setDevice(null)} />
       <WeatherSheet open={sheet === "weather"} onClose={() => setSheet(null)} />
-      <LifeSheet open={sheet === "life" || sheet === "bus" || sheet === "bike"} first={sheet === "bus" || sheet === "bike" ? sheet : undefined} onClose={() => setSheet(null)} />
+      <LifeSheet open={!!sheet && sheet !== "weather"} topic={sheet && sheet !== "weather" ? sheet : undefined} onClose={() => setSheet(null)} />
 
       <AlertDialog open={allOff} onOpenChange={setAllOff}>
         <AlertDialogContent>

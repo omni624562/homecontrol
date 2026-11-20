@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Bike, Bus, Droplets, Home, Loader2, Truck, Zap, ZapOff } from "lucide-react";
 import { toast } from "sonner";
 import { BikeMap } from "@/components/bike-map";
 import { Badge } from "@/components/ui/badge";
+import { Segmented } from "@/components/schedule-bits";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -25,8 +26,21 @@ function range(x: Outage) {
   return `${a.getMonth() + 1}/${a.getDate()}（${WEEK[a.getDay()]}）${t(a)}～${same ? "" : `${b.getMonth() + 1}/${b.getDate()} `}${t(b)}`;
 }
 
-export function LifeSheet({ open, onClose, first }: { open: boolean; onClose: () => void; first?: "bus" | "bike" }) {
+export type LifeTopic = "garbage" | "bus" | "bike" | "outage";
+const TOPICS: { key: LifeTopic; label: string; icon: React.ElementType; src: string }[] = [
+  { key: "garbage", label: "垃圾車", icon: Truck, src: "新北市環保局（垃圾車路線、即時位置）" },
+  { key: "bus", label: "公車", icon: Bus, src: "新北市交通局、臺北市公車動態資訊中心" },
+  { key: "bike", label: "YouBike", icon: Bike, src: "新北市交通局（YouBike 2.0 即時資訊）；地圖 © OpenStreetMap 貢獻者" },
+  { key: "outage", label: "停水停電", icon: ZapOff, src: "台灣自來水公司、臺北自來水事業處、台電（計畫性工作停電）" },
+];
+
+// 生活資訊：一次只看一件事（按哪個進來就先看哪個），上面的分頁可以換
+export function LifeSheet({ open, onClose, topic = "garbage" }: { open: boolean; onClose: () => void; topic?: LifeTopic }) {
   const { state } = useHub();
+  const [tab, setTab] = useState<LifeTopic>(topic);
+  useEffect(() => {
+    if (open) setTab(topic);
+  }, [open, topic]);
   const L = state?.calendar.local;
   const [roads, setRoads] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -60,28 +74,34 @@ export function LifeSheet({ open, onClose, first }: { open: boolean; onClose: ()
             ? { big: `今天${when}`, small: `還沒看到這條路線的車子出勤${usualNote}` }
             : { big: `今天${when}`, small: `${g.today.join("、")}・表定時間前 45 分鐘開始追蹤車子${usualNote}` };
   const running = !!g && g.today.length > 0 && !!t && !t.none && (t.stops ?? -1) >= 0;
+  const T = TOPICS.find((x) => x.key === tab)!;
   const days = (d: number[]) => (d.length ? d.map((i) => DN[i]).join("") : "不收");
 
   return (
-    <Sheet open={open} onOpenChange={(v) => !v && onClose()} title="生活資訊"
+    <Sheet open={open} onOpenChange={(v) => !v && onClose()} title={T.label}
       description={L.place ? `${L.place}・政府開放資料` : "政府開放資料"}
-      icon={<Truck />}
+      icon={<T.icon />}
       wide
       aside={
-        status ? (
+        tab === "garbage" && status ? (
           <div className="text-right leading-tight">
-            <div className="text-xs text-muted-foreground">垃圾車</div>
-            <div className={cn("text-lg font-bold whitespace-nowrap", running && "text-amber-600 dark:text-amber-400")}>{status.big}</div>
+            <div className="text-xs text-muted-foreground">{g?.today.length ? "今天" : "垃圾車"}</div>
+            <div className={cn("text-lg font-bold whitespace-nowrap", running && "text-amber-600 dark:text-amber-400")}>{status.big.replace(/^今天/, "")}</div>
           </div>
+        ) : tab === "bus" && B?.updated ? (
+          <span className="text-xs text-muted-foreground tabular-nums">{new Date(B.updated * 1000).toTimeString().slice(0, 5)} 更新</span>
+        ) : tab === "bike" ? (
+          <label className="flex items-center gap-2 text-sm text-muted-foreground">
+            {Y?.show && Y.updated ? <span className="tabular-nums">{new Date(Y.updated * 1000).toTimeString().slice(0, 5)} 更新</span> : "顯示"}
+            <Switch checked={Y?.show ?? true} onCheckedChange={(v) => put({ bike_show: v })} aria-label="顯示 YouBike" />
+          </label>
         ) : undefined
       }
     >
       <div className="flex flex-col gap-5">
-        <section className="rounded-2xl border p-4">
-          <h3 className="mb-3 flex items-center gap-2 font-semibold">
-            <Truck className="size-5 text-primary" />
-            垃圾車
-          </h3>
+        <Segmented label="生活資訊" value={tab} onChange={setTab} options={TOPICS.map((x) => [x.key, <span key={x.key} className="inline-flex items-center justify-center gap-1.5"><x.icon className="size-4 max-sm:hidden" />{x.label}</span>])} />
+{tab === "garbage" && (
+                <section>
           {!L.garbage_supported ? (
             <p className="text-sm text-muted-foreground">垃圾車目前只支援新北市</p>
           ) : !g || !status ? (
@@ -126,13 +146,10 @@ export function LifeSheet({ open, onClose, first }: { open: boolean; onClose: ()
             </div>
           )}
         </section>
+        )}
 
-        <section className={cn("rounded-2xl border p-4", first === "bus" && "order-first")}>
-          <h3 className="mb-3 flex items-center gap-2 font-semibold">
-            <Bus className="size-5 text-primary" />
-            公車
-            {B?.updated && <span className="ml-auto text-xs font-normal text-muted-foreground tabular-nums">{new Date(B.updated * 1000).toTimeString().slice(0, 5)} 更新</span>}
-          </h3>
+        {tab === "bus" && (
+        <section>
           {B && B.routes.length > 0 && (
             <ul className="mb-4 divide-y">
               {B.routes.flatMap((rt) =>
@@ -180,14 +197,10 @@ export function LifeSheet({ open, onClose, first }: { open: boolean; onClose: ()
             <p className="text-xs leading-relaxed text-muted-foreground">新北市的公車。每分鐘更新，站牌預設選離家最近的。</p>
           </div>
         </section>
+        )}
 
-        <section className={cn("rounded-2xl border p-4", first === "bike" && "order-first")}>
-          <h3 className="mb-3 flex items-center gap-2 font-semibold">
-            <Bike className="size-5 text-primary" />
-            YouBike
-            {Y?.show && Y.updated && <span className="text-xs font-normal text-muted-foreground tabular-nums">{new Date(Y.updated * 1000).toTimeString().slice(0, 5)} 更新</span>}
-            <Switch className="ml-auto" checked={Y?.show ?? true} onCheckedChange={(v) => put({ bike_show: v })} aria-label="顯示 YouBike" />
-          </h3>
+        {tab === "bike" && (
+        <section>
           {!Y?.show ? (
             <p className="text-sm text-muted-foreground">沒有開啟</p>
           ) : !Y.near.length ? (
@@ -217,12 +230,10 @@ export function LifeSheet({ open, onClose, first }: { open: boolean; onClose: ()
             </>
           )}
         </section>
+        )}
 
-        <section className="rounded-2xl border p-4">
-          <h3 className="mb-3 flex items-center gap-2 font-semibold">
-            <ZapOff className="size-5 text-primary" />
-            停水、停電
-          </h3>
+{tab === "outage" && (
+                <section>
           <div className="space-y-2">
             <Label htmlFor="roads">你家的路名</Label>
             <form
@@ -273,8 +284,9 @@ export function LifeSheet({ open, onClose, first }: { open: boolean; onClose: ()
             <p className="py-2 text-sm text-muted-foreground">{L.errors.outages ? `查詢失敗：${L.errors.outages}` : L.updated.outages ? "沒有停水、停電的公告" : "查詢中…"}</p>
           )}
         </section>
+        )}
         <p className="text-xs leading-relaxed text-muted-foreground">
-          資料來源：新北市交通局（公車、YouBike）、新北市環保局（垃圾車路線、即時位置）、台灣自來水公司、臺北自來水事業處、台電（計畫性工作停電）。整份資料下載到樹莓派上比對，不會送出家裡的位置或地址。
+          資料來源：{T.src}。整份資料下載到樹莓派上比對，不會送出家裡的位置或地址。
         </p>
       </div>
     </Sheet>
