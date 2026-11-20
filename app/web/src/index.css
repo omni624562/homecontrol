@@ -464,7 +464,7 @@ html[data-look="tech"] .room-bar > i {
 /* 裝置：一列一個改成兩個一排的小方塊，開著的邊框發亮 */
 html[data-look="tech"] .plug-list {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
   gap: 8px;
   padding: 10px;
 }
@@ -588,4 +588,9 @@ button.tech-cell:focus-visible {
 }
 html[data-look="tech"].dark .tech-dot {
   box-shadow: 0 0 8px currentColor;
+}
+
+/* 首頁右欄已經有「問家裡」時，右下角那顆浮動按鈕就不用了 */
+html[data-ask-panel="1"] .ask-fab {
+  display: none;
 }

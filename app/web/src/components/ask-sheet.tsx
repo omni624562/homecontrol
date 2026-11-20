@@ -18,17 +18,18 @@ interface Msg {
   error?: boolean;
 }
 
-const Ctx = createContext<{ open: () => void } | null>(null);
+const Ctx = createContext<{ open: (ask?: unknown) => void } | null>(null); // open("問題")：打開並直接問這一句
 export const useAsk = () => useContext(Ctx)!;
 
 // 「問家裡」：整個 App 共用一份對話，關掉面板再打開還在
 export function AskProvider({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const [msgs, setMsgs] = useState<Msg[]>([]);
+  const [seed, setSeed] = useState<string | null>(null);
   return (
-    <Ctx.Provider value={{ open: () => setOpen(true) }}>
+    <Ctx.Provider value={{ open: (ask) => { setSeed(typeof ask === "string" && ask ? ask : null); setOpen(true); } }}>
       {children}
-      <AskSheet open={open} onClose={() => setOpen(false)} msgs={msgs} setMsgs={setMsgs} />
+      <AskSheet open={open} onClose={() => setOpen(false)} msgs={msgs} setMsgs={setMsgs} seed={seed} clearSeed={() => setSeed(null)} />
     </Ctx.Provider>
   );
 }
@@ -76,7 +77,7 @@ const SUGG = ["客廳的燈都關掉", "還有哪些東西開著？", "這個月
 
 type SR = { lang: string; interimResults: boolean; onresult: (e: { results: ArrayLike<{ isFinal: boolean } & ArrayLike<{ transcript: string }>> }) => void; onend: () => void; onerror: (e: { error: string }) => void; start: () => void; stop: () => void };
 
-function AskSheet({ open, onClose, msgs, setMsgs }: { open: boolean; onClose: () => void; msgs: Msg[]; setMsgs: React.Dispatch<React.SetStateAction<Msg[]>> }) {
+function AskSheet({ open, onClose, msgs, setMsgs, seed, clearSeed }: { open: boolean; onClose: () => void; msgs: Msg[]; setMsgs: React.Dispatch<React.SetStateAction<Msg[]>>; seed: string | null; clearSeed: () => void }) {
   const { state } = useHub();
   const st = state?.assistant;
   const [draft, setDraft] = useState("");
@@ -111,6 +112,15 @@ function AskSheet({ open, onClose, msgs, setMsgs }: { open: boolean; onClose: ()
       setTimeout(() => input.current?.focus(), 50);
     }
   };
+
+  // 從首頁帶著問題打開：直接送出那一句
+  const sendRef = useRef(send);
+  sendRef.current = send;
+  useEffect(() => {
+    if (!open || !seed || !st?.configured) return;
+    clearSeed();
+    sendRef.current(seed);
+  }, [open, seed, st?.configured, clearSeed]);
 
   // 卡片上的動作：使用者按了才真的做
   const act = async (mi: number, x: AskAction, skip: boolean) => {

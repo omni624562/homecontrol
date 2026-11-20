@@ -64,7 +64,7 @@ export function AppShell({ tab: raw, children }: { tab: string; children: ReactN
         <button
           onClick={ask.open}
           aria-label="問家裡"
-          className="fixed right-4 bottom-[calc(5rem+env(safe-area-inset-bottom))] z-30 inline-flex size-14 items-center justify-center gap-2 rounded-full bg-primary sm:h-12 sm:w-auto sm:px-5 font-medium text-primary-foreground shadow-lg transition-all hover:bg-primary/90 hover:shadow-xl focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ring/40 active:scale-95 lg:right-8 lg:bottom-8"
+          className="ask-fab fixed right-4 bottom-[calc(5rem+env(safe-area-inset-bottom))] z-30 inline-flex size-14 items-center justify-center gap-2 rounded-full bg-primary sm:h-12 sm:w-auto sm:px-5 font-medium text-primary-foreground shadow-lg transition-all hover:bg-primary/90 hover:shadow-xl focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ring/40 active:scale-95 lg:right-8 lg:bottom-8"
         >
           <MessageSquareText className="size-6 sm:size-5" />
           <span className="max-sm:hidden">問家裡</span>

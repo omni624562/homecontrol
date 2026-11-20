@@ -11,6 +11,7 @@ import { PageHeader } from "@/components/app-shell";
 import { DeviceSheet, needsConfirm } from "@/components/device-sheet";
 import { WalkIn, playFx, useFun } from "@/components/fx";
 import { mdiIcon, weatherIcon } from "@/components/icons";
+import { AskPanel, EnergyPanel, NextPanel } from "@/components/home-side";
 import { LifeSheet } from "@/components/life-sheet";
 import { RoomCard, type Group } from "@/components/room-card";
 import { WeatherSheet } from "@/components/weather-sheet";
@@ -75,7 +76,7 @@ function HomeSkeleton() {
 }
 
 export function HomePage() {
-  const { state, failed, isOn, setPower } = useHub();
+  const { state, failed, isOn, setPower, now } = useHub();
   useTick(30000);
   const [device, setDevice] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<Plug | null>(null);
@@ -99,7 +100,14 @@ export function HomePage() {
   }, [homeCount]);
   const wide3 = useMedia("(min-width: 1536px)");
   const wide2 = useMedia("(min-width: 768px)");
-  const cols = wide3 ? 3 : wide2 ? 2 : 1;
+  const wideSide = useMedia("(min-width: 1280px)"); // 科技感：這麼寬才有右邊那一欄
+  const side = look === "tech" && wideSide;
+  const cols = side ? (wide3 ? 2 : 1) : wide3 ? 3 : wide2 ? 2 : 1;
+  useEffect(() => {
+    if (!side) return;
+    document.documentElement.dataset.askPanel = "1";
+    return () => { delete document.documentElement.dataset.askPanel; };
+  }, [side]);
 
   const groups = useMemo<Group[]>(() => {
     if (!state) return [];
@@ -352,12 +360,21 @@ export function HomePage() {
           })}
         </div>
 
-        <div className="grid items-start gap-4" style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))` }}>
-          {columns.map((c, i) => (
-            <div key={i}>
-              {c.items.map((grp) => <RoomCard key={grp.id || "none"} g={grp} onOpen={(p) => setDevice(p.id)} onToggle={toggle} />)}
+        <div className={cn(side && "grid grid-cols-[minmax(0,1fr)_20rem] items-start gap-4")}>
+          <div className="grid items-start gap-4" style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))` }}>
+            {columns.map((c, i) => (
+              <div key={i}>
+                {c.items.map((grp) => <RoomCard key={grp.id || "none"} g={grp} onOpen={(p) => setDevice(p.id)} onToggle={toggle} />)}
+              </div>
+            ))}
+          </div>
+          {look === "tech" && (
+            <div className={cn("grid gap-4", side ? "" : "sm:grid-cols-2")}>
+              {side && <AskPanel />}
+              <EnergyPanel state={state} />
+              <NextPanel state={state} now={now()} />
             </div>
-          ))}
+          )}
         </div>
       </div>
 
