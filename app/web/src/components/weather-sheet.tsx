@@ -185,6 +185,7 @@ export function WeatherSheet({ open, onClose, inline }: { open: boolean; onClose
             </ul>
           </section>
         )}
+        {rainSched && <div className="space-y-1.5 rounded-xl border p-4"><div className="mb-1 text-sm font-semibold">下雨不執行的排程</div><RainLines /></div>}
         <p className="text-xs leading-relaxed text-muted-foreground">
           資料來源：中央氣象署{a ? "、環境部" : ""}開放資料
           {w.station && <><br />現在：{w.station}測站（{fmt(w.station_km, 1)} 公里）{obs && ` ${hhmm(obs)} 觀測`}</>}
@@ -193,7 +194,6 @@ export function WeatherSheet({ open, onClose, inline }: { open: boolean; onClose
           {a ? <><br />空氣：{a.site}測站（{fmt(a.km, 1)} 公里）</> : w.air_key && w.air_error ? <><br />空氣：查不到（{w.air_error}）</> : null}
           {w.error && <><br />最近一次查詢失敗：{w.error}</>}
         </p>
-        {rainSched && <div className="space-y-1.5 rounded-xl border p-4"><div className="mb-1 text-sm font-semibold">下雨不執行的排程</div><RainLines /></div>}
       </div>
     </Sheet>
   );
