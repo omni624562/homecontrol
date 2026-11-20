@@ -19,7 +19,7 @@ import { LifeSheet, type LifeTopic } from "@/components/life-sheet";
 import { RoomCard, type Group } from "@/components/room-card";
 import { WeatherSheet } from "@/components/weather-sheet";
 import { api } from "@/lib/api";
-import { busEta, fmt, pad2 } from "@/lib/format";
+import { busEta, busIdle, dayPart, fmt, pad2 } from "@/lib/format";
 import { useHub, useMedia, useTick } from "@/lib/hub";
 import { useLook } from "@/lib/look";
 import type { Plug } from "@/lib/types";
@@ -243,6 +243,8 @@ export function HomePage() {
     for (const d of rt.dirs)
       if (d.stop && d.sec != null && d.sec >= 0 && d.sec <= 1800) soon.set(rt.base, Math.min(soon.get(rt.base) ?? Infinity, d.sec));
   const buses = [...soon].map(([n, sec]) => `${n} ${busEta(sec)}`);
+  // 沒有車的時候說清楚是哪一種：收班了、還沒發車，還是只是 30 分鐘內沒有
+  const noBus = busIdle(L?.bus?.routes || []);
   const bikeMain = L?.bike?.show ? L.bike.near.find((x) => x.sno === L.bike!.main) : undefined;
   const roadOutages = (L?.outages || []).filter((x) => x.hit === "road");
   const people = state.people || [];
@@ -258,9 +260,9 @@ export function HomePage() {
       {r?.configured && <Pill icon={r.ok ? Wifi : WifiOff} tone={r.ok ? undefined : "bad"}>{r.ok ? "網路正常" : "路由器連不上"}</Pill>}
       {g && g.today.length > 0 && (
         <Chip onClick={() => setSheet("garbage")} icon={Truck} label="垃圾車" moving={!!truck && !truck.none && (truck.stops ?? -1) >= 0}
-          sub={truck && !truck.none ? ((truck.stops ?? -1) >= 0 ? `還有 ${truck.stops} 站` : "已經過了") : g.usual ? `約 ${g.usual}` : g.stop.time} />
+          sub={truck && !truck.none ? ((truck.stops ?? -1) >= 0 ? `還有 ${truck.stops} 站` : "已經過了") : `${dayPart(g.usual || g.stop.time)} ${g.usual ? "約 " : ""}${g.usual || g.stop.time}`} />
       )}
-      {(L?.bus?.routes.length ?? 0) > 0 && <Chip onClick={() => setSheet("bus")} icon={Bus} label="公車" sub={buses.join("・") || "30 分內沒車"} />}
+      {(L?.bus?.routes.length ?? 0) > 0 && <Chip onClick={() => setSheet("bus")} icon={Bus} label="公車" sub={buses.join("・") || noBus} />}
       {bikeMain && (
         <Chip onClick={() => setSheet("bike")} icon={Bike} label="YouBike" tone={bikeMain.ok && bikeMain.bikes > 0 ? undefined : "warn"}
           sub={!bikeMain.ok ? `${bikeMain.name} 暫停` : `${bikeMain.name} ${bikeMain.bikes ? `${bikeMain.bikes} 台` : "沒車"}`} />
@@ -307,8 +309,8 @@ export function HomePage() {
       { onClick: () => setSheet("garbage"), tone: coming ? "on" : undefined, title: `垃圾車：${g.today.join("、")}` });
   }
   if ((L?.bus?.routes.length ?? 0) > 0)
-    it("bus", Bus, soonList[0] ? <><span className="tech-item-sub !ml-0">{soonList[0][0]}</span><b>{soonList[0][1] < 60 ? "進站" : Math.round(soonList[0][1] / 60)}</b>{soonList[0][1] >= 60 && <small>分</small>}</> : <span className="tech-item-sub !ml-0">30 分內沒車</span>,
-      { onClick: () => setSheet("bus"), title: soonList.map(([n, sec]) => `${n} ${busEta(sec)}`).join("・") || "公車：30 分鐘內沒車" });
+    it("bus", Bus, soonList[0] ? <><span className="tech-item-sub !ml-0">{soonList[0][0]}</span><b>{soonList[0][1] < 60 ? "進站" : Math.round(soonList[0][1] / 60)}</b>{soonList[0][1] >= 60 && <small>分</small>}</> : <span className="tech-item-sub !ml-0">{noBus}</span>,
+      { onClick: () => setSheet("bus"), title: soonList.map(([n, sec]) => `${n} ${busEta(sec)}`).join("・") || `公車：${noBus}` });
   if (bikeMain)
     it("yb", Bike, bikeMain.ok ? <><b>{bikeMain.bikes}</b><small>台</small></> : <b>暫停</b>,
       { onClick: () => setSheet("bike"), tone: !bikeMain.ok || !bikeMain.bikes ? "warn" : undefined, title: `YouBike ${bikeMain.name}・${bikeMain.m} 公尺・空位 ${bikeMain.docks}` });

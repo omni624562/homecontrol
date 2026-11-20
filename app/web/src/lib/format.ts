@@ -52,3 +52,21 @@ export function busEta(sec: number | null): string {
   if (sec >= 0) return sec < 60 ? "進站中" : `${Math.round(sec / 60)} 分`;
   return ({ "-1": "未發車", "-2": "不停靠", "-3": "末班已過", "-4": "今日未營運" } as Record<string, string>)[String(sec)] || "—";
 }
+
+// 公車：30 分鐘內沒有車時，說清楚是哪一種
+//   有路線「末班已過」「今日未營運」，或深夜（23～5 點）完全沒有預估 → 收班了
+//   都是「未發車」→ 還沒發車（清晨）
+export function busIdle(routes: { dirs: { sec: number | null }[] }[], now = new Date()): string {
+  const secs = routes.flatMap((r) => r.dirs.map((d) => d.sec));
+  const h = now.getHours();
+  const late = h >= 23 || h < 5;
+  if (secs.some((s) => s === -3 || s === -4) || (late && secs.every((s) => s == null || s < 0))) return "收班了";
+  if (secs.length && secs.every((s) => s === -1)) return "還沒發車";
+  return "30 分內沒車";
+}
+
+// 「20:11」是今天的什麼時候：早上／下午／今晚
+export function dayPart(hhmm: string): string {
+  const h = Number(hhmm.slice(0, 2));
+  return h < 12 ? "早上" : h < 17 ? "下午" : "今晚";
+}
