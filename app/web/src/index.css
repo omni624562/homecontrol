@@ -426,7 +426,28 @@ html[data-look="tech"] body {
 .tech-mono {
   font-family: "JetBrains Mono", "DejaVu Sans Mono", "Noto Sans Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
-html[data-look="tech"] .tabular-nums,
+/* 只有數字和數字旁的符號換成等寬字；中文、空白照用一般字型。
+   整段都用等寬字的話，中文會掉到等寬中文字型，「131 公尺」的空白變得很寬、很難讀 */
+@font-face {
+  font-family: "TechDigits";
+  src: local("JetBrains Mono"), local("JetBrainsMono-Regular"), local("SF Mono"), local("SFMono-Regular"), local("Menlo"), local("Menlo-Regular"),
+    local("Consolas"), local("Cascadia Mono"), local("DejaVu Sans Mono"), local("DejaVuSansMono"), local("Roboto Mono"), local("RobotoMono-Regular"),
+    local("Noto Sans Mono"), local("NotoSansMono-Regular"), local("Droid Sans Mono"), local("DroidSansMono");
+  unicode-range: U+0030-0039, U+002B-002E, U+002F, U+003A, U+0025, U+0024, U+00B0, U+2212;
+  font-weight: 400;
+}
+@font-face {
+  font-family: "TechDigits";
+  src: local("JetBrains Mono Bold"), local("JetBrainsMono-Bold"), local("SF Mono Bold"), local("SFMono-Bold"), local("Menlo Bold"), local("Menlo-Bold"),
+    local("Consolas Bold"), local("Cascadia Mono Bold"), local("DejaVu Sans Mono Bold"), local("DejaVuSansMono-Bold"), local("Roboto Mono Bold"), local("RobotoMono-Bold"),
+    local("Noto Sans Mono Bold"), local("NotoSansMono-Bold"), local("Droid Sans Mono"), local("DroidSansMono");
+  unicode-range: U+0030-0039, U+002B-002E, U+002F, U+003A, U+0025, U+0024, U+00B0, U+2212;
+  font-weight: 600 900;
+}
+html[data-look="tech"] .tabular-nums {
+  font-family: "TechDigits", var(--font-sans, ui-sans-serif, system-ui, sans-serif);
+  letter-spacing: -0.01em;
+}
 html[data-look="tech"] .tech-mono {
   font-family: var(--tech-mono);
   letter-spacing: -0.01em;

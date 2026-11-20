@@ -54,28 +54,28 @@ export function BikeMap({ stations, main, onPick }: { stations: BikeStation[]; m
     return { paths: roads, labels };
   }, [data, R, H]);
 
-  const fs = R / 17; // 字的大小跟著範圍縮放
+  const fs = R / 14; // 字的大小跟著範圍縮放（手機上地圖窄，字不能太小）
   return (
     <div className="overflow-hidden rounded-xl border bg-muted/40">
       <svg viewBox={`${-R} ${-H} ${2 * R} ${2 * H}`} className="block w-full" role="img" aria-label="家附近的 YouBike 站地圖">
         {/* 路 */}
-        <g fill="none" strokeLinecap="round" strokeLinejoin="round" className="text-neutral-300 dark:text-neutral-700">
+        <g fill="none" strokeLinecap="round" strokeLinejoin="round" className="text-neutral-300/80 dark:text-neutral-700/60">
           {paths.map((r, i) => (
             <polyline key={i} points={r.p.map(([x, y]) => `${x},${-y}`).join(" ")} stroke="currentColor" strokeWidth={WIDTH[r.k] || 4}
-              className={MAJOR.has(r.k) ? "text-neutral-400/80 dark:text-neutral-600" : undefined} />
+              className={MAJOR.has(r.k) ? "text-neutral-400/70 dark:text-neutral-600/80" : undefined} />
           ))}
         </g>
         {/* 距離圈 */}
         {[200, 400].filter((d) => d < R).map((d) => (
-          <g key={d} className="text-primary/40">
+          <g key={d} className="text-primary/30">
             <circle r={d} fill="none" stroke="currentColor" strokeWidth={R / 300} strokeDasharray={`${R / 60} ${R / 60}`} />
             <text x={0} y={-d - fs * 0.25} textAnchor="middle" fontSize={fs * 0.7} fill="currentColor">{d} 公尺</text>
           </g>
         ))}
         {/* 路名 */}
-        <g className="fill-muted-foreground" fontSize={fs * 0.8} textAnchor="middle" paintOrder="stroke" strokeWidth={fs * 0.25} strokeLinejoin="round">
+        <g className="fill-muted-foreground" fontSize={fs * 0.62} textAnchor="middle" paintOrder="stroke" strokeWidth={fs * 0.25} strokeLinejoin="round">
           {labels.map((l) => (
-            <text key={l.n} x={l.x} y={-l.y} dy={fs * 0.28} transform={`rotate(${l.a} ${l.x} ${-l.y})`} className="stroke-background/80" opacity={l.major ? 1 : 0.75}>{l.n}</text>
+            <text key={l.n} x={l.x} y={-l.y} dy={fs * 0.28} transform={`rotate(${l.a} ${l.x} ${-l.y})`} className="stroke-background/80" opacity={l.major ? 0.8 : 0.5}>{l.n}</text>
           ))}
         </g>
         {/* 家 */}
@@ -89,11 +89,11 @@ export function BikeMap({ stations, main, onPick }: { stations: BikeStation[]; m
           return (
             <g key={s.sno} transform={`translate(${s.x} ${-s.y!})`} className="cursor-pointer" role="button" tabIndex={0} aria-label={`${s.name}，${s.ok ? `${s.bikes} 台` : "暫停"}，${s.m} 公尺`}
               onClick={() => onPick(s.sno)} onKeyDown={(e) => e.key === "Enter" && onPick(s.sno)}>
-              <rect x={-w / 2} y={-fs * 0.85} width={w} height={fs * 1.7} rx={fs * 0.85} strokeWidth={fs * 0.14}
+              <rect x={-w / 2} y={-fs * 0.85} width={w} height={fs * 1.7} rx={fs * 0.85} strokeWidth={fs * 0.16}
                 className={cn(on ? "fill-primary stroke-background" : empty ? "fill-background stroke-neutral-400" : "fill-background stroke-primary")} />
               <text textAnchor="middle" dy={fs * 0.36} fontSize={fs} fontWeight={700}
                 className={cn("tabular-nums", on ? "fill-primary-foreground" : empty ? "fill-muted-foreground" : "fill-foreground")}>{s.ok ? s.bikes : "×"}</text>
-              <text y={fs * 1.9} textAnchor="middle" fontSize={fs * 0.82} fontWeight={on ? 700 : 500} paintOrder="stroke" strokeWidth={fs * 0.3} strokeLinejoin="round"
+              <text y={fs * 1.95} textAnchor="middle" fontSize={fs * 0.82} fontWeight={on ? 700 : 600} paintOrder="stroke" strokeWidth={fs * 0.4} strokeLinejoin="round"
                 className="fill-foreground stroke-background/90">{s.name}</text>
             </g>
           );
