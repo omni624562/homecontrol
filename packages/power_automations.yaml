@@ -1,0 +1,129 @@
+# 插座用電的通知：區網發現新裝置、插座已加入、睡前待機提醒、功率過高、插座斷線
+# 插座都由 power_hub 自動偵測，這裡不用列出任何插座
+
+automation:
+  - id: power_device_discovered
+    alias: 用電：區網發現新裝置
+    description: Home Assistant 在區網上發現還沒加入的裝置時通知，點通知直接到新增頁面
+    triggers:
+      - trigger: state
+        entity_id: sensor.plugs_discovered
+        not_from: [unavailable, unknown]
+        not_to: [unavailable, unknown]
+    conditions:
+      - "{{ trigger.to_state.state | int(0) > trigger.from_state.state | int(0) }}"
+    actions:
+      - action: script.power_notify
+        data:
+          title: 區網發現新裝置
+          message: "{{ state_attr('sensor.plugs_discovered', 'names') | join('、') }}：點這裡加入"
+          data:
+            tag: power_discovered
+            # Android 用 clickAction、iPhone 用 url
+            clickAction: /config/integrations/dashboard
+            url: /config/integrations/dashboard
+
+  - id: power_plug_added
+    alias: 用電：插座已加入
+    description: 新的插座加入後通知，點通知到裝置頁設定區域和標籤
+    triggers:
+      - trigger: event
+        event_type: power_hub_plug_added
+    actions:
+      - action: script.power_notify
+        data:
+          title: 插座已加入
+          message: >
+            {{ trigger.event.data.name }}
+            （{{ {'metered': '有用電計量', 'estimated': '估算用電', 'switch': '只有開關'}[trigger.event.data.mode] }}）。
+            點這裡設定區域；沒計量的可以貼瓦數標籤（例如 9W）估算用電
+          data:
+            tag: "power_added_{{ trigger.event.data.device_id }}"
+            clickAction: "/config/devices/device/{{ trigger.event.data.device_id }}"
+            url: "/config/devices/device/{{ trigger.event.data.device_id }}"
+
+  - id: power_standby_reminder
+    alias: 用電：睡前待機提醒
+    description: 每天 23:00 列出還在待機的插座，通知上按「全部關閉」就關掉
+    triggers:
+      - trigger: time
+        at: "23:00:00"
+    conditions:
+      - condition: numeric_state
+        entity_id: sensor.plugs_standby
+        above: 0
+    actions:
+      - action: script.power_notify
+        data:
+          title: 有插座在待機
+          message: "{{ state_attr('sensor.plugs_standby', 'names') | join('、') }}"
+          data:
+            tag: power_standby
+            actions:
+              - action: PLUGS_STANDBY_OFF
+                title: 全部關閉
+
+  - id: power_standby_off_action
+    alias: 用電：通知按下「全部關閉」
+    triggers:
+      - trigger: event
+        event_type: mobile_app_notification_action
+        event_data:
+          action: PLUGS_STANDBY_OFF
+    actions:
+      - action: power_hub.turn_off
+        data:
+          standby_only: true
+
+  - id: power_overload_alert
+    alias: 用電：功率過高警告
+    description: 任何一個有計量的插座超過功率過高門檻持續 1 分鐘就通知
+    triggers:
+      - trigger: numeric_state
+        entity_id: sensor.plugs_overload
+        above: 0
+        for: "00:01:00"
+    actions:
+      - action: script.power_notify
+        data:
+          title: 插座功率過高
+          message: >
+            {{ state_attr('sensor.plugs_overload', 'names') | join('、') }}
+            （門檻 {{ states('input_number.overload_threshold') | float(1500) | int }} W）
+          data:
+            tag: power_overload
+            # Android 立刻送達、iOS 專注模式下也會顯示
+            priority: high
+            ttl: 0
+            push:
+              interruption-level: time-sensitive
+
+  - id: power_offline_alert
+    alias: 用電：插座斷線
+    description: 有插座連不上超過 10 分鐘就通知，全部恢復時再通知一次
+    triggers:
+      - trigger: state
+        entity_id: sensor.plugs_offline
+        not_from: [unavailable, unknown]
+        not_to: [unavailable, unknown]
+    actions:
+      - variables:
+          before: "{{ trigger.from_state.state | int(0) }}"
+          after: "{{ trigger.to_state.state | int(0) }}"
+      - choose:
+          - conditions: "{{ after > before }}"
+            sequence:
+              - action: script.power_notify
+                data:
+                  title: 插座連不上
+                  message: "{{ state_attr('sensor.plugs_offline', 'names') | join('、') }} 已經超過 10 分鐘連不上"
+                  data:
+                    tag: power_offline
+          - conditions: "{{ after == 0 }}"
+            sequence:
+              - action: script.power_notify
+                data:
+                  title: 插座都恢復連線了
+                  message: 所有插座都連得上了
+                  data:
+                    tag: power_offline

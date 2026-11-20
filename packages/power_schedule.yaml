@@ -1,0 +1,48 @@
+# 夜間排程：每天晚上關掉貼了「夜間關閉」標籤的插座，早上再打開
+#
+# 早上只會打開「晚上被排程關掉的」插座：晚上本來就關著的、或半夜被你手動
+# 打開又關掉的，都不會被打開。貼了「常開」標籤的永遠不會被關。
+# 開關和時間都在儀表板的「夜間排程」設定。
+
+input_boolean:
+  power_schedule:
+    name: 夜間排程
+    icon: mdi:weather-night
+
+input_datetime:
+  power_night_off:
+    name: 晚上關閉
+    icon: mdi:power-plug-off
+    has_date: false
+    has_time: true
+  power_morning_on:
+    name: 早上打開
+    icon: mdi:power-plug
+    has_date: false
+    has_time: true
+
+automation:
+  - id: power_night_off
+    alias: 用電：夜間關閉
+    triggers:
+      - trigger: time
+        at: input_datetime.power_night_off
+    conditions:
+      - condition: state
+        entity_id: input_boolean.power_schedule
+        state: "on"
+    actions:
+      - action: power_hub.turn_off
+        data:
+          label: 夜間關閉
+          remember: night
+
+  - id: power_morning_on
+    alias: 用電：早上打開
+    triggers:
+      - trigger: time
+        at: input_datetime.power_morning_on
+    actions:
+      - action: power_hub.restore
+        data:
+          remember: night

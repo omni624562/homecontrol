@@ -1,0 +1,12 @@
+{
+  "name": "matterbridge-plughub",
+  "version": "1.0.0",
+  "description": "插座 App → Matter（Google Home）",
+  "license": "MIT",
+  "type": "module",
+  "main": "module.js",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "keywords": ["matterbridge", "kasa", "plug"]
+}

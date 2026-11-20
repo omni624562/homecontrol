@@ -1,0 +1,39 @@
+turn_off:
+  fields:
+    area:
+      example: 客廳
+      selector:
+        area:
+    label:
+      example: 夜間關閉
+      selector:
+        text:
+    standby_only:
+      default: false
+      selector:
+        boolean:
+    remember:
+      example: night
+      selector:
+        text:
+
+restore:
+  fields:
+    remember:
+      required: true
+      example: night
+      selector:
+        text:
+
+rescan:
+
+set_order:
+  fields:
+    plugs:
+      example: '["switch.li_deng", "switch.tv"]'
+      selector:
+        object:
+    areas:
+      example: '["ke_ting", "wo_shi"]'
+      selector:
+        object:

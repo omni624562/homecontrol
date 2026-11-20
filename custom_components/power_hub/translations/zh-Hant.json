@@ -1,0 +1,54 @@
+{
+  "services": {
+    "turn_off": {
+      "name": "關閉插座",
+      "description": "關閉自動偵測到的插座。貼了「常開」標籤的永遠不會被關。",
+      "fields": {
+        "area": {
+          "name": "區域",
+          "description": "只關這個區域的插座（區域 ID 或名稱）。"
+        },
+        "label": {
+          "name": "標籤",
+          "description": "只關貼了這個標籤的插座。"
+        },
+        "standby_only": {
+          "name": "只關待機中的",
+          "description": "只關開著、但功率低於待機門檻的插座。"
+        },
+        "remember": {
+          "name": "記住為",
+          "description": "記住關了哪些插座，之後用「還原插座」打開。"
+        }
+      }
+    },
+    "restore": {
+      "name": "還原插座",
+      "description": "打開之前用「關閉插座」記住、而且現在還關著的插座。",
+      "fields": {
+        "remember": {
+          "name": "記住的名稱",
+          "description": "關閉時用的名稱。"
+        }
+      }
+    },
+    "rescan": {
+      "name": "重新偵測",
+      "description": "重新尋找插座。"
+    },
+    "set_order": {
+      "name": "設定順序",
+      "description": "記住儀表板上插座和房間的順序。",
+      "fields": {
+        "plugs": {
+          "name": "插座",
+          "description": "插座的實體 ID，依順序排列。"
+        },
+        "areas": {
+          "name": "房間",
+          "description": "區域 ID，依順序排列。"
+        }
+      }
+    }
+  }
+}

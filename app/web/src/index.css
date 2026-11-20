@@ -1,0 +1,692 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+:root {
+  --radius: 0.625rem;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.546 0.245 262.881);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.965 0.003 260);
+  --muted-foreground: oklch(0.48 0.01 260);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.623 0.214 259.815);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.707 0.165 254.624);
+  --primary-foreground: oklch(0.145 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.74 0.01 260);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.707 0.165 254.624);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    -webkit-tap-highlight-color: transparent;
+    font-family: "Inter", ui-sans-serif, system-ui, -apple-system, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    line-height: 1.6;
+  }
+  /* 有人設定「減少動態效果」：動畫都關掉 */
+  @media (prefers-reduced-motion: reduce) {
+    *, ::before, ::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  }
+}
+
+/* 面板裡的捲軸：細、圓角、離邊緣一點，不搶眼；滑過才變深 */
+.scroll-area {
+  scrollbar-gutter: stable;
+}
+.scroll-area::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+.scroll-area::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scroll-area::-webkit-scrollbar-thumb {
+  border: 4px solid transparent;
+  border-radius: 9999px;
+  background-clip: padding-box;
+  background-color: color-mix(in oklch, var(--muted-foreground) 30%, transparent);
+}
+.scroll-area::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in oklch, var(--muted-foreground) 55%, transparent);
+}
+.scroll-area::-webkit-scrollbar-button {
+  display: none;
+}
+@supports not selector(::-webkit-scrollbar) {
+  .scroll-area {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklch, var(--muted-foreground) 35%, transparent) transparent;
+  }
+}
+
+/* 垃圾車在跑：車身輕輕晃、路面的虛線往後流動 */
+@keyframes truck-bob {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  25% { transform: translateY(-1.5px) rotate(-1.5deg); }
+  75% { transform: translateY(0.5px) rotate(1deg); }
+}
+@keyframes road-flow {
+  from { background-position-x: 0; }
+  to { background-position-x: -28px; }
+}
+.truck-run {
+  animation: truck-bob 0.6s ease-in-out infinite;
+  transform-origin: 50% 90%;
+}
+.road-run {
+  background-image: repeating-linear-gradient(90deg, currentColor 0 14px, transparent 14px 28px);
+  animation: road-flow 0.7s linear infinite;
+}
+
+/* 垃圾車快到了：從左邊外面衝進來，在中間頓一下，再衝出右邊 */
+@keyframes truck-rush {
+  0% { transform: translate(-110%, -50%); }
+  28% { transform: translate(calc(50vw - 55%), -50%); }
+  34% { transform: translate(calc(50vw - 50%), -50%); }
+  66% { transform: translate(calc(50vw - 48%), -50%); }
+  100% { transform: translate(110vw, -50%); }
+}
+.truck-rush {
+  animation: truck-rush 4s cubic-bezier(0.3, 0, 0.3, 1) both;
+  will-change: transform;
+}
+
+/* 垃圾車從正面衝出來：小變大 → 撞上螢幕（閃一下、震一下）→ 裂痕留幾秒再淡出 */
+@keyframes truck-front {
+  0% { transform: translate(-50%, -50%) scale(0.04); opacity: 0; }
+  8% { opacity: 1; }
+  70% { transform: translate(-50%, -46%) scale(1.1); }
+  100% { transform: translate(-50%, -40%) scale(7); opacity: 1; }
+}
+@keyframes truck-front-gone {
+  to { opacity: 0; }
+}
+@keyframes crash-flash {
+  0% { opacity: 0; }
+  12% { opacity: 0.9; }
+  100% { opacity: 0; }
+}
+@keyframes crash-cracks {
+  0% { opacity: 0; transform: scale(0.6); }
+  6% { opacity: 1; transform: scale(1); }
+  82% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes crash-text {
+  0% { opacity: 0; transform: translateY(12px) scale(0.9); }
+  10% { opacity: 1; transform: none; }
+  85% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes screen-shake {
+  0%, 100% { transform: none; }
+  15% { transform: translate(-10px, 6px) rotate(-0.6deg); }
+  30% { transform: translate(9px, -7px) rotate(0.5deg); }
+  45% { transform: translate(-7px, -4px) rotate(-0.3deg); }
+  60% { transform: translate(6px, 5px); }
+  80% { transform: translate(-3px, 2px); }
+}
+.truck-front {
+  animation: truck-front 1.2s cubic-bezier(0.7, 0, 0.9, 0.4) both, truck-front-gone 0.15s linear 1.2s forwards;
+  will-change: transform;
+}
+.crash-flash { opacity: 0; animation: crash-flash 0.45s ease-out 1.15s both; }
+.crash-cracks { opacity: 0; transform-origin: 50% 50%; animation: crash-cracks 3.3s ease-out 1.2s both; }
+.crash-text { opacity: 0; animation: crash-text 3.2s ease-out 1.3s both; }
+/* 不轉整個頁面（固定在畫面上的東西會跑掉），改成內容、側邊選單、下方分頁列、右下角按鈕各自晃 */
+.screen-shake #root :is(main, aside, nav[aria-label="主選單"], button[aria-label="問家裡"]) { animation: screen-shake 0.5s ease-in-out; }
+body:is(.screen-shake, .screen-tilt) { overflow-x: clip; }
+#root main { transform-origin: 50% var(--fx-y, 50%); }
+
+/* ---- 垃圾車的其他衝法 ---- */
+@keyframes fx-text {
+  0% { opacity: 0; transform: translateY(10px) scale(0.92); }
+  12% { opacity: 1; transform: none; }
+  82% { opacity: 1; }
+  100% { opacity: 0; }
+}
+.fx-text { opacity: 0; animation: fx-text 2.8s ease-out both; }
+
+/* 從天而降：掉下來、彈兩下、停一下、開走 */
+@keyframes truck-drop {
+  0% { transform: translate(-50%, -130vh) rotate(-8deg); animation-timing-function: cubic-bezier(0.5, 0, 1, 0.6); }
+  29% { transform: translate(-50%, 0) rotate(0deg); animation-timing-function: cubic-bezier(0, 0.6, 0.4, 1); }
+  38% { transform: translate(-50%, -11vh) rotate(3deg); animation-timing-function: cubic-bezier(0.5, 0, 1, 0.6); }
+  47% { transform: translate(-50%, 0) rotate(0deg); animation-timing-function: cubic-bezier(0, 0.6, 0.4, 1); }
+  53% { transform: translate(-50%, -3.5vh); animation-timing-function: cubic-bezier(0.5, 0, 1, 0.6); }
+  59% { transform: translate(-50%, 0); }
+  78% { transform: translate(-50%, 0); animation-timing-function: cubic-bezier(0.6, 0, 0.9, 0.5); }
+  100% { transform: translate(120vw, 0); }
+}
+.truck-drop { animation: truck-drop 4.3s both; will-change: transform; }
+@keyframes truck-dust {
+  0% { transform: translateX(-50%) scale(0.2, 0.3); opacity: 0.75; }
+  100% { transform: translateX(-50%) scale(1.9, 1.2); opacity: 0; }
+}
+.truck-dust { opacity: 0; animation: truck-dust 0.9s ease-out 1.25s both; }
+
+/* 倒車入庫：慢慢倒進來、停一下、開走 */
+@keyframes truck-reverse {
+  0% { transform: translate(105vw, -50%); }
+  55% { transform: translate(calc(50vw - 50%), -50%); }
+  78% { transform: translate(calc(50vw - 50%), -50%); animation-timing-function: cubic-bezier(0.6, 0, 0.9, 0.5); }
+  100% { transform: translate(115vw, -50%); }
+}
+.truck-reverse { animation: truck-reverse 6.1s linear both; will-change: transform; }
+@keyframes tail-blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0.15; } }
+.tail-blink { animation: tail-blink 0.55s steps(1) 8; }
+
+/* 車隊遊行；最後一台落隊再追上 */
+@keyframes truck-parade { from { transform: translateX(-105%); } to { transform: translateX(105vw); } }
+.truck-parade { animation: truck-parade 5.6s linear both; will-change: transform; }
+@keyframes parade-late {
+  0%, 20% { transform: translateX(-38vw); }
+  75%, 100% { transform: translateX(0); }
+}
+.parade-late { animation: parade-late 5.6s ease-in-out both; }
+
+/* 把畫面撞歪：車子很快衝過去，頁面歪掉再彈回來 */
+@keyframes truck-ram { from { transform: translate(-110%, -50%); } to { transform: translate(115vw, -50%); } }
+.truck-ram { animation: truck-ram 1.1s cubic-bezier(0.5, 0, 0.8, 0.6) both; will-change: transform; }
+@keyframes screen-tilt {
+  0% { transform: none; }
+  8% { transform: rotate(4.5deg) translate(14px, 6px); }
+  45% { transform: rotate(4deg) translate(12px, 5px); }
+  62% { transform: rotate(-1.6deg) translate(-4px, 0); }
+  78% { transform: rotate(0.7deg); }
+  100% { transform: none; }
+}
+.screen-tilt #root :is(main, aside, nav[aria-label="主選單"], button[aria-label="問家裡"]) { animation: screen-tilt 2.6s ease-in-out; }
+
+/* 追垃圾車：車子開過去，小人在後面追 */
+@keyframes truck-cruise { from { transform: translateX(-30vw); } to { transform: translateX(112vw); } }
+.truck-cruise { animation: truck-cruise 5.2s linear both; will-change: transform; }
+@keyframes runner-chase { from { transform: translateX(-75vw); } to { transform: translateX(105vw); } }
+.runner-chase { animation: runner-chase 5.9s cubic-bezier(0.3, 0.1, 0.6, 1) both; will-change: transform; }
+@keyframes runner-swing-a { 0%, 100% { transform: rotate(-32deg); } 50% { transform: rotate(34deg); } }
+@keyframes runner-swing-b { 0%, 100% { transform: rotate(34deg); } 50% { transform: rotate(-32deg); } }
+.runner-leg-a, .runner-leg-b { transform-box: view-box; transform-origin: 38px 56px; }
+.runner-arm-a, .runner-arm-b { transform-box: view-box; transform-origin: 43px 32px; }
+.runner-leg-a { animation: runner-swing-a 0.36s ease-in-out infinite; }
+.runner-leg-b { animation: runner-swing-b 0.36s ease-in-out infinite; }
+.runner-arm-b { animation: runner-swing-a 0.36s ease-in-out infinite; }
+.runner-arm-a { animation: runner-swing-b 0.36s ease-in-out infinite; }
+@keyframes runner-bag { 0%, 100% { transform: translateY(0) rotate(-4deg); } 50% { transform: translateY(-4px) rotate(5deg); } }
+.runner-bag { transform-box: fill-box; transform-origin: 50% 0; animation: runner-bag 0.36s ease-in-out infinite; }
+
+/* ---- 其他時機的小動畫 ---- */
+/* 全部關閉：像關燈，由上往下暗一下 */
+@keyframes lights-out {
+  0% { background-position: 0 100%; opacity: 1; }
+  45% { background-position: 0 0; opacity: 1; }
+  100% { background-position: 0 0; opacity: 0; }
+}
+.lights-out {
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.78) 0 50%, transparent 100%) no-repeat;
+  background-size: 100% 220%;
+  animation: lights-out 1.4s ease-in-out both;
+}
+/* 下雨 */
+@keyframes rain-drop {
+  0% { transform: translateY(-14px); opacity: 0; }
+  20% { opacity: 1; }
+  100% { transform: translateY(96px); opacity: 0; }
+}
+.rain-drop { animation: rain-drop 1.1s linear infinite; }
+/* 熱氣 */
+@keyframes steam {
+  0% { transform: translateY(4px) scaleY(0.6); opacity: 0; }
+  40% { opacity: 0.9; }
+  100% { transform: translateY(-7px) scaleY(1.2); opacity: 0; }
+}
+.steam { animation: steam 1.8s ease-out infinite; }
+/* 彩帶 */
+@keyframes confetti {
+  0% { transform: translate(0, 0) rotate(0deg) scale(0.4); opacity: 1; }
+  70% { opacity: 1; }
+  100% { transform: translate(var(--x), calc(var(--y) + 60px)) rotate(var(--r)) scale(1); opacity: 0; }
+}
+.confetti { opacity: 0; animation: confetti 1.5s cubic-bezier(0.1, 0.7, 0.3, 1) both; }
+/* 走進門 */
+@keyframes walk-in {
+  0% { transform: translateX(-10px); opacity: 0; }
+  15% { opacity: 1; }
+  80% { transform: translateX(20px); opacity: 1; }
+  100% { transform: translateX(24px); opacity: 0; }
+}
+.walk-in { animation: walk-in 1.6s ease-in-out 2 both; }
+
+
+/* ============================================================
+   外觀「科技感」：設定 → 外觀 可以切換（html[data-look="tech"]）
+   - 青藍 = 資訊和可以按的；琥珀 = 電器開著；紅 = 離線、失敗、刪除
+   - 數字用等寬字（畫面上本來就標了 tabular-nums 的地方）
+   ============================================================ */
+html[data-look="tech"] {
+  --radius: 0.75rem;
+  --background: #edf1f5;
+  --foreground: #0e1a29;
+  --card: #ffffff;
+  --card-foreground: #0e1a29;
+  --popover: #ffffff;
+  --popover-foreground: #0e1a29;
+  --primary: #0789a8;
+  --primary-foreground: #ffffff;
+  --secondary: #e9edf2;
+  --secondary-foreground: #0e1a29;
+  --muted: #e6ebf1;
+  --muted-foreground: #47586c;
+  --accent: #e3f2f6;
+  --accent-foreground: #0e1a29;
+  --destructive: #d23030;
+  --border: #d5dde7;
+  --input: #c3cedb;
+  --ring: #0789a8;
+  --sidebar: #ffffff;
+  --sidebar-border: #d5dde7;
+  --tech-grid: rgba(14, 26, 41, 0.035);
+  --tech-on: #e8950c;
+  --tech-on-bg: linear-gradient(180deg, #fff4dc, #fffaf0);
+  --tech-on-glow: 0 2px 10px rgba(245, 158, 11, 0.18);
+  --tech-tile: #f5f7fa;
+  --tech-mono: "TechDigits", var(--font-sans, ui-sans-serif, system-ui, sans-serif); /* 只有數字是等寬字，中文照一般字型 */
+}
+html[data-look="tech"].dark {
+  --background: #1a222e;
+  --foreground: #f2f6fb;
+  --card: #232d3c;
+  --card-foreground: #f2f6fb;
+  --popover: #232d3c;
+  --popover-foreground: #f2f6fb;
+  --primary: #4fdcf2;
+  --primary-foreground: #0b1620;
+  --secondary: #2a3546;
+  --secondary-foreground: #f2f6fb;
+  --muted: #2d394b;
+  --muted-foreground: #b4c0d0;
+  --accent: #2d394b;
+  --accent-foreground: #f2f6fb;
+  --destructive: #ff8585;
+  --border: #38465b;
+  --input: #465770;
+  --ring: #4fdcf2;
+  --sidebar: #161d28;
+  --sidebar-border: #38465b;
+  --tech-grid: rgba(255, 255, 255, 0.022);
+  --tech-on: #ffc15e;
+  --tech-on-bg: linear-gradient(180deg, rgba(255, 193, 94, 0.18), rgba(255, 193, 94, 0.05));
+  --tech-on-glow: 0 0 18px rgba(255, 193, 94, 0.14);
+  --tech-tile: #2a3546;
+}
+html[data-look="tech"] body {
+  background-image: linear-gradient(var(--tech-grid) 1px, transparent 1px), linear-gradient(90deg, var(--tech-grid) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+/* 待機畫面的大數字：兩種外觀都用等寬字 */
+.tech-mono {
+  font-family: "TechDigits", var(--font-sans, ui-sans-serif, system-ui, sans-serif);
+}
+/* 只有數字和數字旁的符號換成等寬字；中文、空白照用一般字型。
+   整段都用等寬字的話，中文會掉到等寬中文字型，「131 公尺」的空白變得很寬、很難讀 */
+@font-face {
+  font-family: "TechDigits";
+  src: local("JetBrains Mono"), local("JetBrainsMono-Regular"), local("SF Mono"), local("SFMono-Regular"), local("Menlo"), local("Menlo-Regular"),
+    local("Consolas"), local("Cascadia Mono"), local("DejaVu Sans Mono"), local("DejaVuSansMono"), local("Roboto Mono"), local("RobotoMono-Regular"),
+    local("Noto Sans Mono"), local("NotoSansMono-Regular"), local("Droid Sans Mono"), local("DroidSansMono");
+  unicode-range: U+0030-0039, U+002B-002E, U+002F, U+003A, U+0025, U+0024, U+00B0, U+2212;
+  font-weight: 400;
+}
+@font-face {
+  font-family: "TechDigits";
+  src: local("JetBrains Mono Bold"), local("JetBrainsMono-Bold"), local("SF Mono Bold"), local("SFMono-Bold"), local("Menlo Bold"), local("Menlo-Bold"),
+    local("Consolas Bold"), local("Cascadia Mono Bold"), local("DejaVu Sans Mono Bold"), local("DejaVuSansMono-Bold"), local("Roboto Mono Bold"), local("RobotoMono-Bold"),
+    local("Noto Sans Mono Bold"), local("NotoSansMono-Bold"), local("Droid Sans Mono"), local("DroidSansMono");
+  unicode-range: U+0030-0039, U+002B-002E, U+002F, U+003A, U+0025, U+0024, U+00B0, U+2212;
+  font-weight: 600 900;
+}
+html[data-look="tech"] .tabular-nums {
+  font-family: "TechDigits", var(--font-sans, ui-sans-serif, system-ui, sans-serif);
+  letter-spacing: -0.01em;
+}
+html[data-look="tech"] .tech-mono {
+  font-family: var(--tech-mono);
+  letter-spacing: -0.01em;
+}
+/* 卡片右上角的小折角 */
+html[data-look="tech"] [data-slot="card"] {
+  position: relative;
+}
+html[data-look="tech"] [data-slot="card"]::after {
+  content: "";
+  position: absolute;
+  right: -1px;
+  top: -1px;
+  width: 12px;
+  height: 12px;
+  border-top: 1px solid var(--primary);
+  border-right: 1px solid var(--primary);
+  border-top-right-radius: var(--radius-xl);
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+/* 每個區域標題下面那條「開了幾成」的線：原本的外觀不顯示 */
+/* 裝置：一列一個改成兩個一排的小方塊，開著的邊框發亮 */
+html[data-look="tech"] .plug-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+  gap: 8px;
+  padding: 10px;
+}
+html[data-look="tech"] .plug-list > * {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--tech-tile);
+  padding: 8px 10px;
+  gap: 9px;
+  min-height: 3.5rem;
+}
+html[data-look="tech"] .plug-list > [data-on="true"] {
+  border-color: var(--tech-on);
+  background: var(--tech-on-bg);
+  box-shadow: var(--tech-on-glow);
+}
+html[data-look="tech"] .plug-list > [data-online="false"] {
+  border-style: dashed;
+  opacity: 0.6;
+}
+html[data-look="tech"] .plug-list .plug-icon {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 8px;
+}
+html[data-look="tech"] .plug-list .plug-name {
+  font-size: 14px;
+}
+html[data-look="tech"] .plug-list .plug-sub {
+  font-size: 12px;
+}
+/* 手機：方塊一列一個（兩個一排名字會被切掉） */
+@media (max-width: 639px) {
+  html[data-look="tech"] .plug-list {
+    grid-template-columns: 1fr;
+  }
+  .tech-cell {
+    padding: 9px 11px;
+  }
+  .tech-v {
+    font-size: 19px;
+  }
+  .tech-k {
+    letter-spacing: 0.04em;
+  }
+  .tech-s {
+    font-size: 12px;
+  }
+}
+
+/* 首頁最上面的狀態列 */
+.tech-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--card);
+  overflow: hidden;
+}
+@media (min-width: 640px) {
+  .tech-strip {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+@media (min-width: 1280px) {
+  .tech-strip {
+    grid-template-columns: 1.3fr repeat(var(--cells), minmax(0, 1fr));
+  }
+}
+.tech-cell {
+  min-width: 0;
+  padding: 11px 15px;
+  text-align: left;
+  box-shadow: -1px -1px 0 var(--border); /* 格線：不管排成幾欄都對得上 */
+}
+button.tech-cell {
+  cursor: pointer;
+  transition: background 0.15s;
+}
+button.tech-cell:hover,
+button.tech-cell:focus-visible {
+  background: var(--muted);
+  outline: none;
+}
+.tech-k {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  letter-spacing: 0.12em;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.tech-v {
+  margin-top: 3px;
+  font: 600 22px/1.25 var(--tech-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tech-v small {
+  margin-left: 3px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted-foreground);
+}
+.tech-s {
+  font-size: 13px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tech-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: currentColor;
+}
+html[data-look="tech"].dark .tech-dot {
+  box-shadow: 0 0 8px currentColor;
+}
+
+/* 首頁右欄已經有「問家裡」時，標題列那顆就不用了 */
+html[data-ask-panel="1"] .ask-head {
+  display: none;
+}
+
+/* 科技感：外框和標題列用主題的底色（看得到格線），選單的目前頁左邊一條亮線 */
+html[data-look="tech"] .shell-root {
+  background: transparent;
+}
+html[data-look="tech"] .page-header {
+  background: color-mix(in srgb, var(--background) 85%, transparent);
+}
+html[data-look="tech"] .nav-on::before {
+  content: "";
+  position: absolute;
+  left: -8px;
+  top: 9px;
+  bottom: 9px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--primary);
+}
+html[data-look="tech"].dark .nav-on::before {
+  box-shadow: 0 0 8px var(--primary);
+}
+html[data-look="tech"] .logo-mark {
+  background: transparent;
+  border: 1px solid var(--primary);
+  color: var(--primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 14%, transparent);
+}
+
+/* 科技感：標題右邊那一行（即時用電、天氣、垃圾車、公車、YouBike、在家…） */
+.tech-item {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--muted-foreground);
+  font-size: 13px;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s;
+}
+.tech-item:hover,
+.tech-item:focus-visible {
+  background: var(--muted);
+  outline: none;
+}
+.tech-item:focus-visible {
+  box-shadow: 0 0 0 2px var(--ring);
+}
+.tech-item b {
+  font: 600 16px/1 var(--tech-mono);
+  color: var(--foreground);
+}
+.tech-item small {
+  margin-left: -3px;
+  font-size: 11.5px;
+}
+.tech-item-sub {
+  margin-left: 2px;
+}
+.tech-item-on {
+  border-color: var(--tech-on);
+  background: var(--tech-on-bg);
+}
+.tech-item-on b,
+.tech-item-on svg {
+  color: var(--tech-on);
+}
+/* 警告用紅色，和「開著」的琥珀色分開 */
+.tech-item-warn {
+  border-color: color-mix(in srgb, #dc2626 50%, transparent);
+}
+.tech-item-warn b,
+.tech-item-warn svg {
+  color: #dc2626;
+}
+html.dark .tech-item-warn {
+  border-color: color-mix(in srgb, #f87171 50%, transparent);
+}
+html.dark .tech-item-warn b,
+html.dark .tech-item-warn svg {
+  color: #f87171;
+}

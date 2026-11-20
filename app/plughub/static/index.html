@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>家庭中控</title>
+  <meta name="theme-color" content="#f2f3f5" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#111214" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="家庭中控">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/static/icon-192.png">
+  <link rel="apple-touch-icon" href="/static/icon-180.png">
+  <style>
+    html, body { margin: 0; background: #f4f5f7; }
+    /* 頁面捲軸：細、沒有箭頭 */
+    html { scrollbar-width: thin; scrollbar-color: #cbd2db transparent; }
+    @media (prefers-color-scheme: dark) { html, body { background: #0b0d11; } html { scrollbar-color: #2e333d transparent; } }
+  </style>
+  <script type="module" src="/static/app.js"></script>
+</head>
+<body>
+  <plug-app></plug-app>
+</body>
+</html>

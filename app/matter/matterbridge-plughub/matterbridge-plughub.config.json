@@ -1,0 +1,7 @@
+{
+  "name": "matterbridge-plughub",
+  "type": "DynamicPlatform",
+  "url": "http://127.0.0.1:8100",
+  "debug": false,
+  "unregisterOnShutdown": false
+}

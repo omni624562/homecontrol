@@ -1,0 +1,55 @@
+# 插座 App：樹莓派上執行
+#   cd app && docker compose up -d --build
+# 手機打開 http://樹莓派的IP:8100
+services:
+  plughub:
+    build: .
+    container_name: plughub
+    # 用主機網路：要在區網用廣播找插座
+    network_mode: host
+    environment:
+      - TZ=Asia/Taipei
+    volumes:
+      - ./data:/data
+      # 登入路由器的金鑰（只讀路由器的連線裝置清單）；沒有這個檔案就不讀路由器
+      - ${HOME}/.ssh/homehub_router:/keys/router:ro
+    restart: unless-stopped
+
+  # Google Home 串接（Matter）：把插座變成 Matter 插座，Google Home 在家裡直接控制
+  # 配對 QR code 在插座 App 的「設定 → Google Home」
+  matterbridge:
+    image: luligu/matterbridge:latest
+    container_name: matterbridge
+    # Matter 要用 mDNS 和 IPv6，一定要主機網路
+    network_mode: host
+    environment:
+      - TZ=Asia/Taipei
+      - MDNS_INTERFACE=eth0  # 樹莓派連家裡網路的網路卡（用 Wi-Fi 就改成 wlan0）
+    volumes:
+      - ./matter/matterbridge-plughub:/root/Matterbridge/matterbridge-plughub
+      - ./data/matterbridge/storage:/root/.matterbridge
+      - ./data/matterbridge/cert:/root/.mattercert
+    command: ["sh", "/root/Matterbridge/matterbridge-plughub/start.sh"]
+    stop_grace_period: 60s
+    healthcheck:
+      # 管理頁只開在 127.0.0.1:8284，健康檢查也要連這裡
+      test: ["CMD", "mb_health", "http://127.0.0.1:8284/health"]
+      interval: 60s
+      timeout: 10s
+      start_period: 60s
+      retries: 5
+    restart: unless-stopped
+    depends_on:
+      - plughub
+
+  # Matterbridge 管理頁的門口：http://樹莓派的IP:8283
+  # 只有從插座 App「設定 → Google Home → Matterbridge 管理頁」點進來的瀏覽器才進得去
+  matterbridge-gate:
+    image: nginx:1.27-alpine
+    container_name: matterbridge-gate
+    network_mode: host
+    volumes:
+      - ./matter/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    restart: unless-stopped
+    depends_on:
+      - matterbridge
