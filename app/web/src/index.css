@@ -389,7 +389,7 @@ html[data-look="tech"] {
   --tech-on-bg: linear-gradient(180deg, #fff4dc, #fffaf0);
   --tech-on-glow: 0 2px 10px rgba(245, 158, 11, 0.18);
   --tech-tile: #f5f7fa;
-  --tech-mono: "JetBrains Mono", "DejaVu Sans Mono", "Noto Sans Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --tech-mono: "TechDigits", var(--font-sans, ui-sans-serif, system-ui, sans-serif); /* 只有數字是等寬字，中文照一般字型 */
 }
 html[data-look="tech"].dark {
   --background: #1a222e;
@@ -424,7 +424,7 @@ html[data-look="tech"] body {
 }
 /* 待機畫面的大數字：兩種外觀都用等寬字 */
 .tech-mono {
-  font-family: "JetBrains Mono", "DejaVu Sans Mono", "Noto Sans Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-family: "TechDigits", var(--font-sans, ui-sans-serif, system-ui, sans-serif);
 }
 /* 只有數字和數字旁的符號換成等寬字；中文、空白照用一般字型。
    整段都用等寬字的話，中文會掉到等寬中文字型，「131 公尺」的空白變得很寬、很難讀 */
