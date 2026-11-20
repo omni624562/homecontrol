@@ -149,7 +149,7 @@ class Hub:
         self._router_sig: Any = None
         self._router_since = 0.0  # 這次連上路由器的時間（剛連上時資料不完整，先不判斷「出門」）
         self._router_fed: dict[str, float] = {}  # MAC → 上次餵給 Wi-Fi 感測的讀數時間
-        self._away_checked = False  # 這次大家出門後，檢查過有沒有電器開著了嗎
+        self._home_since: float | None = None  # 有人回家的時間（用來判斷這次出門結束了沒）
         # 網路用量：MAC → 上次讀到的累計位元組（主路由器的 Wi-Fi 裝置）；每天的用量存在 store["net_usage"]
         self._traffic_last: dict[str, int] = {}
         # 放假日、天氣（排程的「國定假日不執行」「下雨不執行」）
@@ -1182,22 +1182,36 @@ class Hub:
         self._dirty = True
 
     def _check_left_on(self, now: float) -> None:
-        """大家都出門 10 分鐘後，還有電器開著：通知（或直接關掉）。常開的不算。"""
+        """大家都出門 10 分鐘後，還有電器開著：通知（或直接關掉）。常開的不算。
+
+        同一次出門，同一個電器只講一次：手機 Wi-Fi 睡著又醒來（短暫「回家」）、樹莓派重開都不會再講；
+        有人真的在家待滿 15 分鐘，才算這次出門結束。講過哪些存在樹莓派上。
+        """
         people = self.people_report()
         cfg = self.store.data["settings"].get("presence") or {}
         mode = cfg.get("left_on", "notify")
-        if not people or mode == "none" or any(p.get("home") for p in people):
-            self._away_checked = False
+        notice = self.store.data.setdefault("away_notice", {"plugs": [], "at": 0})
+        if not people or mode == "none":
             return
-        if self._away_checked:
+        if any(p.get("home") is None for p in people):  # 剛開機還不知道誰在家
             return
+        if any(p.get("home") for p in people):
+            if self._home_since is None:
+                self._home_since = now
+            if now - self._home_since >= 900 and notice["plugs"]:
+                notice.update(plugs=[], at=0)
+                self._dirty = True
+            return
+        self._home_since = None
         since = max((p.get("since") or 0) for p in people)
         if now - since < 600:
             return
-        self._away_checked = True
-        on = [p for p in self.ordered() if p.online and p.is_on and not self.store.meta(p.id).keep_on]
+        on = [p for p in self.ordered() if p.online and p.is_on and not self.store.meta(p.id).keep_on
+              and p.id not in notice["plugs"]]
         if not on:
             return
+        notice.update(plugs=sorted(set(notice["plugs"]) | {p.id for p in on}), at=now)
+        self._dirty = True
         names = "、".join(self.name(p) for p in on[:8]) + (f" 等 {len(on)} 個" if len(on) > 8 else "")
         if mode == "off":
             async def go() -> None:
