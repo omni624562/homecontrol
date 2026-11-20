@@ -213,7 +213,8 @@ export interface BusInfo {
   updated: number | null;
 }
 
-export interface BikeStation { sno: string; name: string; m: number; bikes: number; ebikes: number; docks: number; ok: boolean }
+export interface BikeStation { sno: string; name: string; m: number; x?: number; y?: number; // x、y：離家往東、往北幾公尺
+  bikes: number; ebikes: number; docks: number; ok: boolean }
 export interface BikeInfo { show: boolean; near: BikeStation[]; main: string | null; error: string | null; updated: number | null }
 
 export interface Local {

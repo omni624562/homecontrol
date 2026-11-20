@@ -25,6 +25,7 @@ from typing import Any, Callable
 
 from .bike import Bike
 from .bus import Bus
+from .roads import Roads
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -96,6 +97,7 @@ class LocalInfo:
         except Exception:  # noqa: BLE001
             pass
         self.bike = Bike(lambda: self._settings().setdefault("bike", {}))
+        self.roads_map = Roads(data_dir)
         self.bus = Bus(data_dir, lambda: self._settings().setdefault("bus", {}))
         self.arrivals: dict[str, list[dict]] = {}  # 每個清運點最近幾次車子實際到的時間
         try:
@@ -127,6 +129,17 @@ class LocalInfo:
     def _m(self, lat: float, lon: float) -> float:
         hl, ho = self.home  # type: ignore[misc]
         return math.hypot((lat - hl) * 111200, (lon - ho) * 111200 * math.cos(math.radians(hl)))
+
+    def _xy(self, lat: float, lon: float) -> tuple[float, float]:
+        """離家往東、往北幾公尺。"""
+        hl, ho = self.home  # type: ignore[misc]
+        return (lon - ho) * 111200 * math.cos(math.radians(hl)), (lat - hl) * 111200
+
+    def map(self, radius: float = 700) -> dict[str, Any]:
+        """小地圖：家附近的街道（給生活資訊的 YouBike 地圖用）。"""
+        if not self.home:
+            return {"r": radius, "roads": [], "error": "還不知道家的位置"}
+        return {"r": radius, "roads": self.roads_map.near(self._xy, radius), "error": self.roads_map.error}
 
     # ---- 設定 ----
     @property
@@ -174,6 +187,8 @@ class LocalInfo:
         if county == "新北市" and self.bike.due():
             await asyncio.to_thread(self.bike.fetch)
             changed = True
+        if home and self.roads_map.due(_town):
+            await asyncio.to_thread(self.roads_map.fetch, _town)
         what = self.bus.due()
         if what:
             await asyncio.to_thread(self.bus.fetch, what)
@@ -431,7 +446,7 @@ class LocalInfo:
         horizon = (datetime.now() + timedelta(days=14)).isoformat(timespec="minutes")
         return {
             "garbage": garbage,
-            "bike": self.bike.report(self._m if self.home else None),
+            "bike": self.bike.report(self._m if self.home else None, self._xy if self.home else None),
             "bus": self.bus.report(self._m if self.home else None),
             "stops": [{k: x[k] for k in ("lineid", "line", "rank", "name", "time", "m", "days")} for x in self.stops[:25]],
             "outages": [x for x in self.outages if x["start"] <= horizon][:30],

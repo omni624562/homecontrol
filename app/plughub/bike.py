@@ -59,10 +59,11 @@ class Bike:
             self.error = f"{type(err).__name__}: {err}"[:160]
             _LOGGER.warning("YouBike 失敗：%s", self.error)
 
-    def report(self, dist: Callable[[float, float], float] | None) -> dict[str, Any]:
+    def report(self, dist: Callable[[float, float], float] | None, xy: Callable[[float, float], tuple[float, float]] | None = None) -> dict[str, Any]:
         near: list[dict] = []
         if dist and time.time() - self.at < 900:
-            near = sorted(({**{k: r[k] for k in ("sno", "name", "bikes", "ebikes", "docks", "ok")}, "m": round(dist(r["lat"], r["lon"]))}
+            near = sorted(({**{k: r[k] for k in ("sno", "name", "bikes", "ebikes", "docks", "ok")}, "m": round(dist(r["lat"], r["lon"])),
+                            **({"x": round(xy(r["lat"], r["lon"])[0]), "y": round(xy(r["lat"], r["lon"])[1])} if xy else {})}
                            for r in self.rows), key=lambda r: r["m"])
             near = [r for r in near if r["m"] <= NEAR_M][:NEAR_MAX]
         pick = self._cfg().get("station")

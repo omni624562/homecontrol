@@ -752,6 +752,12 @@ async def weather_keys(body: dict = Body(...)) -> dict[str, Any]:
     return {"cwa": bool(hub.weather.key()), "moenv": bool(hub.weather.air_key())}
 
 
+@app.get("/api/local/map")
+async def local_map() -> dict[str, Any]:
+    """家附近的街道（座標是離家幾公尺，不是經緯度）。"""
+    return hub.local.map()
+
+
 @app.put("/api/local")
 async def local_settings(body: dict = Body(...)) -> dict[str, Any]:
     """生活資訊：{"stop": {"lineid", "rank"}, "roads": [路名], "garbage_notify", "outage_notify", "truck_rush"（快到時畫面上衝出一台垃圾車）, "bus_routes": [路線名], "bus_pick": {"路線代碼:方向": 站牌代碼｜"off"}, "bike_station": 站號, "bike_show"}；只存在樹莓派上。"""

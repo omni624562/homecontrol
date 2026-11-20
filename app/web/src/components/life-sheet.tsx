@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Bike, Bus, Droplets, Home, Loader2, Truck, Zap, ZapOff } from "lucide-react";
 import { toast } from "sonner";
+import { BikeMap } from "@/components/bike-map";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -193,7 +194,8 @@ export function LifeSheet({ open, onClose, first }: { open: boolean; onClose: ()
             <p className="text-sm text-muted-foreground">{Y.error ? `查詢失敗：${Y.error}` : Y.updated ? "你家 600 公尺內沒有站" : L.garbage_supported ? "查詢中…" : "YouBike 目前只支援新北市"}</p>
           ) : (
             <>
-              <div role="radiogroup" aria-label="首頁顯示哪一站" className="divide-y">
+              <BikeMap stations={Y.near} main={Y.main} onPick={(sno) => put({ bike_station: sno })} />
+              <div role="radiogroup" aria-label="首頁顯示哪一站" className="mt-2 divide-y">
                 {Y.near.map((x) => {
                   const on = x.sno === Y.main;
                   return (
