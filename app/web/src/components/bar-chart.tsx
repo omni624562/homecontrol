@@ -10,12 +10,14 @@ export interface Bar {
 }
 
 // 單一數列的長條圖：平均線（不算還沒過完的最後一根）、滑過或用方向鍵看每一根的讀數
-export function BarChart({ items, unit, name, height = "h-44" }: { items: Bar[]; unit: string; name: string; height?: string }) {
+// onSelect：點一根（或按 Enter）選它，再點一次取消
+export function BarChart({ items, unit, name, height = "h-44", selected = null, onSelect }: { items: Bar[]; unit: string; name: string; height?: string; selected?: number | null; onSelect?: (i: number | null) => void }) {
   const [active, setActive] = useState<number | null>(null);
   const max = Math.max(0.001, ...items.map((x) => x.v));
   const done = items.slice(0, -1);
   const avg = done.length ? done.reduce((a, x) => a + x.v, 0) / done.length : 0;
-  const readout = active != null ? items[active].tip : `平均 ${fmt(avg, 1)} ${unit}・滑過長條看每一根`;
+  const readout = active != null ? items[active].tip : `平均 ${fmt(avg, 1)} ${unit}・${onSelect ? "點長條看那天各裝置" : "滑過長條看每一根"}`;
+  const pick = (i: number) => onSelect?.(selected === i ? null : i);
   return (
     <div className="space-y-2">
       <div className="min-h-6 text-sm tabular-nums text-muted-foreground" aria-live="polite">
@@ -26,6 +28,11 @@ export function BarChart({ items, unit, name, height = "h-44" }: { items: Bar[];
         tabIndex={0}
         aria-label={`${name}，共 ${items.length} 根，用左右方向鍵逐一查看`}
         onKeyDown={(e) => {
+          if ((e.key === "Enter" || e.key === " ") && active != null && onSelect) {
+            e.preventDefault();
+            pick(active);
+            return;
+          }
           if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
           e.preventDefault();
           setActive((i) => {
@@ -39,12 +46,14 @@ export function BarChart({ items, unit, name, height = "h-44" }: { items: Bar[];
       >
         <div className={cn("relative flex items-end border-b border-border", height)}>
           {items.map((x, i) => (
-            <div key={i} className="flex h-full flex-1 cursor-default items-end justify-center px-[1px]" onMouseEnter={() => setActive(i)} onTouchStart={() => setActive(i)}>
+            <div key={i} className={cn("flex h-full flex-1 items-end justify-center px-[1px]", onSelect ? "cursor-pointer" : "cursor-default")} onMouseEnter={() => setActive(i)} onTouchStart={() => setActive(i)} onClick={() => pick(i)}>
               <i
                 className={cn(
                   "block w-full max-w-6 rounded-t-[4px] bg-primary/80 transition-colors",
                   x.now && "bg-primary/35",
                   active === i && "bg-primary",
+                  selected === i && "bg-primary ring-2 ring-primary/40 ring-offset-1 ring-offset-card",
+                  selected != null && selected !== i && active !== i && "opacity-45",
                 )}
                 style={{ height: `${x.v > 0 ? Math.max(1.5, (x.v / max) * 100) : 0}%` }}
               />

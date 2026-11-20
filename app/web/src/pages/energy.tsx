@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { AlertCircle, CalendarDays, CheckCircle2, ChevronDown, ChevronRight, ChevronUp, Clock, Gauge, History, Minus, Trophy, Zap } from "lucide-react";
+import { AlertCircle, CalendarDays, CheckCircle2, ChevronDown, ChevronRight, ChevronUp, Clock, Gauge, History, Minus, Trophy, X, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -13,7 +13,8 @@ import { SettingNumber } from "@/components/settings-bits";
 import { api } from "@/lib/api";
 import { fmt, fmtMin } from "@/lib/format";
 import { useHub, useMedia } from "@/lib/hub";
-import type { Energy } from "@/lib/types";
+import { useLook } from "@/lib/look";
+import type { Energy, EnergyPlug } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const money = (v: number) => `$${fmt(v)}`;
@@ -48,14 +49,74 @@ function CardTitle({ title, end }: { title: string; end?: ReactNode }) {
   );
 }
 
-function Kpi({ label, value, sub, tone, extra }: { label: string; value: ReactNode; sub: ReactNode; tone?: "up" | "down"; extra?: ReactNode }) {
-  return (
-    <Card className="relative gap-1 px-4 py-4 sm:px-5">
+function Kpi({ label, value, sub, tone, extra, cell }: { label: string; value: ReactNode; sub: ReactNode; tone?: "up" | "down"; extra?: ReactNode; cell?: boolean }) {
+  const body = (
+    <>
       {extra}
       <div className="text-sm text-muted-foreground">{label}</div>
-      <div className={cn("text-2xl font-bold tracking-tight tabular-nums sm:text-3xl", tone === "up" && "text-orange-600 dark:text-orange-400", tone === "down" && "text-emerald-600 dark:text-emerald-400")}>{value}</div>
-      <div className="text-sm leading-relaxed text-muted-foreground">{sub}</div>
-    </Card>
+      <div className={cn("font-bold tracking-tight tabular-nums", cell ? "text-2xl" : "text-2xl sm:text-3xl", tone === "up" && "text-orange-600 dark:text-orange-400", tone === "down" && "text-emerald-600 dark:text-emerald-400")}>{value}</div>
+      <div className={cn("text-sm text-muted-foreground", cell ? "leading-snug" : "leading-relaxed")}>{sub}</div>
+    </>
+  );
+  // 科技感：四個數字放在同一條裡，用細線隔開
+  if (cell) return <div className="relative min-w-0 space-y-0.5 px-4 py-3 sm:px-5">{body}</div>;
+  return <Card className="relative gap-1 px-4 py-4 sm:px-5">{body}</Card>;
+}
+
+// 最近 7 天的小長條（開機分鐘）
+function Spark({ days }: { days: number[] }) {
+  const last = days.slice(-7);
+  const max = Math.max(60, ...last);
+  return (
+    <span className="hidden h-7 w-16 shrink-0 items-end gap-[2px] sm:flex" aria-hidden title="最近 7 天">
+      {last.map((m, i) => (
+        <i key={i} className={cn("block flex-1 rounded-t-[2px]", i === last.length - 1 ? "bg-primary/40" : "bg-primary/75")} style={{ height: `${m > 0 ? Math.max(8, (m / max) * 100) : 4}%`, opacity: m > 0 ? 1 : 0.25 }} />
+      ))}
+    </span>
+  );
+}
+
+// 點長條圖的某一天：那天每個裝置用了多少，和前一天比
+function DayDetail({ e, i, onClose, onOpen }: { e: Energy; i: number; onClose: () => void; onOpen: (id: string) => void }) {
+  const useKwh = e.plugs.some((p) => p.watts);
+  const day = e.days[i];
+  const kwh = (p: EnergyPlug, m: number) => (m / 60) * (p.watts || 0) / 1000;
+  const rows = e.plugs
+    .filter((p) => p.known && p.days[i] > 0)
+    .map((p) => ({ p, m: p.days[i], prev: i > 0 ? p.days[i - 1] : null, k: kwh(p, p.days[i]) }))
+    .sort((a, b) => (useKwh ? b.k - a.k || b.m - a.m : b.m - a.m));
+  const max = Math.max(0.001, ...rows.map((r) => (useKwh ? r.k : r.m)));
+  const today = i === e.days.length - 1;
+  return (
+    <div className="mt-3 rounded-xl border bg-muted/30">
+      <div className="flex items-center gap-2 border-b px-3 py-2">
+        <div className="min-w-0 flex-1">
+          <span className="font-semibold">{md(day.day)}{today && "（今天，到現在）"}</span>
+          <span className="ml-2 text-sm text-muted-foreground tabular-nums">{useKwh ? `${fmt(day.kwh, 1)} 度・約 ${money(day.kwh * e.price)}` : `開了 ${fmt(day.hours, 0)} 小時`}{i > 0 ? "・右邊是和前一天比" : ""}</span>
+        </div>
+        <Button size="icon" variant="ghost" className="size-8" onClick={onClose} aria-label="關閉這天的明細"><X className="size-4" /></Button>
+      </div>
+      {rows.length === 0 ? (
+        <p className="px-3 py-3 text-sm text-muted-foreground">這天沒有裝置開著。</p>
+      ) : (
+        <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-3 gap-y-1 px-3 py-2 text-sm sm:grid-cols-[minmax(0,9rem)_minmax(2rem,1fr)_auto_auto]">
+          {rows.map(({ p, m, prev, k }) => {
+            const d = prev == null ? null : m - prev;
+            return (
+              <Fragment key={p.id}>
+                <button onClick={() => onOpen(p.id)} className="truncate text-left font-medium hover:text-primary focus-visible:underline focus-visible:outline-none">{p.name}</button>
+                <span className="hidden h-2 overflow-hidden rounded-full bg-muted sm:block"><span className="block h-full rounded-full bg-primary/75" style={{ width: `${Math.max(2, ((useKwh ? k : m) / max) * 100)}%` }} /></span>
+                <span className="text-right whitespace-nowrap tabular-nums">{useKwh && p.watts ? `${fmt(k, 2)} 度` : fmtMin(m)}<span className="ml-1.5 hidden text-xs text-muted-foreground sm:inline">{useKwh && p.watts ? fmtMin(m) : ""}</span></span>
+                <span className={cn("min-w-12 text-right text-xs whitespace-nowrap tabular-nums", d == null || Math.abs(d) < 10 ? "text-muted-foreground" : d > 0 ? "text-orange-600 dark:text-orange-400" : "text-emerald-600 dark:text-emerald-400")}>
+                  {d == null ? "" : Math.abs(d) < 10 ? "差不多" : `${d > 0 ? "+" : "−"}${fmtMin(Math.abs(d))}`}
+                </span>
+              </Fragment>
+            );
+          })}
+        </div>
+      )}
+      {today && <p className="border-t px-3 py-2 text-xs text-muted-foreground">今天還沒過完，和昨天整天比自然比較少。</p>}
+    </div>
   );
 }
 
@@ -76,6 +137,8 @@ export function EnergyPage() {
   const [range, setRange] = useState<"days" | "months">("days");
   const [dev, setDev] = useState<string | null>(null);
   const [heatTip, setHeatTip] = useState<string | null>(null);
+  const [pickDay, setPickDay] = useState<number | null>(null);
+  const tech = useLook() === "tech";
   // 手機上熱力圖放不下：先捲到最右邊（最近的日子）
   const heatRef = useRef<HTMLDivElement>(null);
   const hasE = !!e;
@@ -159,10 +222,11 @@ export function EnergyPage() {
       <PageHeader title="用電" sub={sub} />
       <div className="mx-auto max-w-7xl space-y-4 px-4 py-4 sm:px-6 lg:px-8">
         {/* 重點數字 */}
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <Kpi label="本月至今" value={money(e.month.cost)} sub={`${fmt(e.month.kwh, 1)} 度・${e.day_of_month} 天`} />
-          <Kpi label="預估本月" value={money(e.projected.cost)} sub={`${fmt(e.projected.kwh, 0)} 度・照目前每天的平均推算`} />
-          <Kpi
+        {/* 科技感：同一條、細線隔開；原本：四張卡片 */}
+        <div className={tech ? "grid grid-cols-2 overflow-hidden rounded-xl border bg-card lg:grid-cols-4 [&>*]:border-border max-lg:[&>*:nth-child(-n+2)]:border-b [&>*:not(:last-child)]:lg:border-r max-lg:[&>*:nth-child(odd)]:border-r" : "grid grid-cols-2 gap-3 lg:grid-cols-4"}>
+          <Kpi cell={tech} label="本月至今" value={money(e.month.cost)} sub={`${fmt(e.month.kwh, 1)} 度・${e.day_of_month} 天`} />
+          <Kpi cell={tech} label="預估本月" value={money(e.projected.cost)} sub={`${fmt(e.projected.kwh, 0)} 度・照目前每天的平均推算`} />
+          <Kpi cell={tech}
             extra={party && <Confetti />}
             label="比上月同期"
             tone={delta == null ? undefined : delta > 0.02 ? "up" : delta < -0.02 ? "down" : undefined}
@@ -176,7 +240,7 @@ export function EnergyPage() {
             }
             sub={delta == null ? "沒有上個月的資料" : `${delta > 0.02 ? "比上月同期多" : delta < -0.02 ? "比上月同期少" : "和上月同期差不多"}・上月同期 ${money(e.same_period.cost)}`}
           />
-          <Kpi label="今天" value={<>{fmt(e.today.kwh, 1)}<span className="ml-1 text-base font-normal text-muted-foreground">度</span></>} sub={`約 ${money(e.today.kwh * e.price)}・到現在為止`} />
+          <Kpi cell={tech} label="今天" value={<>{fmt(e.today.kwh, 1)}<span className="ml-1 text-base font-normal text-muted-foreground">度</span></>} sub={`約 ${money(e.today.kwh * e.price)}・到現在為止`} />
         </div>
 
         <div className="grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
@@ -189,7 +253,9 @@ export function EnergyPage() {
                 end={<div className="w-56"><Segmented label="期間" value={range} onChange={setRange} options={[["days", "近 30 天"], ["months", "近 12 個月"]]} /></div>}
               />
               <div className="px-4 pt-3 pb-4 sm:px-5">
-                <BarChart items={bars} unit={unit} name={useKwh ? "每天用電" : "每天開機時數"} height="h-56" />
+                <BarChart items={bars} unit={unit} name={useKwh ? "每天用電" : "每天開機時數"} height="h-56"
+                  selected={range === "days" ? pickDay : null} onSelect={range === "days" ? setPickDay : undefined} />
+                {range === "days" && pickDay != null && <DayDetail e={e} i={pickDay} onClose={() => setPickDay(null)} onOpen={setDev} />}
               </div>
             </Card>
 
@@ -210,7 +276,7 @@ export function EnergyPage() {
                   <span className={cn(heatTip && "font-medium text-foreground")}>{heatTip || heatDefault}</span>
                 </div>
                 <div ref={heatRef} className="overflow-x-auto pb-1">
-                <div className="grid min-w-[34rem] items-center gap-[3px]" style={{ gridTemplateColumns: `minmax(5.5rem, 8rem) repeat(${e.days.length}, minmax(0, 1fr))` }}>
+                <div className="grid min-w-[34rem] items-center gap-[3px] lg:min-w-0" style={{ gridTemplateColumns: `minmax(5.5rem, 8rem) repeat(${e.days.length}, minmax(0, 1fr))` }}>
                   <span className="sticky left-0 z-10 h-full bg-card" />
                   {e.days.map((d, i) => (
                     <span key={d.day} className="text-center text-[10px] text-muted-foreground">{i === e.days.length - 1 ? "今" : i % 5 === 4 ? Number(d.day.slice(8)) : ""}</span>
@@ -333,6 +399,7 @@ export function EnergyPage() {
                     </span>
                     <span className="block h-1.5 overflow-hidden rounded-full bg-muted"><span className="block h-full rounded-full bg-primary/70" style={{ width: `${Math.max(1, share * 100)}%` }} /></span>
                   </span>
+                  {tech && p.known && <Spark days={p.days} />}
                   <span className="shrink-0 text-right">
                     {!p.known ? (
                       <span className="text-sm text-muted-foreground">讀不到</span>
