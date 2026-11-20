@@ -195,7 +195,7 @@ class Router:
             c = self.clients.setdefault(mac, {"mac": mac})
             info = self.ifaces.get(i, {})
             c.update(node=main or c.get("node"), band=info.get("band", ""), ssid=info.get("ssid") or None,
-                     wired=False, seen=now)
+                     wired=False, seen=now, wifi_at=now)
             if rssi < 0:
                 c["rssi"] = rssi
                 c["live"] = now
@@ -213,9 +213,15 @@ class Router:
                 wired = bkey.startswith("wired")
                 for mac, info in (members or {}).items():
                     mac = norm(mac)
-                    if wired and (mac in wireless or now - self.clients.get(mac, {}).get("live", 0) < 15):
+                    if wired and mac in wireless:
                         continue
                     c = self.clients.setdefault(mac, {"mac": mac})
+                    # 只在有線清單裡、但 10 分鐘內在 Wi-Fi 上看過：還是連著（節點那邊這一輪沒列到），維持 Wi-Fi
+                    if wired and now - c.get("wifi_at", 0) < 600:
+                        c["seen"] = now
+                        continue
+                    if not wired:
+                        c["wifi_at"] = now
                     # 主路由器的 Wi-Fi 裝置有即時資料（每 4 秒），不要被比較舊的清單蓋掉
                     if node == main and not wired and now - c.get("live", 0) < 15:
                         c["seen"] = now

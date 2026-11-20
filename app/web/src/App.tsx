@@ -7,6 +7,7 @@ import { SettingsPage } from "@/pages/settings";
 import { EditPage } from "@/pages/edit";
 import { NetPage } from "@/pages/net";
 import { MapPage } from "@/pages/map";
+import { LifePage } from "@/pages/life";
 import { AskProvider } from "@/components/ask-sheet";
 import { TruckRush } from "@/components/truck-rush";
 import { FxLayer } from "@/components/fx";
@@ -22,7 +23,7 @@ export default function App() {
   return (
     <AskProvider>
       <AppShell tab={tab}>
-        {tab === "schedule" ? <SchedulePage /> : tab === "energy" ? <EnergyPage /> : tab === "settings" ? <SettingsPage /> : tab === "edit" ? <EditPage /> : tab === "net" ? <NetPage /> : tab === "map" ? <MapPage /> : <HomePage />}
+        {tab === "schedule" ? <SchedulePage /> : tab === "energy" ? <EnergyPage /> : tab === "settings" ? <SettingsPage /> : tab === "edit" ? <EditPage /> : tab === "net" ? <NetPage /> : tab === "map" ? <MapPage /> : tab === "life" ? <LifePage /> : <HomePage />}
       </AppShell>
       <TruckRush />
       <FxLayer />

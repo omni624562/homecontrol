@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 
 // 面板：電腦是置中的對話框，手機是從下面滑上來的抽屜（可以往下拖關掉）
 export function Sheet({
-  open, onOpenChange, title, description, icon, children, wide, aside,
+  open, onOpenChange, title, description, icon, children, wide, aside, inline,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -17,8 +17,24 @@ export function Sheet({
   wide?: boolean | "xl";
   // 標題列右邊：這個面板最重要的一項（狀態、數字、開關）
   aside?: ReactNode;
+  // 不是彈出的面板，直接放在頁面上的一張卡片
+  inline?: boolean;
 }) {
   const desktop = useMedia("(min-width: 768px)");
+  if (inline)
+    return (
+      <section className="overflow-hidden rounded-xl border bg-card shadow-xs">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b bg-muted/60 px-4 py-3 dark:bg-muted/40 sm:px-5">
+          {icon && <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border bg-background text-foreground/70 [&_svg]:size-5">{icon}</div>}
+          <div className="min-w-0 flex-1">
+            <h2 className="text-lg font-bold tracking-tight">{title}</h2>
+            {description && <p className="text-sm leading-relaxed text-muted-foreground">{description}</p>}
+          </div>
+          {aside && <div className="ml-auto flex shrink-0 items-center gap-3">{aside}</div>}
+        </div>
+        <div className="p-4 sm:p-5">{children}</div>
+      </section>
+    );
   const head = (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-left">
       {icon && <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border bg-background text-foreground/70 [&_svg]:size-5">{icon}</div>}

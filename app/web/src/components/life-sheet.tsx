@@ -35,7 +35,7 @@ const TOPICS: { key: LifeTopic; label: string; icon: React.ElementType; src: str
 ];
 
 // 生活資訊：一次只看一件事（按哪個進來就先看哪個），上面的分頁可以換
-export function LifeSheet({ open, onClose, topic = "garbage" }: { open: boolean; onClose: () => void; topic?: LifeTopic }) {
+export function LifeSheet({ open, onClose, topic = "garbage", inline }: { open: boolean; onClose: () => void; topic?: LifeTopic; inline?: boolean }) {
   const { state } = useHub();
   const [tab, setTab] = useState<LifeTopic>(topic);
   useEffect(() => {
@@ -78,7 +78,7 @@ export function LifeSheet({ open, onClose, topic = "garbage" }: { open: boolean;
   const days = (d: number[]) => (d.length ? d.map((i) => DN[i]).join("") : "不收");
 
   return (
-    <Sheet open={open} onOpenChange={(v) => !v && onClose()} title={T.label}
+    <Sheet inline={inline} open={open} onOpenChange={(v) => !v && onClose()} title={T.label}
       description={L.place ? `${L.place}・政府開放資料` : "政府開放資料"}
       icon={<T.icon />}
       wide
@@ -99,7 +99,7 @@ export function LifeSheet({ open, onClose, topic = "garbage" }: { open: boolean;
       }
     >
       <div className="flex flex-col gap-5">
-        <Segmented label="生活資訊" value={tab} onChange={setTab} options={TOPICS.map((x) => [x.key, <span key={x.key} className="inline-flex items-center justify-center gap-1.5"><x.icon className="size-4 max-sm:hidden" />{x.label}</span>])} />
+        {!inline && <Segmented label="生活資訊" value={tab} onChange={setTab} options={TOPICS.map((x) => [x.key, <span key={x.key} className="inline-flex items-center justify-center gap-1.5"><x.icon className="size-4 max-sm:hidden" />{x.label}</span>])} />}
 {tab === "garbage" && (
                 <section>
           {!L.garbage_supported ? (

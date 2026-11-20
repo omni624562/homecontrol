@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlertCircle, Check, CheckCircle2, ChevronLeft, ImagePlus, LayoutGrid, Pencil, Plus, Trash2, Wifi, WifiOff, X } from "lucide-react";
+import { AlertCircle, Check, CheckCircle2, ImagePlus, LayoutGrid, Pencil, Plus, Trash2, Wifi, WifiOff, X } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/app-shell";
+import { NetTitle } from "@/components/net-view";
 import { MapCanvas, type MapSel } from "@/components/map-canvas";
 import { Segmented } from "@/components/schedule-bits";
 import { api } from "@/lib/api";
@@ -179,7 +180,7 @@ export function MapPage() {
 
   const head = (
     <PageHeader
-      title={<span className="flex items-center gap-1"><a href="#settings" className="-ml-2 inline-flex size-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="回設定"><ChevronLeft className="size-6" /></a>訊號地圖</span>}
+      title={<NetTitle view="map" />}
       sub={edit ? "拖曳區域和裝置到實際的位置；拉右下角改大小" : "各裝置的 Wi-Fi 訊號：藍色好、橘色弱；點裝置看詳細、設定高度"}
       actions={
         <Button variant={edit ? "default" : "outline"} className="h-10" onClick={() => { setEdit((v) => !v); setSel(null); }}>

@@ -523,7 +523,7 @@ export function SettingsPage() {
               hint={state.calendar.weather ? `${state.calendar.weather.place || "中央氣象署"}・現在、24 小時、一週預報` : "還沒有氣象署授權碼"}
               onClick={() => setSheet("weather")}
             />
-            <LinkRow label="生活資訊" hint="垃圾車、停水停電；選清運點、填你家的路名、通知開關" onClick={() => setSheet("life")} />
+            <LinkRow label="生活資訊" hint="垃圾車、公車、YouBike、停水停電；選清運點、路線、你家的路名，在「生活」頁" href="#life" />
             {state.calendar.local?.garbage_supported && (
               <SRow wrap label="垃圾車快到時衝出來" hint="剩 2 站以內時，一台大垃圾車衝出來（一天一次）">
                 <div className="flex flex-wrap items-center justify-end gap-2">
@@ -594,7 +594,6 @@ export function SettingsPage() {
           <GoogleCard />
           <SCard id="s-dev" icon={Search} title="裝置">
             <NetCheck s={state} />
-            <LinkRow label="訊號地圖" hint="在平面圖上看每個裝置的 Wi-Fi 訊號、哪裡有動靜" href="#map" />
             <LinkRow label={<>Wi-Fi 感測 <Badge variant="secondary">實驗</Badge></>} hint="用插座的訊號擾動，猜哪裡有人在走動" onClick={() => setSheet("sense")} />
             <LinkRow label="TP-Link 雲端" hint={`${bound ? `${bound} 個插座綁著 TP-Link 帳號` : "已和 TP-Link 帳號解除綁定"}・家庭中控和 Google Home 都不需要它`} onClick={() => setSheet("cloud")} />
             <SRow label="找新插座" hint="每分鐘會自動找一次；剛插上的插座可以按這裡馬上找">

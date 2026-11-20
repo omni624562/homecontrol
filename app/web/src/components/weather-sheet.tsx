@@ -82,12 +82,12 @@ export function WeatherKeys({ part }: { part: "keys" | "show" }) {
   );
 }
 
-export function WeatherSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function WeatherSheet({ open, onClose, inline }: { open: boolean; onClose: () => void; inline?: boolean }) {
   const { state } = useHub();
   const w = state?.calendar.weather;
   if (!w || w.temp == null)
     return (
-      <Sheet open={open} onOpenChange={(v) => !v && onClose()} title="天氣" description="中央氣象署、環境部的開放資料" icon={<CloudSun />} wide>
+      <Sheet inline={inline} open={open} onOpenChange={(v) => !v && onClose()} title="天氣" description="中央氣象署、環境部的開放資料" icon={<CloudSun />} wide>
         <div className="space-y-4">
           {!w ? (
             <div className="flex gap-3 rounded-xl border bg-muted/50 p-4">
@@ -121,7 +121,7 @@ export function WeatherSheet({ open, onClose }: { open: boolean; onClose: () => 
   const span = Math.max(1, hi - lo);
   const obs = w.obs_at ? new Date(w.obs_at) : null;
   return (
-    <Sheet open={open} onOpenChange={(v) => !v && onClose()} title="天氣"
+    <Sheet inline={inline} open={open} onOpenChange={(v) => !v && onClose()} title="天氣"
       description={w.place ? `${w.place}・中央氣象署` : "中央氣象署"}
       icon={<Now />}
       wide

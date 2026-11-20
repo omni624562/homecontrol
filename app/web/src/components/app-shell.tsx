@@ -1,17 +1,19 @@
 import { useSyncExternalStore, type ReactNode } from "react";
-import { BarChart3, Clock, Home, MessageSquareText, PanelLeftClose, PanelLeftOpen, Settings, Wifi } from "lucide-react";
+import { BarChart3, Clock, Home, MessageSquareText, PanelLeftClose, PanelLeftOpen, Settings, Sun, Wifi } from "lucide-react";
 import { useLook } from "@/lib/look";
 import { useAsk } from "@/components/ask-sheet";
 import { useHub } from "@/lib/hub";
 import { cn } from "@/lib/utils";
 
 // 主選單
+// mobile: false 的只出現在電腦的左側選單（手機下方放不下，從首頁進）
 export const TABS = [
-  { key: "plugs", label: "首頁", icon: Home },
-  { key: "schedule", label: "排程", icon: Clock },
-  { key: "energy", label: "用電", icon: BarChart3 },
-  { key: "net", label: "網路裝置", icon: Wifi },
-  { key: "settings", label: "設定", icon: Settings },
+  { key: "plugs", label: "首頁", icon: Home, mobile: true },
+  { key: "life", label: "生活", icon: Sun, mobile: true },
+  { key: "schedule", label: "排程", icon: Clock, mobile: false },
+  { key: "energy", label: "用電", icon: BarChart3, mobile: true },
+  { key: "net", label: "網路裝置", icon: Wifi, mobile: true },
+  { key: "settings", label: "設定", icon: Settings, mobile: true },
 ] as const;
 
 const href = (t: (typeof TABS)[number]) => `#${t.key}`;
@@ -44,7 +46,7 @@ function useRail(): boolean {
 }
 
 export function AppShell({ tab: raw, children }: { tab: string; children: ReactNode }) {
-  const tab = raw === "edit" ? "plugs" : raw === "map" ? "settings" : raw;
+  const tab = raw === "edit" ? "plugs" : raw === "map" ? "net" : raw;
   const { connected, state } = useHub();
   const ask = useAsk();
   const mini = useRail();
@@ -126,7 +128,7 @@ export function AppShell({ tab: raw, children }: { tab: string; children: ReactN
         className="fixed inset-x-0 bottom-0 z-30 flex border-t bg-background/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-md lg:hidden"
         aria-label="主選單"
       >
-        {TABS.map((t) => (
+        {TABS.filter((t) => t.mobile).map((t) => (
           <a
             key={t.key}
             href={href(t)}
