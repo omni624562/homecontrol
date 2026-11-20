@@ -11,6 +11,7 @@ export interface Plug {
   power: number | null;
   watts: number | null;
   keep_on: boolean;
+  risky?: boolean;
   protect: Protect;
   max_on_s: number | null;
   on_since: number | null;
@@ -264,6 +265,31 @@ export interface HubState {
   notify?: { line: boolean; name: string; error: string | null };
   matter?: { online: boolean; commissioned: boolean; manual_code: string; qr_code: string; fabrics: { vendor: string; label: string }[]; plugs: number; running: boolean };
   net_events?: { start: number; end: number | null; ssid: string; devices: number }[];
+  backup?: Backup;
+  app_version?: string;
+}
+
+// 每天自動備份 data/
+export interface Backup {
+  configured: boolean;
+  dir: string | null;
+  count: number;
+  latest: string | null;
+  busy?: boolean;
+  ok?: boolean;
+  at?: number;
+  file?: string;
+  size?: number;
+  error?: string | null;
+}
+
+// 已配對的裝置
+export interface PairedDevice {
+  id: string;
+  name: string;
+  created: number;
+  last_seen: number;
+  current: boolean;
 }
 
 // /api/energy：插座記錄的開機時間 × 瓦數

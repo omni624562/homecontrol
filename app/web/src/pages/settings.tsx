@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { AlertCircle, Bell, CheckCircle2, CloudSun, KeyRound, MessageCircle, ChevronRight, ExternalLink, Loader2, MessageSquareText, Mic, Palette, Search, Wifi, WifiOff } from "lucide-react";
+import { AlertCircle, Archive, Bell, Plus, ShieldCheck, Trash2, CheckCircle2, CloudSun, KeyRound, MessageCircle, ChevronRight, ExternalLink, Loader2, MessageSquareText, Mic, Palette, Search, Wifi, WifiOff } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -26,7 +26,7 @@ import { useHub } from "@/lib/hub";
 import { setLook, useLook } from "@/lib/look";
 import { previewStandby, setStandbyMin, useStandbyMin } from "@/components/standby";
 import { Segmented } from "@/components/schedule-bits";
-import type { HubState } from "@/lib/types";
+import type { HubState, PairedDevice } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 function SCard({ id, icon: I, title, badge, children }: { id?: string; icon: React.ElementType; title: string; badge?: ReactNode; children: ReactNode }) {
@@ -389,7 +389,136 @@ function NetCheck({ s }: { s: HubState }) {
   );
 }
 
-const SECTIONS: [string, string][] = [["s-look", "外觀"], ["s-notify", "通知"], ["s-life", "天氣生活"], ["s-ask", "問家裡"], ["s-google", "Google Home"], ["s-dev", "裝置"]];
+const SECTIONS: [string, string][] = [["s-look", "外觀"], ["s-notify", "通知"], ["s-life", "天氣生活"], ["s-ask", "問家裡"], ["s-google", "Google Home"], ["s-dev", "裝置"], ["s-sys", "安全與備份"]];
+
+const ago = (t: number) => {
+  const s = Date.now() / 1000 - t;
+  if (s < 3600) return "剛剛";
+  if (s < 86400) return `${Math.floor(s / 3600)} 小時前`;
+  return `${Math.floor(s / 86400)} 天前`;
+};
+const when = (t: number) => {
+  const d = new Date(t * 1000);
+  return `${d.getMonth() + 1}/${d.getDate()} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+};
+
+// 配對碼：給新裝置輸入，10 分鐘有效
+function NewCode() {
+  const [code, setCode] = useState<{ code: string; until: number } | null>(null);
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (!code) return;
+    const t = setInterval(() => {
+      tick((x) => x + 1);
+      if (Date.now() > code.until) setCode(null);
+    }, 1000);
+    return () => clearInterval(t);
+  }, [code]);
+  if (!code)
+    return (
+      <Button
+        variant="outline"
+        onClick={async () => {
+          try {
+            const r = await api<{ code: string; expires_in: number }>("POST", "/api/auth/code");
+            setCode({ code: r.code, until: Date.now() + r.expires_in * 1000 });
+          } catch (e) {
+            toast.error("沒有成功", { description: (e as Error).message });
+          }
+        }}
+      >
+        <Plus />新增裝置
+      </Button>
+    );
+  const left = Math.max(0, Math.round((code.until - Date.now()) / 1000));
+  return (
+    <div className="text-right">
+      <div className="font-mono text-2xl font-bold tracking-[0.25em] tabular-nums" aria-label={`配對碼 ${code.code.split("").join(" ")}`}>{code.code}</div>
+      <div className="text-xs text-muted-foreground">{Math.floor(left / 60)}:{pad2(left % 60)} 內在新裝置輸入</div>
+    </div>
+  );
+}
+
+function SystemCard({ s }: { s: HubState }) {
+  const [devices, setDevices] = useState<PairedDevice[] | null>(null);
+  const [backing, setBacking] = useState(false);
+  const load = () => api<{ devices: PairedDevice[] }>("GET", "/api/auth/devices").then((r) => setDevices(r.devices)).catch(() => setDevices([]));
+  useEffect(() => {
+    load();
+  }, []);
+  const b = s.backup;
+  const backupHint = !b?.configured
+    ? "沒有設定備份資料夾（見 app/docker-compose.yml）"
+    : b.ok === false
+      ? `上次失敗：${b.error}`
+      : `每天 03:30 備份到 ${b.dir}・${b.latest ? `最新 ${b.latest.replace(/^plughub-|\.tar\.gz$/g, "")}` : "還沒有備份"}・共 ${b.count} 份`;
+  return (
+    <SCard id="s-sys" icon={ShieldCheck} title="安全與備份" badge={s.app_version ? <Badge variant="secondary" className="font-mono">{s.app_version}</Badge> : undefined}>
+      <SRow wrap label="已配對的裝置" hint="只有配對過的手機、電腦能控制插座。新手機按「新增裝置」拿配對碼">
+        <NewCode />
+      </SRow>
+      {devices?.map((d) => (
+        <SRow
+          key={d.id}
+          label={<span className="flex items-center gap-2">{d.name}{d.current && <Badge variant="secondary">這台</Badge>}</span>}
+          hint={`配對於 ${when(d.created)}・上次使用 ${ago(d.last_seen)}`}
+        >
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="ghost" size="icon" aria-label={`移除 ${d.name}`}><Trash2 /></Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>移除「{d.name}」？</AlertDialogTitle>
+                <AlertDialogDescription>{d.current ? "這是你現在用的裝置，移除後要重新輸入配對碼。" : "那台裝置就不能再控制插座，要重新配對才行。"}</AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>取消</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={async () => {
+                    try {
+                      await api("DELETE", `/api/auth/devices/${d.id}`);
+                      toast.success(`已移除 ${d.name}`);
+                      load();
+                    } catch (e) {
+                      toast.error("沒有成功", { description: (e as Error).message });
+                    }
+                  }}
+                >
+                  移除
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </SRow>
+      ))}
+      <SRow
+        wrap
+        label={<span className="flex items-center gap-2">自動備份{b?.ok === false && <Badge className="bg-orange-100 text-orange-800 dark:bg-orange-500/15 dark:text-orange-300">失敗</Badge>}</span>}
+        hint={backupHint}
+      >
+        <Button
+          variant="outline"
+          disabled={backing || !b?.configured || b?.busy}
+          onClick={async () => {
+            setBacking(true);
+            try {
+              await api("POST", "/api/backup");
+              toast.success("備份好了");
+            } catch (e) {
+              toast.error("備份失敗", { description: (e as Error).message });
+            } finally {
+              setBacking(false);
+            }
+          }}
+        >
+          {backing ? <Loader2 className="animate-spin" /> : <Archive />}現在備份
+        </Button>
+      </SRow>
+      {b?.ok && b.at && <SRow label="上次備份" hint={`${when(b.at)}・${b.file}・${Math.round((b.size || 0) / 1024)} KB`} />}
+    </SCard>
+  );
+}
 
 // 手機：標題下面的快速跳轉；滑動時跟著標出現在看的那一段
 function JumpChips() {
@@ -474,7 +603,7 @@ export function SettingsPage() {
   const metered = state.plugs.some((p) => p.mode === "metered");
   const bound = cloudBound(state.plugs).length;
   const weekly = set.weekly !== false;
-  const remind = (set.remind || {}) as { long_on?: boolean; rain?: boolean; outage_eve?: boolean; dayoff?: boolean; warn?: boolean; quake?: boolean; power?: boolean; air?: boolean };
+  const remind = (set.remind || {}) as { long_on?: boolean; rain?: boolean; outage_eve?: boolean; dayoff?: boolean; warn?: boolean; quake?: boolean; power?: boolean; air?: boolean; anomaly?: boolean };
   const putRemind = (k: keyof typeof remind, v: boolean, label: string) => put({ remind: { [k]: v } }, `${label}${v ? "已打開" : "已關閉"}`);
 
   return (
@@ -509,6 +638,9 @@ export function SettingsPage() {
             </SRow>
             <SRow label="明天空氣品質不好" hint="明天你家空品區預報 AQI 超過 100，前一晚 8 點通知">
               <Switch checked={remind.air !== false} onCheckedChange={(v) => putRemind("air", v, "空品通知")} aria-label="明天空氣品質不好通知" />
+            </SRow>
+            <SRow label="用電和平常不一樣" hint="某個電器最近 3 天比它自己平常用得多（冰箱變耗電、開得比平常久），或待機功率變高；每天早上 9 點檢查">
+              <Switch checked={remind.anomaly !== false} onCheckedChange={(v) => putRemind("anomaly", v, "用電異常通知")} aria-label="用電異常通知" />
             </SRow>
             {metered && (
               <SRow wrap label="功率過高通知" hint="有計量的插座超過這個瓦數 1 分鐘就通知">
@@ -634,6 +766,7 @@ export function SettingsPage() {
               <span className={cn("size-3 rounded-full", connected ? "bg-emerald-500" : "animate-pulse bg-amber-500")} aria-hidden />
             </SRow>
           </SCard>
+          <SystemCard s={state} />
         </div>
       </div>
       <SenseSheet open={sheet === "sense"} onClose={() => setSheet(null)} />

@@ -150,6 +150,7 @@ function DeviceBody({ p }: { p: Plug }) {
   const [maxDraft, setMaxDraft] = useState<number | null>(null);
   const [usage, setUsage] = useState<Usage | false | null>(null);
   const [keepOn, setKeepOn] = useLocal(p.keep_on);
+  const [risky, setRisky] = useLocal(!!p.risky);
   const [matter, setMatter] = useLocal(p.matter !== false);
   const [led, setLed] = useLocal(!!p.led);
   const [protect, setProtect] = useLocal<Protect>(p.protect);
@@ -232,6 +233,7 @@ function DeviceBody({ p }: { p: Plug }) {
   // 「進階」收著的時候，有設定過的用小標籤顯示
   const chips: [string, "warn" | ""][] = [];
   if (p.keep_on) chips.push(["常開", ""]);
+  if (p.risky) chips.push(["高風險", "warn"]);
   if (p.max_on_s) chips.push([`最長 ${fmtSec(p.max_on_s)}`, "warn"]);
   if (p.matter === false) chips.push(["Google Home 不控制", ""]);
   if (p.online && p.led === false) chips.push(["指示燈關", ""]);
@@ -407,6 +409,9 @@ function DeviceBody({ p }: { p: Plug }) {
           <div className="divide-y overflow-hidden rounded-b-xl border border-t-0 bg-muted/30">
             <Row label="常開" hint="全部關閉、情境、排程都不會關它（路由器、冰箱）" htmlFor="keep-on">
               <Switch id="keep-on" size="lg" checked={keepOn} onCheckedChange={(v) => { setKeepOn(v); patch({ keep_on: v }); }} />
+            </Row>
+            <Row label="高風險電器" hint="電暖器、熨斗這類：最後一個人出門就馬上關掉並通知（要在「網路裝置 → 誰在家」設定家人）" htmlFor="risky">
+              <Switch id="risky" size="lg" checked={risky} disabled={keepOn} onCheckedChange={(v) => { setRisky(v); patch({ risky: v }); }} />
             </Row>
             <Row label="最長開啟時間" hint={p.max_on_s ? `開了 ${fmtSec(p.max_on_s)}一定關，不能取消。App、Google Home、排程、情境、插座按鈕打開都算；樹莓派停掉照樣會關` : "澆水、電暖器這類開太久會出事的"} htmlFor="max-on">
               <Switch id="max-on" size="lg" checked={!!p.max_on_s} onCheckedChange={(v) => { setMaxDraft(null); patch({ max_on_s: v ? 600 : null }); }} />

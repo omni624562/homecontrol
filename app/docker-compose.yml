@@ -1,16 +1,27 @@
 # 插座 App：樹莓派上執行
-#   cd app && docker compose up -d --build
+#   cd app && ./deploy.sh        （等於 docker compose up -d --build，另外帶入版本號）
 # 手機打開 http://樹莓派的IP:8100
+#
+# 每天自動備份 data/：在 app/.env 設定（沒設定就備份到 app/backup/）
+#   BACKUP_HOST_DIR=/mnt/nas          掛進容器 /backup 的資料夾（NAS 用 autofs 的話掛它的上一層）
+#   BACKUP_SUBDIR=video/homecontrol-backup   /backup 底下實際放備份的地方
 services:
   plughub:
-    build: .
+    build:
+      context: .
+      args:
+        VERSION: ${PLUGHUB_VERSION:-dev}
     container_name: plughub
     # 用主機網路：要在區網用廣播找插座
     network_mode: host
     environment:
       - TZ=Asia/Taipei
+      - PLUGHUB_BACKUP_SUBDIR=${BACKUP_SUBDIR:-}
+      - PLUGHUB_BACKUP_LABEL=${BACKUP_LABEL:-}
     volumes:
       - ./data:/data
+      # rslave：NAS 是開機後才自動掛上（或斷線重掛）時，容器裡也看得到
+      - ${BACKUP_HOST_DIR:-./backup}:/backup:rslave
       # 登入路由器的金鑰（只讀路由器的連線裝置清單）；沒有這個檔案就不讀路由器
       - ${HOME}/.ssh/homehub_router:/keys/router:ro
     restart: unless-stopped
@@ -18,7 +29,8 @@ services:
   # Google Home 串接（Matter）：把插座變成 Matter 插座，Google Home 在家裡直接控制
   # 配對 QR code 在插座 App 的「設定 → Google Home」
   matterbridge:
-    image: luligu/matterbridge:latest
+    # 固定版本：要升級時改這裡，確認 Google Home 還正常再提交
+    image: luligu/matterbridge:3.11.3
     container_name: matterbridge
     # Matter 要用 mDNS 和 IPv6，一定要主機網路
     network_mode: host

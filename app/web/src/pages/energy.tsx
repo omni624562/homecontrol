@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { AlertCircle, CalendarDays, CheckCircle2, ChevronDown, ChevronRight, ChevronUp, Clock, Gauge, History, Minus, Trophy, X, Zap } from "lucide-react";
+import { AlertCircle, CalendarDays, CheckCircle2, ChevronDown, ChevronRight, ChevronUp, Clock, Gauge, History, Minus, TrendingUp, Trophy, X, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -204,7 +204,7 @@ export function EnergyPage() {
   const totalKwh = known.reduce((a, p) => a + (p.month_kwh || 0), 0) || 1;
   const totalMin = known.reduce((a, p) => a + (p.month_min || 0), 0) || 1;
   const ranked = [...e.plugs].sort((a, b) => (b.month_kwh || 0) - (a.month_kwh || 0) || (b.month_min || 0) - (a.month_min || 0));
-  const insightIcon: Record<string, React.ElementType> = { always: Clock, rise: ChevronUp, unset: Zap };
+  const insightIcon: Record<string, React.ElementType> = { always: Clock, rise: ChevronUp, unset: Zap, anomaly: TrendingUp };
   // 重點：最耗電的裝置、用最多的一天、平均每天、上個月
   const facts: { icon: React.ElementType; k: string; v: string; plug?: string }[] = [];
   const top = ranked[0];

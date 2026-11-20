@@ -12,6 +12,8 @@ export async function api<T = unknown>(method: string, path: string, body?: unkn
     } catch {
       /* 不是 JSON */
     }
+    // 這台裝置還沒配對（或被移除了）：換成配對畫面
+    if (res.status === 401) window.dispatchEvent(new Event("plughub:unpaired"));
     throw new Error(msg);
   }
   return res.json() as Promise<T>;

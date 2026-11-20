@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { HubProvider } from "@/lib/hub";
+import { PairGate } from "@/components/pair-screen";
 import { applyLook } from "@/lib/look";
 import App from "./App";
 import "./index.css";
@@ -16,11 +17,13 @@ applyLook(); // 外觀：原本／科技感（設定頁可以換）
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <HubProvider>
-      <TooltipProvider>
-        <App />
-        <Toaster position="top-center" richColors closeButton />
-      </TooltipProvider>
-    </HubProvider>
+    <PairGate>
+      <HubProvider>
+        <TooltipProvider>
+          <App />
+          <Toaster position="top-center" richColors closeButton />
+        </TooltipProvider>
+      </HubProvider>
+    </PairGate>
   </StrictMode>,
 );

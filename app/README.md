@@ -40,6 +40,8 @@
   - **電視、電腦也能當感測器**：在裝置上打開「放到訊號地圖」，路由器量到的它的訊號強度也拿來偵測動靜；訊號地圖的 Wi-Fi 基地台選「哪一台」後，裝置會依路由器說的實際連線畫線
 - **Google Home 語音執行情境**：每個情境在 Google Home 是一個開關，「Hey Google，打開出門」就執行，執行完自己變回關（設定 → Google Home 可以關掉）
 - **沒人在家還有電器開著**：大家都出門 10 分鐘後還開著的插座（常開的不算）會通知，或設定成自動關掉；回家的情境可以設定「只在天黑後」
+- **高風險電器**（裝置詳細 → 進階）：電暖器、熨斗這類，最後一個人出門就馬上關掉並通知，不等 10 分鐘（也可以設成只緊急通知）。名稱有「電暖」「熨斗」「烤箱」等字的插座第一次出現時自動打開
+- **用電異常**：每天早上 9 點，每個電器跟它自己平常比：最近 3 天比之前 14 天的中位數多 50% 以上（冰箱變耗電、開得比平常久），或計量插座的待機功率變高，就通知（同一件事 7 天內只講一次），用電頁「值得注意」也會列出（`plughub/anomaly.py`）
 - **排程跳過放假日、下雨天**：排程可以打開「國定假日不執行」（假日表從 [TaiwanCalendar](https://github.com/ruyut/TaiwanCalendar) 下載，存在 `data/holidays-年.json`；颱風假在排程頁按「今天放假」）和「下雨不執行」（最近的氣象署雨量站過去 24 小時超過 3 mm，或氣象署鄉鎮預報白天降雨機率 70% 以上）。寫進插座的備援規則也會拿掉那幾天（`plughub/daysoff.py`）
 - **生活資訊**（`plughub/localinfo.py`，政府開放資料，不用金鑰）：首頁的「垃圾車」「停水／停電」小按鈕點開看。垃圾車用新北市環保局的路線和即時位置：自動選最近的清運點（可以改），顯示今天收什麼、表定時間，收運前 45 分鐘開始每分鐘追蹤車子「還有幾站、約幾分鐘」，剩 3 站推播。停水用台灣自來水公司和臺北自來水事業處的公告，停電用台電的計畫性工作停電（每天更新、列到路名）；填上你家的路名，有寫到就標「有你家的路」並推播。全部下載整份資料在樹莓派上比對，不送出位置或地址
 - **天氣**：用中央氣象署和環境部的開放資料（`plughub/weather.py`）。首頁右上角顯示最近氣象站實測的溫度，點開看濕度、風速、雨量站的雨量、空氣品質（環境部測站）、所在鄉鎮的 24 小時和一週預報。授權碼在天氣面板貼上，只存在 `data/secrets.json`。一天一次下載全國測站清單、在樹莓派上算出最近的測站，之後每 10 分鐘只查那幾個測站（家裡的經緯度不會送出去）。天氣面板可以關掉首頁顯示，關掉後只有「下雨不執行」需要時每小時查一次。「問家裡」也能回答天氣（`get_weather`）
@@ -58,17 +60,61 @@
 
 ```bash
 cd app
-docker compose up -d --build
+./deploy.sh
 ```
 
-手機打開 `http://樹莓派的IP:8100`。
+（等於 `docker compose up -d --build`，另外把版本號 `git describe` 帶進去，設定頁會顯示。）
+
+手機打開 `http://樹莓派的IP:8100`，第一次要配對（見下面）。
+
+## 配對
+
+區網裡的任何裝置都連得到樹莓派，所以 API 要先配對才能用：每台手機、電腦第一次打開時輸入一次 6 位數配對碼，之後瀏覽器會記住（cookie，伺服器只存它的雜湊，`data/auth.json`）。
+
+配對碼（10 分鐘有效、用一次就失效、輸錯 5 次暫停 5 分鐘）從這裡拿：
+
+- 已經配對好的裝置：設定 → 安全與備份 →「新增裝置」
+- 配對畫面上的「傳配對碼到手機通知」（有設定 LINE 或 ntfy 時）
+- 樹莓派上：`docker exec plughub python -m plughub.auth`（第一次安裝、或所有裝置都不能用時）
+
+設定 → 安全與備份可以看已配對的裝置、移除弄丟的手機。有新裝置配對時會通知。
+樹莓派本機（Matterbridge 外掛、nginx 門口）不用配對；別的網站的頁面也不能借你的瀏覽器按開關（會檢查 Origin）。
+用程式呼叫 API 時，帶 `Authorization: Bearer 通行證`。
+
+## 自動備份
+
+每天 03:30 把 `data/` 打包成 `plughub-日期.tar.gz`，留最近 30 份。`energy.db` 用 SQLite 線上備份，不會備到寫一半的；天氣、路線這類下載來的快取不備份。失敗會通知，設定 → 安全與備份可以看上次備份、按「現在備份」。
+
+備份到 NAS：在 `app/.env` 寫（NAS 用 systemd automount 掛載時，掛它的上一層，容器才看得到之後重新掛上的 NAS）
+
+```
+BACKUP_HOST_DIR=/mnt/nas
+BACKUP_SUBDIR=video/homecontrol-backup
+BACKUP_LABEL=NAS
+```
+
+沒設定的話備份到 `app/backup/`。還原：`docker compose stop plughub`，把備份檔解開到 `app/data/`，再 `./deploy.sh`。
+
+## 卡住時
+
+主程式每秒會跑一次排程；超過 2 分鐘沒動，就用 LINE／ntfy 通知「家庭中控卡住了」，並結束程式讓 Docker 自動重新啟動，重新啟動後再通知一次。Docker 的 healthcheck 看 `/api/health`（不用配對，回傳 `{"ok", "version"}`）。
+
+## 測試
+
+```bash
+cd app
+pip install -r requirements.txt -r requirements-dev.txt
+python -m pytest
+```
+
+測試涵蓋：台電累進電價、配對與 API 驗證、備份、卡住偵測、防呆（最長開啟時間、鎖定、定時關閉失敗）、寫進插座的排程規則與租約、國定假日／颱風假／下雨跳過、高風險電器、用電異常。GitHub Actions（`.github/workflows/ci.yml`）每次 push 跑測試、網頁型別檢查和編譯、建 arm64 Docker 映像。
 
 讀 ASUS 路由器（選用）：
 1. 樹莓派上建一把專用金鑰：`ssh-keygen -t ed25519 -N '' -f ~/.ssh/homehub_router`（`docker-compose.yml` 會把它唯讀掛進容器）
 2. 路由器管理頁「系統管理 → 系統設定 → 服務」：啟動 SSH 選 **LAN only**、不允許 Port Forwarding、連接埠建議改掉 22，把 `~/.ssh/homehub_router.pub` 的內容貼到「授權金鑰」，確認可以登入後關掉「允許使用密碼登入」
-3. `curl -X PUT http://樹莓派的IP:8100/api/settings -H 'content-type: application/json' -d '{"router":{"host":"路由器IP","port":連接埠,"user":"路由器登入名稱"}}'`資料（房間、設定、每天用電）存在 `app/data/`，備份這個資料夾就好。
+3. `curl -X PUT http://樹莓派的IP:8100/api/settings -H 'content-type: application/json' -d '{"router":{"host":"路由器IP","port":連接埠,"user":"路由器登入名稱"}}'`資料（房間、設定、每天用電）存在 `app/data/`，每天自動備份（見上面）。
 
-更新程式：`git pull` 之後再執行一次 `docker compose up -d --build`。
+更新程式：`git pull` 之後再執行一次 `./deploy.sh`。
 
 ## 手機連不上？
 
@@ -101,7 +147,7 @@ docker compose up -d --build
 
 要重新配對：停掉容器（`docker compose stop matterbridge`）後刪除 `app/data/matterbridge/`。
 
-Matterbridge 管理頁：插座 App「設定 → Google Home → Matterbridge 管理頁 → 打開」。它在 `http://樹莓派的IP:8283`，但只有從插座 App 點進去的瀏覽器才進得去（拿到 12 小時有效的通行證），直接開會被送回插座 App。Matterbridge 本身只開在樹莓派本機 `127.0.0.1:8284`，門口是 `matterbridge-gate`（nginx，設定在 `matter/nginx.conf`）。建議在管理頁的 Settings 再設一組密碼，多一層保護。Docker 映像用的是 `latest`，要固定版本就改 `docker-compose.yml` 的 `image:`。
+Matterbridge 管理頁：插座 App「設定 → Google Home → Matterbridge 管理頁 → 打開」。它在 `http://樹莓派的IP:8283`，但只有從插座 App 點進去的瀏覽器才進得去（拿到 12 小時有效的通行證），直接開會被送回插座 App。Matterbridge 本身只開在樹莓派本機 `127.0.0.1:8284`，門口是 `matterbridge-gate`（nginx，設定在 `matter/nginx.conf`）。建議在管理頁的 Settings 再設一組密碼，多一層保護。Matterbridge 的 Docker 映像固定在某個版本（`docker-compose.yml` 的 `image:`），要升級時改那裡，確認 Google Home 還正常再提交。
 
 ## 檔案
 
@@ -112,6 +158,11 @@ Matterbridge 管理頁：插座 App「設定 → Google Home → Matterbridge �
 | `plughub/store.py` | 設定（`data/store.json`）和每天用電（`data/energy.db`） |
 | `plughub/tariff.py` | 台電累進電價表 |
 | `plughub/notify.py` | ntfy 通知 |
+| `plughub/auth.py` | 配對（API 驗證） |
+| `plughub/backup.py` | 每天自動備份 |
+| `plughub/watchdog.py` | 卡住偵測、健康檢查 |
+| `plughub/anomaly.py` | 用電異常偵測 |
+| `tests/` | pytest 測試 |
 | `web/` | 網頁畫面（React + TypeScript + Vite）；`npm run build` 輸出到 `plughub/web/` |
 | `plughub/static/` | 圖示、加入主畫面用的設定；舊版畫面（`app.js`，在 `/old/`） |
 | `matter/matterbridge-plughub/` | Google Home 串接：Matterbridge 外掛，把插座 App 的插座變成 Matter 插座 |
@@ -137,3 +188,12 @@ Matterbridge 管理頁：插座 App「設定 → Google Home → Matterbridge �
 | PUT | `/api/matter` | Google Home 串接外掛回報配對狀態（只接受樹莓派本機） |
 | GET | `/api/matter/qr.svg` | 配對用的 QR code（配對好之後就沒有了） |
 | GET | `/matterbridge` | 發通行證並轉到 Matterbridge 管理頁（:8283） |
+| GET | `/api/auth` | 這台裝置配對了沒（不用配對） |
+| POST | `/api/auth/pair` | `{"code": "123456", "name": "媽媽的手機"}` 配對，拿到 cookie（不用配對） |
+| POST | `/api/auth/send-code` | 配對碼送到手機通知，1 分鐘一次（不用配對） |
+| POST | `/api/auth/code` | 產生配對碼給新裝置 |
+| GET／PATCH／DELETE | `/api/auth/devices`、`/api/auth/devices/{id}` | 已配對的裝置：列出、改名、移除 |
+| GET | `/api/health` | 健康檢查 `{"ok", "version"}`；主程式卡住回 503（不用配對） |
+| POST | `/api/backup` | 立刻備份 |
+
+除了標「不用配對」的，所有 API 都要先配對（樹莓派本機除外）。

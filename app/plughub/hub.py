@@ -13,6 +13,7 @@ import calendar
 import contextvars
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -20,17 +21,22 @@ from typing import Any, Callable
 
 from kasa import Device, Discover, Module
 
-from . import habits, native, netprobe, sun, tariff
+from . import anomaly, habits, native, netprobe, sun, tariff
 from .sensing import INTERVAL as SENSE_INTERVAL, SAVE_EVERY as SENSE_SAVE_EVERY, Sensing
 from .notify import Notifier
 from .daysoff import DaysOff
 from .alerts import Alerts, quake_age_h
+from .backup import Backup
+from .watchdog import Watchdog
 from .localinfo import LocalInfo
 from .weather import Weather
 from .router import Router
 from .store import Store
 
 _LOGGER = logging.getLogger(__name__)
+
+# 版本（Docker 建置時由 deploy.sh 帶入 git describe）
+APP_VERSION = os.environ.get("PLUGHUB_VERSION") or "dev"
 
 # 這次開關是誰做的（記在開關紀錄裡）：API 進來的會設成 app／matter，其他（排程、情境、定時）是 auto
 SOURCE: contextvars.ContextVar[str] = contextvars.ContextVar("source", default="auto")
@@ -40,6 +46,8 @@ POLL_SECONDS = 5
 # 名稱有這些字的插座，第一次看到時自動設「最長開啟 10 分鐘」（之後可以在 App 改）
 WATER_WORDS = ("澆水", "灑水", "water", "sprinkler", "抽水", "水泵")
 DEFAULT_MAX_ON = 600  # 秒
+# 名稱有這些字的插座第一次出現時預設「高風險」：沒人在家就馬上關
+RISKY_WORDS = ("電暖", "暖氣", "暖爐", "熨斗", "電熱", "烤箱", "電烤", "吹風", "捲髮", "電磁爐", "快煮壺", "熱水壺", "heater", "iron", "oven")
 
 
 def fmt_secs(sec: float) -> str:
@@ -97,6 +105,8 @@ class Hub:
     def __init__(self, store: Store, notifier: Notifier) -> None:
         self.store = store
         self.notifier = notifier
+        self.backup = Backup(store.dir, lambda title, msg: notifier.send(title, msg, "high"))
+        self.watchdog = Watchdog(store.dir, notifier.send_sync)
         self._home_loc: tuple[float, float] | None = None  # 選定的家裡位置（見 location()）
         self.devices: dict[str, DeviceEntry] = {}  # MAC → 裝置
         self.plugs: dict[str, Plug] = {}
@@ -280,6 +290,10 @@ class Hub:
     # ---- 生命週期 ----
 
     async def start(self) -> None:
+        reason = self.watchdog.after_restart()
+        if reason:
+            self.notifier.send("家庭中控已經恢復", f"剛剛{reason}，已經自動重新啟動")
+        self.watchdog.start()
         await self.discover()
         self._default_scenes()
         self._tasks = [
@@ -295,6 +309,7 @@ class Hub:
         ]
 
     async def stop(self) -> None:
+        self.watchdog.stop()
         for task in self._tasks:
             task.cancel()
         self.store.energy.flush()
@@ -493,6 +508,8 @@ class Hub:
             meta = self.store.meta(plug.id)
             if plug.power is not None:
                 watts = plug.power
+                if plug.is_on:  # 待機有沒有變高：記每天開著時的最低功率
+                    self.store.energy.add_floor(today, plug.id, plug.power)
             elif meta.watts and plug.is_on:
                 watts = meta.watts
             else:
@@ -718,6 +735,9 @@ class Hub:
             if meta.max_on_s is None and not meta.keep_on and any(w in name for w in WATER_WORDS):
                 meta.max_on_s = DEFAULT_MAX_ON
                 _LOGGER.info("%s 預設最長開啟 %s", self.name(plug), fmt_secs(DEFAULT_MAX_ON))
+            if not meta.keep_on and any(w in name for w in RISKY_WORDS):
+                meta.risky = True
+                _LOGGER.info("%s 預設為高風險電器", self.name(plug))
 
     def _cap_on_time(self, plug_id: str) -> None:
         """有設最長開啟時間的插座：確保有定時，而且不會晚於「打開的時間 + 最長時間」。"""
@@ -820,6 +840,38 @@ class Hub:
         except Exception as err:  # noqa: BLE001
             _LOGGER.debug("存使用紀錄失敗：%s", err)
 
+    def find_anomalies(self, today: date | None = None) -> list[dict[str, Any]]:
+        """用電異常（anomaly.py）：每個插座跟它自己平常比。"""
+        today = today or date.today()
+        since = (today - timedelta(days=anomaly.RECENT_DAYS + anomaly.BASE_DAYS + 1)).isoformat()
+        per_plug, first = self.store.energy.per_plug(since)
+        found = anomaly.daily_rise(per_plug, today, first) + anomaly.standby_rise(self.store.energy.floors(since), today)
+        out = []
+        for item in found:
+            plug = self.plugs.get(item["plug"])
+            if plug is None:
+                continue
+            metered = self.mode(plug) != "switch"
+            out.append({**item, "name": self.name(plug), "text": anomaly.describe(item, self.name(plug), metered)})
+        self.anomalies = out
+        return out
+
+    def _check_anomalies(self, now: float, sent: dict[str, float]) -> None:
+        """每天早上 9 點後查一次；同一個電器同一種異常 7 天內只講一次。"""
+        dt = datetime.now()
+        day_key = f"anomaly-day:{dt.date().isoformat()}"
+        if dt.hour < 9 or day_key in sent:
+            return
+        sent[day_key] = now
+        news = []
+        for item in self.find_anomalies():
+            key = f"anomaly:{item['plug']}:{item['kind']}"
+            if now - sent.get(key, 0) >= 7 * 86400:
+                sent[key] = now
+                news.append(item["text"])
+        if news and (self.store.data["settings"].get("remind") or {}).get("anomaly", True):
+            self.notifier.send("用電和平常不一樣", "\n".join(news[:4]))
+
     def energy_report(self) -> dict[str, Any]:
         """用電 dashboard：插座自己記錄的開機時間 × 瓦數（估算）。
 
@@ -906,6 +958,11 @@ class Hub:
                                          + (f"比之前多 {more:.0f}%" if pl["avg21_h"] >= 0.5 else "之前幾乎沒開")})
         insights.sort(key=lambda x: -x["weight"])
         insights = insights[:4]
+        # 用電異常放最前面（有計量的是實際用電，沒有的是開的時間）
+        anomalies = getattr(self, "anomalies", None)
+        if anomalies is None:
+            anomalies = self.find_anomalies()
+        insights = [{"kind": "anomaly", "plug": a["plug"], "weight": 0, "text": a["text"]} for a in anomalies[:3]] + insights
         unset = [pl["name"] for pl in plugs if not pl["watts"]]
         if unset:
             insights.append({"kind": "unset", "plug": None, "weight": 0,
@@ -1195,18 +1252,22 @@ class Hub:
         cfg = self.store.data["settings"].get("presence") or {}
         mode = cfg.get("left_on", "notify")
         notice = self.store.data.setdefault("away_notice", {"plugs": [], "at": 0})
-        if not people or mode == "none":
+        if not people:
             return
         if any(p.get("home") is None for p in people):  # 剛開機還不知道誰在家
             return
         if any(p.get("home") for p in people):
             if self._home_since is None:
                 self._home_since = now
-            if now - self._home_since >= 900 and notice["plugs"]:
-                notice.update(plugs=[], at=0)
+            if now - self._home_since >= 900 and (notice["plugs"] or notice.get("risky")):
+                notice.update(plugs=[], risky=[], at=0)
                 self._dirty = True
             return
         self._home_since = None
+        # 高風險電器（電暖器、熨斗…）：大家一出門就關，不等 10 分鐘（設定裡可以改成只通知）
+        self._risky_left_on(cfg, notice)
+        if mode == "none":
+            return
         since = max((p.get("since") or 0) for p in people)
         if now - since < 600:
             return
@@ -1214,7 +1275,7 @@ class Hub:
         away = self.store.scene(cfg.get("away_scene") or "") or {}
         keep = {pid for pid, act in (away.get("actions") or {}).items() if act == "keep"}
         on = [p for p in self.ordered() if p.online and p.is_on and not self.store.meta(p.id).keep_on
-              and p.id not in keep and p.id not in notice["plugs"]]
+              and p.id not in keep and p.id not in notice["plugs"] and p.id not in notice.get("risky", [])]
         if not on:
             return
         notice.update(plugs=sorted(set(notice["plugs"]) | {p.id for p in on}), at=now)
@@ -1231,6 +1292,33 @@ class Hub:
             self._spawn(go())
         else:
             self.notifier.send("沒人在家，但還有電器開著", f"{names}。要關的話打開家庭中控（或把「沒人在家時」設成自動關閉）", "high")
+
+    def _risky_left_on(self, cfg: dict[str, Any], notice: dict[str, Any]) -> None:
+        """大家都出門了，高風險電器還開著：關掉（或只通知），緊急通知。同一次出門每個只處理一次。"""
+        handled = notice.setdefault("risky", [])
+        on = [p for p in self.ordered() if p.online and p.is_on and self.store.meta(p.id).risky
+              and not self.store.meta(p.id).keep_on and p.id not in handled]
+        if not on:
+            return
+        notice["risky"] = sorted(set(handled) | {p.id for p in on})
+        self._dirty = True
+        names = "、".join(self.name(p) for p in on)
+        if cfg.get("risky_off", True) is False:
+            self.notifier.send("⚠️ 沒人在家，高風險電器還開著", f"{names}，請盡快關掉", "urgent")
+            return
+
+        async def go() -> None:
+            SOURCE.set("auto")
+            results = await asyncio.gather(*(self.set_power(p.id, False) for p in on), return_exceptions=True)
+            failed = [self.name(p) for p, r in zip(on, results) if isinstance(r, Exception)]
+            done = [self.name(p) for p, r in zip(on, results) if not isinstance(r, Exception)]
+            if done:
+                self.notifier.send("沒人在家，已關掉高風險電器", "、".join(done), "high")
+            if failed:
+                self.notifier.send("⚠️ 高風險電器關不掉！", f"{'、'.join(failed)} 沒有回應，請盡快處理", "urgent")
+            await self.changed()
+
+        self._spawn(go())
 
     def _router_new_devices(self, now: float) -> bool:
         r = self.router
@@ -1646,6 +1734,10 @@ class Hub:
         """每秒檢查一次排程（對齊到整秒）。"""
         while True:
             await asyncio.sleep(1.02 - time.time() % 1)
+            self.watchdog.tick()
+            if not self.backup.busy and self.backup.due(datetime.now()):
+                self.backup.busy = True
+                self._spawn(asyncio.to_thread(self.backup.run))
             try:
                 await self.run_schedule()
             except asyncio.CancelledError:
@@ -1759,6 +1851,9 @@ class Hub:
         sent: dict[str, float] = self.store.data.setdefault("remind_sent", {})
         dt = datetime.now()
         before = len(sent)
+
+        # 用電異常（冰箱耗電上升、待機變高、開得比平常久）
+        self._check_anomalies(now, sent)
 
         # 開太久：開超過「開太久提醒」的時數，這次開著只講一次；同時好幾個就併成一則
         # 常開、有最長開啟時間、「出門」情境裡設成不動的（本來就要一直開）不算
@@ -1994,6 +2089,7 @@ class Hub:
                 "keep_on": meta.keep_on,
                 "protect": meta.protect,
                 "matter": meta.matter,
+                "risky": meta.risky,
                 "max_on_s": meta.max_on_s,
                 "night": meta.night,
                 "standby": self.is_standby(plug),
@@ -2046,6 +2142,8 @@ class Hub:
                        "ssids": sorted({i["ssid"] for i in self.router.ifaces.values() if i.get("ssid")})},
             "people": self.people_report(),
             "assistant": self.assistant.status() if getattr(self, "assistant", None) else None,
+            "backup": self.backup.report(),
+            "app_version": APP_VERSION,
         }
 
     def _plug_net(self, key: str) -> dict[str, Any]:

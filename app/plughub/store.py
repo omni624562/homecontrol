@@ -80,6 +80,8 @@ class PlugMeta:
     # 鎖定：App、Google Home、情境、排程、全部關閉都不能開關，要先在裝置詳細解鎖
     protect: str = ""
     matter: bool = True  # 讓 Google Home（Matter）控制
+    # 高風險電器（電暖器、熨斗…）：最後一個人出門就馬上關掉並緊急通知，不等 10 分鐘
+    risky: bool = False
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "PlugMeta":
@@ -301,8 +303,11 @@ class EnergyLog:
         # Wi-Fi 感測的每分鐘摘要（平均訊號、最大擾動），留 30 天
         self.db.execute("CREATE TABLE IF NOT EXISTS sense_min (ts INTEGER, key TEXT, rssi REAL, motion REAL)")
         self.db.execute("CREATE INDEX IF NOT EXISTS sense_min_ts ON sense_min (ts)")
+        # 用電異常（anomaly.py）：計量插座每天開著時量到的最低功率（待機有沒有變高）
+        self.db.execute("CREATE TABLE IF NOT EXISTS power_floor (day TEXT, plug TEXT, w REAL, PRIMARY KEY (day, plug))")
         self.db.commit()
         self._sense_pruned = 0.0
+        self._floor: dict[tuple[str, str], float] = {}
 
     SENSE_KEEP_DAYS = 30
 
@@ -348,7 +353,41 @@ class EnergyLog:
             key = (day, plug)
             self._pending[key] = self._pending.get(key, 0.0) + kwh
 
+    def add_floor(self, day: str, plug: str, watts: float) -> None:
+        key = (day, plug)
+        if watts < self._floor.get(key, float("inf")):
+            self._floor[key] = watts
+
+    def floors(self, since: str) -> dict[str, dict[str, float]]:
+        rows = self.db.execute("SELECT day, plug, w FROM power_floor WHERE day >= ?", (since,)).fetchall()
+        out: dict[str, dict[str, float]] = {}
+        for d, p, w in rows:
+            out.setdefault(p, {})[d] = float(w)
+        for (d, p), w in self._floor.items():
+            if d >= since:
+                out.setdefault(p, {})[d] = min(w, out.get(p, {}).get(d, w))
+        return out
+
+    def per_plug(self, since: str) -> tuple[dict[str, dict[str, float]], dict[str, str]]:
+        """since 之後每個插座每天的度數；以及每個插座第一次有紀錄的日期。"""
+        out: dict[str, dict[str, float]] = {}
+        for d, p, k in self.db.execute("SELECT day, plug, kwh FROM daily WHERE day >= ?", (since,)).fetchall():
+            out.setdefault(p, {})[d] = float(k)
+        for (d, p), k in self._pending.items():
+            if d >= since:
+                out.setdefault(p, {})[d] = out.get(p, {}).get(d, 0.0) + k
+        first = {p: d for p, d in self.db.execute("SELECT plug, MIN(day) FROM daily GROUP BY plug").fetchall()}
+        return out, first
+
     def flush(self) -> None:
+        if self._floor:
+            self.db.executemany(
+                "INSERT INTO power_floor (day, plug, w) VALUES (?, ?, ?) "
+                "ON CONFLICT (day, plug) DO UPDATE SET w = MIN(w, excluded.w)",
+                [(d, p, w) for (d, p), w in self._floor.items()],
+            )
+            self.db.commit()
+            self._floor.clear()
         if not self._pending:
             return
         self.db.executemany(

@@ -101,7 +101,7 @@ export function NetPage() {
       </>
     );
 
-  const pres = (state.settings.presence || {}) as { away_scene?: string | null; home_scene?: string | null; home_dark_only?: boolean; left_on?: string; grace_min?: number };
+  const pres = (state.settings.presence || {}) as { away_scene?: string | null; home_scene?: string | null; home_dark_only?: boolean; left_on?: string; grace_min?: number; risky_off?: boolean };
   const client = (mac: string) => net.clients.find((c) => c.mac === mac);
 
   // 「ERIC watch」「ERIC Phone」看起來是同一個人：建議合併
@@ -277,6 +277,15 @@ export function NetPage() {
                   )}
                   <SRow label="沒人在家還有電器開著" hint="設成「常開」的、「出門」情境裡設成不動的不算；同一次出門只講一次">
                     <PSelect value={pres.left_on || "notify"} opts={[["notify", "通知我"], ["off", "自動關掉"], ["none", "不用管"]]} onChange={(v) => putPres({ left_on: v })} label="怎麼處理" />
+                  </SRow>
+                  <SRow
+                    label="高風險電器"
+                    hint={(() => {
+                      const r = state.plugs.filter((p) => p.risky).map((p) => p.name);
+                      return `${r.length ? r.join("、") : "還沒有，在裝置詳細 → 進階打開"}・大家一出門就處理，不等 10 分鐘`;
+                    })()}
+                  >
+                    <PSelect value={pres.risky_off === false ? "notify" : "off"} opts={[["off", "馬上關掉"], ["notify", "只緊急通知"]]} onChange={(v) => putPres({ risky_off: v === "off" })} label="高風險電器" />
                   </SRow>
                   <SRow label="離開多久才算出門" hint="手機睡著時偶爾會斷線一下，太短會誤判">
                     <PSelect value={String(pres.grace_min || 10)} opts={[5, 10, 15, 20, 30].map((m) => [String(m), `${m} 分鐘`])} onChange={(v) => putPres({ grace_min: +v })} label="分鐘" />
