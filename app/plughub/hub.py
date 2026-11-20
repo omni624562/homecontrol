@@ -1490,6 +1490,7 @@ class Hub:
                 "seen": c.get("seen"),
                 "first": None if k.get("seed") else k.get("first"),
                 "map": bool(k.get("map")),
+                "trusted": bool(k.get("trusted")),
                 "person": owner.get(mac),
                 "plug": plug_names.get(mac),
                 "today_bytes": usage_today.get(mac),

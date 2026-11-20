@@ -94,6 +94,51 @@ def _is_local(request: Request) -> bool:
     return bool(request.client and request.client.host in LOCAL)
 
 
+def _arp_mac(ip: str) -> str | None:
+    """樹莓派的 ARP 表（容器用主機網路，看得到）：IP → MAC。"""
+    try:
+        with open("/proc/net/arp", encoding="ascii") as f:
+            next(f, None)
+            for line in f:
+                cols = line.split()
+                if len(cols) >= 4 and cols[0] == ip and cols[2] != "0x0":
+                    return cols[3].upper()
+    except OSError:
+        pass
+    return None
+
+
+def _mac_of(ip: str) -> str | None:
+    """這個 IP 現在是哪台裝置：先看樹莓派的 ARP 表（最直接），再問路由器的連線清單。"""
+    mac = _arp_mac(ip)
+    if mac:
+        return mac
+    for mac, c in hub.router.clients.items():
+        if c.get("ip") == ip and hub.router.online(mac):
+            return mac
+    return None
+
+
+def trusted_devices() -> dict[str, str]:
+    """不用配對的裝置：「誰在家」登記的家人手機、網路裝置裡勾了「信任」的。MAC → 名稱。"""
+    out: dict[str, str] = {}
+    for mac, d in store.data["net_devices"].items():
+        if d.get("trusted"):
+            out[mac] = d.get("label") or hub.router.name_of(mac)
+    for person in store.data["people"]:
+        for mac in person["macs"]:
+            out[mac] = f"{person['name']}的手機"
+    return out
+
+
+def _trusted(request: Request) -> dict[str, Any] | None:
+    if not request.client:
+        return None
+    mac = _mac_of(request.client.host)
+    name = trusted_devices().get(mac or "")
+    return {"id": f"mac:{mac}", "name": name, "trusted": True} if name else None
+
+
 def _token(request: Request) -> str | None:
     header = request.headers.get("authorization", "")
     if header.lower().startswith("bearer "):
@@ -114,7 +159,7 @@ async def require_pairing(request: Request, call_next):
             if urlsplit(origin).netloc != request.headers.get("host", ""):
                 return JSONResponse({"detail": "不接受其他網站的請求"}, status_code=403)
     if guarded and path not in OPEN_PATHS and not _is_local(request):
-        device = auth.check(_token(request))
+        device = auth.check(_token(request)) or _trusted(request)
         if not device:
             return JSONResponse({"detail": "這台裝置還沒配對", "unpaired": True}, status_code=401)
         request.state.device = device
@@ -139,7 +184,7 @@ _last_sent = 0.0
 
 @app.get("/api/auth")
 async def auth_status(request: Request) -> dict[str, Any]:
-    device = auth.check(_token(request))
+    device = auth.check(_token(request)) or _trusted(request)
     return {
         "paired": bool(device) or _is_local(request),
         "device": {"id": device["id"], "name": device["name"]} if device else None,
@@ -185,7 +230,13 @@ async def auth_new_code() -> dict[str, Any]:
 @app.get("/api/auth/devices")
 async def auth_devices(request: Request) -> dict[str, Any]:
     device = getattr(request.state, "device", None)
-    return {"devices": auth.public(device["id"] if device else None)}
+    online = {m for m in hub.router.clients if hub.router.online(m)}
+    return {
+        "devices": auth.public(device["id"] if device else None),
+        # 自動認得的（不用配對）
+        "trusted": [{"mac": m, "name": n, "online": m in online, "current": bool(device and device["id"] == f"mac:{m}")}
+                    for m, n in trusted_devices().items()],
+    }
 
 
 @app.patch("/api/auth/devices/{device_id}")
@@ -1021,7 +1072,7 @@ async def net() -> dict[str, Any]:
 
 @app.patch("/api/net/devices/{mac}")
 async def edit_net_device(mac: str, body: dict = Body(...)) -> dict[str, Any]:
-    """{"label": 自己取的名字 或 null, "map": 放到訊號地圖}"""
+    """{"label": 自己取的名字 或 null, "map": 放到訊號地圖, "trusted": 不用配對}"""
     m = _mac(mac)
     if not m:
         raise HTTPException(400, "MAC 格式不對")
@@ -1029,6 +1080,8 @@ async def edit_net_device(mac: str, body: dict = Body(...)) -> dict[str, Any]:
     if "label" in body:
         label = str(body["label"] or "").strip()[:30]
         d["label"] = label or None
+    if "trusted" in body:
+        d["trusted"] = bool(body["trusted"])
     if "map" in body:
         d["map"] = bool(body["map"])
         if not d["map"]:

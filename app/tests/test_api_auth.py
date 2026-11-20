@@ -72,3 +72,34 @@ def test_local_needs_no_pairing(app_module, client, monkeypatch):
     """樹莓派本機（Matterbridge 外掛、nginx）不用配對。"""
     monkeypatch.setattr(app_module, "_is_local", lambda request: True)
     assert client.post("/api/auth/code").status_code == 200
+
+
+def test_family_phone_needs_no_pairing(app_module, client, monkeypatch):
+    """「誰在家」登記的家人手機、勾了「不用配對」的平板，自動認得。"""
+    macs = {"testclient": None}
+    monkeypatch.setattr(app_module, "_mac_of", lambda ip: macs.get(ip))
+    assert client.get("/api/auth/devices").status_code == 401
+
+    app_module.store.data["people"] = [{"id": "m", "name": "媽媽", "macs": ["AA:BB:CC:00:00:01"]}]
+    macs["testclient"] = "AA:BB:CC:00:00:01"
+    assert client.get("/api/auth").json()["paired"] is True
+    r = client.get("/api/auth/devices").json()
+    assert r["trusted"] == [{"mac": "AA:BB:CC:00:00:01", "name": "媽媽的手機", "online": False, "current": True}]
+
+    macs["testclient"] = "AA:BB:CC:00:00:02"  # 客人的手機
+    assert client.get("/api/auth/devices").status_code == 401
+    app_module.store.data["net_devices"]["AA:BB:CC:00:00:02"] = {"label": "客廳平板", "trusted": True}
+    assert client.get("/api/auth/devices").status_code == 200
+
+
+def test_arp_lookup(app_module, tmp_path, monkeypatch):
+    arp = tmp_path / "arp"
+    arp.write_text(
+        "IP address       HW type     Flags       HW address            Mask     Device\n"
+        "10.0.2.50        0x1         0x2         aa:bb:cc:dd:ee:ff     *        eth0\n"
+        "10.0.2.51        0x1         0x0         00:00:00:00:00:00     *        eth0\n"
+    )
+    real_open = open
+    monkeypatch.setattr("builtins.open", lambda p, *a, **k: real_open(arp if p == "/proc/net/arp" else p, *a, **k))
+    assert app_module._arp_mac("10.0.2.50") == "AA:BB:CC:DD:EE:FF"
+    assert app_module._arp_mac("10.0.2.51") is None

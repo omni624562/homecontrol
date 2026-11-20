@@ -109,6 +109,7 @@ function PairScreen({ canSend, onDone }: { canSend: boolean; onDone: () => void 
           </Button>
         </form>
         <div className="space-y-2 border-t pt-4 text-sm leading-relaxed text-muted-foreground">
+          <p>家人的手機在「網路裝置 → 誰在家」登記後會自動認得，不用配對碼；家裡的平板可以在網路裝置裡打開「不用配對」。</p>
           <p className="font-medium text-foreground">配對碼在哪裡？</p>
           <p>在已經能用的手機或電腦：設定 → 已配對的裝置 →「新增裝置」。</p>
           {canSend && (

@@ -441,8 +441,15 @@ function NewCode() {
 
 function SystemCard({ s }: { s: HubState }) {
   const [devices, setDevices] = useState<PairedDevice[] | null>(null);
+  const [trusted, setTrusted] = useState<{ mac: string; name: string; online: boolean; current: boolean }[]>([]);
   const [backing, setBacking] = useState(false);
-  const load = () => api<{ devices: PairedDevice[] }>("GET", "/api/auth/devices").then((r) => setDevices(r.devices)).catch(() => setDevices([]));
+  const load = () =>
+    api<{ devices: PairedDevice[]; trusted?: { mac: string; name: string; online: boolean; current: boolean }[] }>("GET", "/api/auth/devices")
+      .then((r) => {
+        setDevices(r.devices);
+        setTrusted(r.trusted || []);
+      })
+      .catch(() => setDevices([]));
   useEffect(() => {
     load();
   }, []);
@@ -454,7 +461,16 @@ function SystemCard({ s }: { s: HubState }) {
       : `每天 03:30 備份到 ${b.dir}・${b.latest ? `最新 ${b.latest.replace(/^plughub-|\.tar\.gz$/g, "")}` : "還沒有備份"}・共 ${b.count} 份`;
   return (
     <SCard id="s-sys" icon={ShieldCheck} title="安全與備份" badge={s.app_version ? <Badge variant="secondary" className="font-mono">{s.app_version}</Badge> : undefined}>
-      <SRow wrap label="已配對的裝置" hint="只有配對過的手機、電腦能控制插座。新手機按「新增裝置」拿配對碼">
+      <SRow
+        wrap
+        label="自動認得的裝置"
+        hint={trusted.length
+          ? `${trusted.map((t) => t.name + (t.current ? "（這台）" : "")).join("、")}・不用配對`
+          : "家人的手機在「網路裝置 → 誰在家」登記後就自動認得；家裡的平板在網路裝置裡打開「不用配對」"}
+      >
+        <Button variant="outline" asChild><a href="#net">網路裝置</a></Button>
+      </SRow>
+      <SRow wrap label="用配對碼的裝置" hint="客人或不在上面的裝置，按「新增裝置」拿配對碼（10 分鐘有效）">
         <NewCode />
       </SRow>
       {devices?.map((d) => (

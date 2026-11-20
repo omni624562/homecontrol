@@ -34,12 +34,14 @@ export function NetDevSheet({ mac, net, onClose, onSaved }: { mac: string | null
   const c = mac ? net?.clients.find((x) => x.mac === mac) : undefined;
   const [label, setLabel] = useState("");
   const [map, setMap] = useState(false);
+  const [trusted, setTrusted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   useEffect(() => {
     if (!c) return;
     setLabel(c.label || "");
     setMap(c.map);
+    setTrusted(!!c.trusted);
     setErr("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mac]);
@@ -65,8 +67,9 @@ export function NetDevSheet({ mac, net, onClose, onSaved }: { mac: string | null
   const save = async () => {
     setBusy(true);
     try {
-      const body: { label: string | null; map?: boolean } = { label: label.trim() || null };
+      const body: { label: string | null; map?: boolean; trusted?: boolean } = { label: label.trim() || null };
       if (canMap) body.map = map;
+      if (!c.plug) body.trusted = trusted;
       const n = await api<NetData>("PATCH", `/api/net/devices/${encodeURIComponent(c.mac)}`, body);
       toast.success(body.map && !c.map ? "已加到訊號地圖：到地圖的「編輯」把它擺到實際的位置" : "已儲存");
       onSaved(n);
@@ -97,6 +100,17 @@ export function NetDevSheet({ mac, net, onClose, onSaved }: { mac: string | null
               ))}
             </div>
           </Section>
+        )}
+        {!c.plug && (
+          <Group>
+            <Row
+              label="不用配對"
+              hint={c.person ? `${c.person}的手機（登記在「誰在家」）本來就自動認得，不用打開` : "家裡的平板、電腦：從這台打開家庭中控不用輸入配對碼。只打開你自己的裝置"}
+              htmlFor="nd-trusted"
+            >
+              <Switch id="nd-trusted" checked={trusted || !!c.person} disabled={!!c.person} onCheckedChange={setTrusted} />
+            </Row>
+          </Group>
         )}
         {canMap && (
           <Group>
