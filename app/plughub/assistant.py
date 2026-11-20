@@ -291,7 +291,9 @@ class Assistant:
 
         @beta_async_tool
         async def get_energy() -> str:
-            """用電和電費（估算）：今天、本月、預估月底、比上月同期、各裝置本月排行、最近 14 天每天的度數。"""
+            """用電和電費（估算）：今天、本月、預估月底、比上月同期、各裝置本月排行、最近 14 天每天的度數，
+            以及每個裝置每天的開機分鐘和度數（今天到現在、昨天整天、最近 7 天），可以用來回答「今天比昨天多用在哪」「哪個裝置最近開比較久」。
+            今天還沒過完：比較時要把現在幾點算進去（例如今天才到中午，開機時間自然比昨天整天少）。"""
             # 和用電頁一樣：插座的使用紀錄太舊（或剛重開還沒讀）就先向插座讀一次
             if not hub._usage or time.time() - hub._usage_at > 600:
                 await hub.refresh_usage()
@@ -304,6 +306,16 @@ class Assistant:
                                     "avg_hours_per_day_7d": p.get("avg7_h"), "watts": p.get("watts")} for p in top],
                 "last_14_days": [{"day": d["day"], "kwh": round(d["kwh"], 2)} for d in r["days"][-14:]],
                 "insights": r.get("insights"),
+                "now": time.strftime("%Y-%m-%d %H:%M"),
+                "devices_daily": [
+                    {"name": p["name"], "room": p.get("room"), "watts": p.get("watts"),
+                     "today_min": p["days"][-1], "today_kwh": round(p["days"][-1] / 60 * (p.get("watts") or 0) / 1000, 2),
+                     "yesterday_min": p["days"][-2] if len(p["days"]) > 1 else None,
+                     "yesterday_kwh": round(p["days"][-2] / 60 * (p.get("watts") or 0) / 1000, 2) if len(p["days"]) > 1 else None,
+                     "last_7_days_min": p["days"][-7:]}
+                    for p in r["plugs"] if p.get("known") and p.get("days")
+                ],
+                "note": "度數是估算：開機時間 × 設定的瓦數；watts 是空的裝置沒有度數，只能比開機時間",
             }, ensure_ascii=False, default=str)
 
         @beta_async_tool
