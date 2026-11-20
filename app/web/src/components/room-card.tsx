@@ -51,7 +51,6 @@ export function RoomCard({ g, onOpen, onToggle }: { g: Group; onOpen: (p: Plug) 
           </Button>
         )}
       </div>
-      <div className="room-bar" aria-hidden><i style={{ width: `${g.plugs.length ? (on.length / g.plugs.length) * 100 : 0}%` }} /></div>
       <div className="plug-list divide-y">
         {g.plugs.map((p) => (
           <PlugRow key={p.id} plug={p} onOpen={() => onOpen(p)} onToggle={() => onToggle(p)} />

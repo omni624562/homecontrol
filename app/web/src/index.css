@@ -450,21 +450,6 @@ html[data-look="tech"] [data-slot="card"]::after {
 }
 
 /* 每個區域標題下面那條「開了幾成」的線：原本的外觀不顯示 */
-.room-bar {
-  display: none;
-}
-html[data-look="tech"] .room-bar {
-  display: block;
-  height: 2px;
-  background: var(--border);
-}
-html[data-look="tech"] .room-bar > i {
-  display: block;
-  height: 100%;
-  background: var(--tech-on);
-  box-shadow: 0 0 8px var(--tech-on);
-  transition: width 0.4s ease;
-}
 /* 裝置：一列一個改成兩個一排的小方塊，開著的邊框發亮 */
 html[data-look="tech"] .plug-list {
   display: grid;
