@@ -43,6 +43,8 @@ export function PlugRow({ plug: p, onOpen, onToggle }: { plug: Plug; onOpen: () 
         if (e.key === "Enter") onOpen();
       }}
       aria-label={`${p.name}的詳細資料`}
+      data-on={on}
+      data-online={p.online}
       className={cn(
         "group flex min-h-16 cursor-pointer items-center gap-3 px-4 py-2.5 transition-colors outline-none",
         "hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset active:bg-muted",
@@ -50,7 +52,7 @@ export function PlugRow({ plug: p, onOpen, onToggle }: { plug: Plug; onOpen: () 
     >
       <div
         className={cn(
-          "relative flex size-10 shrink-0 items-center justify-center rounded-xl transition-colors duration-300",
+          "plug-icon relative flex size-10 shrink-0 items-center justify-center rounded-xl transition-colors duration-300",
           on ? "bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400" : "bg-muted text-muted-foreground",
           !p.online && "bg-destructive/10 text-destructive",
         )}
@@ -59,11 +61,11 @@ export function PlugRow({ plug: p, onOpen, onToggle }: { plug: Plug; onOpen: () 
         {tone === "warn" && fun && <Steam />}
       </div>
       <div className="min-w-0 flex-1">
-        <div className="truncate text-[15px] font-medium leading-snug">{p.name}</div>
+        <div className="plug-name truncate text-[15px] font-medium leading-snug">{p.name}</div>
         {sub && (
           <div
             className={cn(
-              "truncate text-[13px] leading-relaxed text-muted-foreground",
+              "plug-sub truncate text-[13px] leading-relaxed text-muted-foreground",
               tone === "warn" && "font-medium text-red-600 dark:text-red-400",
               tone === "timer" && "text-violet-600 dark:text-violet-400",
               tone === "bad" && "text-destructive",

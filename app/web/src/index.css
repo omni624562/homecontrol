@@ -355,3 +355,237 @@ body:is(.screen-shake, .screen-tilt) { overflow-x: clip; }
   100% { transform: translateX(24px); opacity: 0; }
 }
 .walk-in { animation: walk-in 1.6s ease-in-out 2 both; }
+
+
+/* ============================================================
+   外觀「科技感」：設定 → 外觀 可以切換（html[data-look="tech"]）
+   - 青藍 = 資訊和可以按的；琥珀 = 電器開著；紅 = 離線、失敗、刪除
+   - 數字用等寬字（畫面上本來就標了 tabular-nums 的地方）
+   ============================================================ */
+html[data-look="tech"] {
+  --radius: 0.75rem;
+  --background: #edf1f5;
+  --foreground: #0e1a29;
+  --card: #ffffff;
+  --card-foreground: #0e1a29;
+  --popover: #ffffff;
+  --popover-foreground: #0e1a29;
+  --primary: #0789a8;
+  --primary-foreground: #ffffff;
+  --secondary: #e9edf2;
+  --secondary-foreground: #0e1a29;
+  --muted: #e6ebf1;
+  --muted-foreground: #47586c;
+  --accent: #e3f2f6;
+  --accent-foreground: #0e1a29;
+  --destructive: #d23030;
+  --border: #d5dde7;
+  --input: #c3cedb;
+  --ring: #0789a8;
+  --sidebar: #ffffff;
+  --sidebar-border: #d5dde7;
+  --tech-grid: rgba(14, 26, 41, 0.035);
+  --tech-on: #e8950c;
+  --tech-on-bg: linear-gradient(180deg, #fff4dc, #fffaf0);
+  --tech-on-glow: 0 2px 10px rgba(245, 158, 11, 0.18);
+  --tech-tile: #f5f7fa;
+  --tech-mono: "JetBrains Mono", "DejaVu Sans Mono", "Noto Sans Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+html[data-look="tech"].dark {
+  --background: #1a222e;
+  --foreground: #f2f6fb;
+  --card: #232d3c;
+  --card-foreground: #f2f6fb;
+  --popover: #232d3c;
+  --popover-foreground: #f2f6fb;
+  --primary: #4fdcf2;
+  --primary-foreground: #0b1620;
+  --secondary: #2a3546;
+  --secondary-foreground: #f2f6fb;
+  --muted: #2d394b;
+  --muted-foreground: #b4c0d0;
+  --accent: #2d394b;
+  --accent-foreground: #f2f6fb;
+  --destructive: #ff8585;
+  --border: #38465b;
+  --input: #465770;
+  --ring: #4fdcf2;
+  --sidebar: #161d28;
+  --sidebar-border: #38465b;
+  --tech-grid: rgba(255, 255, 255, 0.022);
+  --tech-on: #ffc15e;
+  --tech-on-bg: linear-gradient(180deg, rgba(255, 193, 94, 0.18), rgba(255, 193, 94, 0.05));
+  --tech-on-glow: 0 0 18px rgba(255, 193, 94, 0.14);
+  --tech-tile: #2a3546;
+}
+html[data-look="tech"] body {
+  background-image: linear-gradient(var(--tech-grid) 1px, transparent 1px), linear-gradient(90deg, var(--tech-grid) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+html[data-look="tech"] .tabular-nums,
+html[data-look="tech"] .tech-mono {
+  font-family: var(--tech-mono);
+  letter-spacing: -0.01em;
+}
+/* 卡片右上角的小折角 */
+html[data-look="tech"] [data-slot="card"] {
+  position: relative;
+}
+html[data-look="tech"] [data-slot="card"]::after {
+  content: "";
+  position: absolute;
+  right: -1px;
+  top: -1px;
+  width: 12px;
+  height: 12px;
+  border-top: 1px solid var(--primary);
+  border-right: 1px solid var(--primary);
+  border-top-right-radius: var(--radius-xl);
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+/* 每個區域標題下面那條「開了幾成」的線：原本的外觀不顯示 */
+.room-bar {
+  display: none;
+}
+html[data-look="tech"] .room-bar {
+  display: block;
+  height: 2px;
+  background: var(--border);
+}
+html[data-look="tech"] .room-bar > i {
+  display: block;
+  height: 100%;
+  background: var(--tech-on);
+  box-shadow: 0 0 8px var(--tech-on);
+  transition: width 0.4s ease;
+}
+/* 裝置：一列一個改成兩個一排的小方塊，開著的邊框發亮 */
+html[data-look="tech"] .plug-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px;
+}
+html[data-look="tech"] .plug-list > * {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--tech-tile);
+  padding: 8px 10px;
+  gap: 9px;
+  min-height: 3.5rem;
+}
+html[data-look="tech"] .plug-list > [data-on="true"] {
+  border-color: var(--tech-on);
+  background: var(--tech-on-bg);
+  box-shadow: var(--tech-on-glow);
+}
+html[data-look="tech"] .plug-list > [data-online="false"] {
+  border-style: dashed;
+  opacity: 0.6;
+}
+html[data-look="tech"] .plug-list .plug-icon {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 8px;
+}
+html[data-look="tech"] .plug-list .plug-name {
+  font-size: 14px;
+}
+html[data-look="tech"] .plug-list .plug-sub {
+  font-size: 12px;
+}
+/* 手機：方塊一列一個（兩個一排名字會被切掉） */
+@media (max-width: 639px) {
+  html[data-look="tech"] .plug-list {
+    grid-template-columns: 1fr;
+  }
+  .tech-cell {
+    padding: 9px 11px;
+  }
+  .tech-v {
+    font-size: 19px;
+  }
+  .tech-k {
+    letter-spacing: 0.04em;
+  }
+  .tech-s {
+    font-size: 12px;
+  }
+}
+
+/* 首頁最上面的狀態列 */
+.tech-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--card);
+  overflow: hidden;
+}
+@media (min-width: 640px) {
+  .tech-strip {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+@media (min-width: 1280px) {
+  .tech-strip {
+    grid-template-columns: 1.3fr repeat(var(--cells), minmax(0, 1fr));
+  }
+}
+.tech-cell {
+  min-width: 0;
+  padding: 11px 15px;
+  text-align: left;
+  box-shadow: -1px -1px 0 var(--border); /* 格線：不管排成幾欄都對得上 */
+}
+button.tech-cell {
+  cursor: pointer;
+  transition: background 0.15s;
+}
+button.tech-cell:hover,
+button.tech-cell:focus-visible {
+  background: var(--muted);
+  outline: none;
+}
+.tech-k {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  letter-spacing: 0.12em;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.tech-v {
+  margin-top: 3px;
+  font: 600 22px/1.25 var(--tech-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tech-v small {
+  margin-left: 3px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted-foreground);
+}
+.tech-s {
+  font-size: 13px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tech-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: currentColor;
+}
+html[data-look="tech"].dark .tech-dot {
+  box-shadow: 0 0 8px currentColor;
+}

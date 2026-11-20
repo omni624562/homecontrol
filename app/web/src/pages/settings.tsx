@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { AlertCircle, Bell, CheckCircle2, CloudSun, KeyRound, MessageCircle, ChevronRight, ExternalLink, Loader2, MessageSquareText, Mic, Search, Wifi, WifiOff } from "lucide-react";
+import { AlertCircle, Bell, CheckCircle2, CloudSun, KeyRound, MessageCircle, ChevronRight, ExternalLink, Loader2, MessageSquareText, Mic, Palette, Search, Wifi, WifiOff } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -23,6 +23,8 @@ import { RUSH_STYLES, previewTruckRush } from "@/components/truck-rush";
 import { api } from "@/lib/api";
 import { pad2 } from "@/lib/format";
 import { useHub } from "@/lib/hub";
+import { setLook, useLook } from "@/lib/look";
+import { Segmented } from "@/components/schedule-bits";
 import type { HubState } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -395,7 +397,7 @@ function NetCheck({ s }: { s: HubState }) {
   );
 }
 
-const SECTIONS: [string, string][] = [["s-notify", "通知"], ["s-life", "天氣生活"], ["s-ask", "問家裡"], ["s-google", "Google Home"], ["s-dev", "裝置"]];
+const SECTIONS: [string, string][] = [["s-look", "外觀"], ["s-notify", "通知"], ["s-life", "天氣生活"], ["s-ask", "問家裡"], ["s-google", "Google Home"], ["s-dev", "裝置"]];
 
 // 手機：標題下面的快速跳轉；滑動時跟著標出現在看的那一段
 function JumpChips() {
@@ -462,6 +464,7 @@ function JumpChips() {
 }
 
 export function SettingsPage() {
+  const look = useLook();
   const { state, connected } = useHub();
   const [sheet, setSheet] = useState<"sense" | "cloud" | "weather" | "life" | "line" | "keys" | null>(null);
   const [finding, setFinding] = useState(false);
@@ -568,6 +571,12 @@ export function SettingsPage() {
         </div>
 
         <div className="min-w-0 space-y-4">
+          <SCard id="s-look" icon={Palette} title="外觀">
+            <SRow wrap label="畫面風格" hint="只換這台裝置的樣子；功能和資料都一樣，隨時可以換回來">
+              <div className="w-56"><Segmented label="畫面風格" value={look} onChange={setLook} options={[["classic", "原本"], ["tech", "科技感"]]} /></div>
+            </SRow>
+            <SRow label="深色、淺色" hint="跟著手機或電腦的系統設定自動切換，兩種風格都有深淺兩套" />
+          </SCard>
           <GoogleCard />
           <SCard id="s-dev" icon={Search} title="裝置">
             <NetCheck s={state} />
