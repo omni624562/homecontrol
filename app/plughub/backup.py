@@ -3,6 +3,7 @@
 - 每天 03:30 打包成 plughub-YYYY-MM-DD.tar.gz，留最近 KEEP 份
 - energy.db 用 SQLite 的線上備份（不會備到寫一半的資料庫）
 - 下載來的快取（天氣、路線、垃圾車…）不備份，重新啟動會再抓
+- 每份備份做完都試著還原一次（解開、檢查資料庫完整），確定救得回來
 - 失敗會通知（LINE／ntfy），設定頁顯示上次備份的時間
 
 還原：停掉容器，把備份檔解開到 app/data/，再啟動。
@@ -87,6 +88,30 @@ def make_backup(data_dir: Path, dest: Path, today: date | None = None, keep: int
     return final
 
 
+def verify(path: Path) -> None:
+    """確認備份還原得回來：解得開、資料庫完整、store.json 讀得懂。有問題就丟出例外。"""
+    import json
+
+    with tempfile.TemporaryDirectory() as tmp, tarfile.open(path, "r:gz") as tar:
+        names = tar.getnames()
+        if "store.json" not in names:
+            raise RuntimeError("備份裡沒有 store.json")
+        for m in tar.getmembers():
+            if m.name == "store.json" or m.name.endswith(".db"):
+                if not m.isfile() or ".." in Path(m.name).parts or m.name.startswith("/"):
+                    raise RuntimeError(f"備份裡的 {m.name} 不對")
+                tar.extract(m, tmp, filter="data")
+        json.loads((Path(tmp) / "store.json").read_text("utf-8"))
+        for db in Path(tmp).rglob("*.db"):
+            con = sqlite3.connect(db)
+            try:
+                ok = con.execute("PRAGMA integrity_check").fetchone()[0]
+            finally:
+                con.close()
+            if ok != "ok":
+                raise RuntimeError(f"{db.name} 不完整：{ok}")
+
+
 def prune(dest: Path, keep: int = KEEP) -> list[Path]:
     old = sorted(p for p in dest.glob(f"{PREFIX}*.tar.gz"))[:-keep] if keep > 0 else []
     for p in old:
@@ -143,7 +168,9 @@ class Backup:
         self.busy = True
         try:
             path = make_backup(self.data_dir, dest, now.date())
-            self.last = {"ok": True, "at": time.time(), "file": path.name, "size": path.stat().st_size, "error": None}
+            verify(path)  # 每次都試著還原一次（很小，幾秒內）
+            self.last = {"ok": True, "at": time.time(), "file": path.name, "size": path.stat().st_size, "error": None,
+                         "verified": True}
             _LOGGER.info("備份完成：%s（%d KB）", path, path.stat().st_size // 1024)
         except Exception as err:  # noqa: BLE001
             self.last = {"ok": False, "at": time.time(), "error": str(err)[:200]}

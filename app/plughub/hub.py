@@ -21,7 +21,7 @@ from typing import Any, Callable
 
 from kasa import Device, Discover, Module
 
-from . import anomaly, habits, native, netprobe, sun, tariff
+from . import anomaly, arpprobe, habits, native, netprobe, sun, tariff
 from .sensing import INTERVAL as SENSE_INTERVAL, SAVE_EVERY as SENSE_SAVE_EVERY, Sensing
 from .notify import Notifier
 from .daysoff import DaysOff
@@ -43,6 +43,9 @@ SOURCE: contextvars.ContextVar[str] = contextvars.ContextVar("source", default="
 NET_OUTAGE_SECONDS = 90  # 同一個 Wi-Fi 的插座全部斷線多久才算路由器出問題
 
 POLL_SECONDS = 5
+PROBE_EVERY = 60  # 路由器多久沒看到家人的手機，就由樹莓派直接問（ARP）
+PROBE_MAX_AGE = 24 * 3600  # 超過一天沒看到的就不問了
+PRESENCE_LOG_MAX = 50
 # 名稱有這些字的插座，第一次看到時自動設「最長開啟 10 分鐘」（之後可以在 App 改）
 WATER_WORDS = ("澆水", "灑水", "water", "sprinkler", "抽水", "水泵")
 DEFAULT_MAX_ON = 600  # 秒
@@ -158,6 +161,8 @@ class Hub:
         self.router = Router(lambda: self.store.data["settings"].get("router") or {},
                              str(store.dir / "router_known_hosts"), self._on_router)
         self._router_sig: Any = None
+        self._probe_at = 0.0  # 上次直接問家人手機（ARP）的時間
+        self._probe_busy = False
         self._router_since = 0.0  # 這次連上路由器的時間（剛連上時資料不完整，先不判斷「出門」）
         self._router_fed: dict[str, float] = {}  # MAC → 上次餵給 Wi-Fi 感測的讀數時間
         self._home_since: float | None = None  # 有人回家的時間（用來判斷這次出門結束了沒）
@@ -1336,6 +1341,11 @@ class Hub:
         new = [m for m in online if m not in known]
         for m in new:
             known[m] = {"first": now}
+            same = self._rotated_from(m, known)
+            if same:
+                known[m]["same_as"] = same
+                _LOGGER.info("%s 是 %s 換了 MAC（同廠牌、同名稱），不通知", m, same)
+                continue
             if self.store.data["settings"].get("new_device_alert", True) and m not in self.devices:
                 c = r.clients[m]
                 vendor = r.names.get(m, {}).get("vendor")
@@ -1349,6 +1359,17 @@ class Hub:
                     del known[m]
             self._dirty = True
         return bool(new)
+
+    def _rotated_from(self, mac: str, known: dict[str, Any]) -> str | None:
+        """有些裝置（例如 Kobo 閱讀器）保留廠牌前綴、後半段每次換：同前綴＋同名稱的舊裝置就當作同一台。
+        手機的「私人 MAC」（第一組的 0x02 位元）每台不同，不算。"""
+        name = (self.router.names.get(mac) or {}).get("name")
+        if not name or int(mac[:2], 16) & 2:
+            return None
+        for m, n in self.router.names.items():
+            if m != mac and m[:8] == mac[:8] and n.get("name") == name and m in known:
+                return m
+        return None
 
     def _router_presence(self, now: float) -> bool:
         """誰在家：家人的手機有沒有連著 Wi-Fi。離線超過幾分鐘才算出門（手機睡著時偶爾會斷一下）。"""
@@ -1371,6 +1392,7 @@ class Hub:
             elif st["home"] != home and (home or settled):
                 st.update(home=home, since=now if home else last)
                 changed = True
+                self._presence_log({"name": p["name"], "home": home, "why": self._presence_why(p, home, last, grace)})
                 if home:
                     arrived.append(p["name"])
         for pid in [k for k in self._presence if k not in {p["id"] for p in people}]:
@@ -1386,6 +1408,25 @@ class Hub:
                 self._presence_scene(cfg.get("home_scene"), f"{'、'.join(arrived)}回家了")
         return True
 
+    def _presence_why(self, p: dict[str, Any], home: bool, last: float, grace: float) -> str:
+        """誰在家改變的原因（給「最近變化」看）。"""
+        if not home:
+            at = datetime.fromtimestamp(last).strftime("%H:%M") if last else "—"
+            return f"手機超過 {round(grace / 60)} 分鐘沒連線（最後看到 {at}）"
+        mac = max(p["macs"], key=lambda m: self.router.clients.get(m, {}).get("seen", 0))
+        c = self.router.clients.get(mac, {})
+        if c.get("probe") and c["probe"] >= c.get("seen", 0) - 1:
+            return "樹莓派直接問到手機"
+        node = next((n["model"] for n in self.router.nodes if n["mac"] == c.get("node")), None)
+        where = "有線" if c.get("wired") else (c.get("band") or "Wi-Fi")
+        return f"手機連上 {node + ' ' if node else ''}{where}"
+
+    def _presence_log(self, item: dict[str, Any]) -> None:
+        log = self.store.data.setdefault("presence_log", [])
+        log.append({"t": round(time.time()), **item})
+        del log[:-PRESENCE_LOG_MAX]
+        self._dirty = True
+
     def _presence_scene(self, scene_id: str | None, why: str) -> None:
         scene = self.store.scene(scene_id) if scene_id else None
         if scene is None:
@@ -1394,6 +1435,7 @@ class Hub:
         async def go() -> None:
             SOURCE.set("auto")
             done = await self.run_scene(scene["id"])
+            self._presence_log({"scene": scene["name"], "why": why, "n": len(done)})
             self.notifier.send(why, f"已經執行「{scene['name']}」" + (f"，動了 {len(done)} 個插座" if done else "（插座本來就是這樣）"))
             await self.changed()
 
@@ -1748,7 +1790,28 @@ class Hub:
             # 定時關閉也每秒檢查（澆水可以設到秒）；上一輪還在關就不重複
             if not self._timers_busy:
                 self._spawn(self._run_timers_once())
+            if self.router.ok and not self._probe_busy and time.time() - self._probe_at >= PROBE_EVERY:
+                self._probe_busy = True
+                self._spawn(self._probe_people())
             self._sync_failsafes()
+
+    async def _probe_people(self) -> None:
+        """路由器一陣子沒看到家人的手機時，樹莓派直接問那台手機在不在（iPhone 睡著時常這樣）。"""
+        try:
+            now = time.time()
+            for p in self.store.data["people"]:
+                for mac in p["macs"]:
+                    c = self.router.clients.get(mac)
+                    if not c or now - c.get("seen", 0) < PROBE_EVERY or now - c.get("seen", 0) > PROBE_MAX_AGE:
+                        continue
+                    ip = c.get("ip") or self._ip_of(mac)
+                    if ip and await asyncio.to_thread(arpprobe.probe, ip, mac):
+                        c["seen"] = c["probe"] = time.time()
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("詢問家人手機失敗")
+        finally:
+            self._probe_at = time.time()
+            self._probe_busy = False
 
     def _due(self, key: str, hms: str, now: datetime) -> bool:
         """排程時間已到（容許晚 SCHEDULE_GRACE 秒，避免卡住時錯過），而且今天這個時間還沒執行過。"""
@@ -2142,6 +2205,7 @@ class Hub:
                        "nodes": self.router.nodes,
                        "ssids": sorted({i["ssid"] for i in self.router.ifaces.values() if i.get("ssid")})},
             "people": self.people_report(),
+            "presence_log": self.store.data.get("presence_log", [])[-20:],
             "assistant": self.assistant.status() if getattr(self, "assistant", None) else None,
             "backup": self.backup.report(),
             "app_version": APP_VERSION,

@@ -73,10 +73,13 @@ def band_name(key: str) -> str:
 
 
 def mlo_links(mac: str, info: dict[str, Any]) -> set[str]:
-    """nmp_cl_json 裡 Wi-Fi 7 裝置的各頻段 link MAC（mlo_2G_mac、mlo_5G_mac…、mlo_all_mac "<A<B"）。"""
+    """nmp_cl_json 裡 Wi-Fi 7 裝置各頻段的 link MAC（mlo_2G_mac、mlo_5G_mac、mlo_6G_mac…）。
+
+    mlo_all_mac 不用：路由器常把別台的 MAC 留在裡面（例如虛擬機的那筆列著筆電的 MAC）。
+    """
     main = norm(mac)
-    raw = [str(v) for k, v in info.items() if k.startswith("mlo_") and k.endswith("_mac") and v]
-    links = {norm(x) for v in raw for x in v.split("<") if x.count(":") == 5}
+    links = {norm(str(v)) for k, v in info.items()
+             if k.startswith("mlo_") and k.endswith("_mac") and k != "mlo_all_mac" and v and str(v).count(":") == 5}
     links.discard(main)
     return links
 
@@ -99,6 +102,7 @@ class Router:
         # Wi-Fi 7（MLO）的手機：每個頻段的連線用另一個 MAC（link），路由器管理頁顯示的是主 MAC（MLD）。
         # 即時資料只看得到 link MAC，這裡記 link → 主 MAC，全部算到主 MAC 上。
         self.alias: dict[str, str] = {}
+        self._conflicts: dict[str, list[str]] = {}
         self.ifaces: dict[str, dict[str, str]] = {}  # wl0.1 → {band, ssid}
         self.traffic: dict[str, int] = {}  # MAC → 累計位元組（下載＋上傳），每分鐘讀一次；hub 讀完會清掉
         self._proc: asyncio.subprocess.Process | None = None
@@ -257,15 +261,28 @@ class Router:
         return self.alias.get(m, m)
 
     def _read_names(self, data: dict[str, Any]) -> None:
-        alias: dict[str, str] = {}
+        claims: dict[str, set[str]] = {}
         for mac, info in data.items():
             if not isinstance(info, dict):
                 continue
             n = self.names.setdefault(norm(mac), {})
             n["name"] = info.get("name") or None
             n["vendor"] = info.get("vendor") or None
-            alias.update({link: norm(mac) for link in mlo_links(mac, info)})
-        self.alias = {k: v for k, v in alias.items() if k not in alias.values()}
+            for link in mlo_links(mac, info):
+                claims.setdefault(link, set()).add(norm(mac))
+        # 只接受「只有一台說是它的」、而且自己不是另一台裝置的 link MAC
+        keys = {norm(m) for m in data}
+        alias, conflicts = {}, {}
+        for link, mains in claims.items():
+            if len(mains) == 1 and link not in keys:
+                alias[link] = next(iter(mains))
+            else:
+                conflicts[link] = sorted(mains)
+        for link, mains in conflicts.items():
+            if self._conflicts.get(link) != mains:
+                _LOGGER.info("Wi-Fi 7 對照有衝突，不合併：%s 被 %s 認領", link, "、".join(mains))
+        self._conflicts = conflicts
+        self.alias = alias
         for link, main in self.alias.items():
             old = self.clients.pop(link, None)
             if old:

@@ -531,7 +531,7 @@ function SystemCard({ s }: { s: HubState }) {
           {backing ? <Loader2 className="animate-spin" /> : <Archive />}現在備份
         </Button>
       </SRow>
-      {b?.ok && b.at && <SRow label="上次備份" hint={`${when(b.at)}・${b.file}・${Math.round((b.size || 0) / 1024)} KB`} />}
+      {b?.ok && b.at && <SRow label="上次備份" hint={`${when(b.at)}・${b.file}・${Math.round((b.size || 0) / 1024)} KB${b.verified ? "・已確認能還原" : ""}`} />}
     </SCard>
   );
 }

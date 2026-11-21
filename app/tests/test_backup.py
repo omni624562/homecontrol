@@ -69,3 +69,23 @@ def test_not_configured(data_dir, tmp_path, monkeypatch):
     b = backup.Backup(data_dir, print)
     assert b.report()["configured"] is False
     assert b.run()["ok"] is False
+
+
+def test_verify_ok_and_broken(data_dir, tmp_path):
+    import pytest
+
+    db = _seed(data_dir)
+    out = backup.make_backup(data_dir, tmp_path / "nas", date(2026, 11, 20))
+    db.close()
+    backup.verify(out)  # 還原得回來
+    bad = tmp_path / "bad.tar.gz"
+    with tarfile.open(bad, "w:gz") as tar:
+        (tmp_path / "store.json").write_text("{not json", "utf-8")
+        tar.add(tmp_path / "store.json", "store.json")
+    with pytest.raises(ValueError):
+        backup.verify(bad)
+    empty = tmp_path / "empty.tar.gz"
+    with tarfile.open(empty, "w:gz"):
+        pass
+    with pytest.raises(RuntimeError):
+        backup.verify(empty)

@@ -47,3 +47,19 @@ def test_live_before_names():
     r._read_names(NAMES)
     r._apply_live(live)
     assert LINK not in r.clients and r.online(MAIN)
+
+
+def test_mlo_all_and_conflicts_ignored():
+    r = make()
+    r._read_names({
+        # 虛擬機那筆的 mlo_all_mac 列著筆電的 MAC：不用 mlo_all_mac
+        "00:15:5D:02:F0:02": {"name": "HyperV", "mlo_all_mac": "<1A:C1:D4:BF:1E:38<1A:C1:D4:BF:1E:39"},
+        # 兩台都說 …:39 是它的：不合併
+        "B0:3C:DC:D9:C2:4A": {"name": "LAPTOP", "mlo_5G_mac": "1A:C1:D4:BF:1E:39"},
+        "1A:C1:D4:BF:1E:38": {"name": "android", "mlo_5G_mac": "1A:C1:D4:BF:1E:39"},
+        # link MAC 自己也是一台裝置：不合併
+        "AA:00:00:00:00:01": {"name": "x", "mlo_5G_mac": "AA:00:00:00:00:02"},
+        "AA:00:00:00:00:02": {"name": "y"},
+        **NAMES,
+    })
+    assert r.alias == {LINK: MAIN}

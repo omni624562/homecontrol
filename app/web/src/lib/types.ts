@@ -205,7 +205,7 @@ export interface Outage {
 }
 
 export interface BusStop { id: string; name: string; m: number }
-export interface BusDir { gb: string; to: string; stop: BusStop | null; sec: number | null; near: BusStop[] }
+export interface BusDir { gb: string; to: string; stop: BusStop | null; sec: number | null; near: BusStop[]; first?: string | null } // first：下一班首班車從起點發車的時間
 export interface BusInfo {
   names: string[];
   routes: { id: string; name: string; base: string; dirs: BusDir[] }[]; // base：設定裡寫的名字（「橘18福隆路」算在「橘18」）
@@ -250,6 +250,7 @@ export interface HubState {
   rooms: Room[];
   scenes: Scene[];
   people: Person[];
+  presence_log?: PresenceEvent[];
   summary: { power: number | null; energy_today: number; cost_today: number; cost_month: number };
   settings: {
     long_on_hours?: number;
@@ -281,6 +282,17 @@ export interface Backup {
   file?: string;
   size?: number;
   error?: string | null;
+  verified?: boolean; // 做完有試著還原過
+}
+
+// 誰在家的最近變化：有 name 的是某人回家／出門，有 scene 的是因此執行了情境
+export interface PresenceEvent {
+  t: number;
+  name?: string;
+  home?: boolean;
+  scene?: string;
+  n?: number;
+  why: string;
 }
 
 // 已配對的裝置
