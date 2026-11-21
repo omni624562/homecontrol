@@ -17,6 +17,7 @@ PUT  /api/settings
 PUT  /api/away              離家模式 {"enabled", "start", "end", "plugs"}
 GET/PUT /api/floorplan      訊號地圖（房間、裝置位置、Wi-Fi 基地台）；POST/GET/DELETE /api/floorplan/image 底圖
 GET/PUT /api/sensing        Wi-Fi 感測（實驗）：訊號擾動；{"enabled": false} 停止記錄
+GET /api/locate/{id}         人在哪個房間（實驗）：每個房間教了幾筆、現在的判斷；POST …/train {"room"} 教 2 分鐘、DELETE …/train 停止、DELETE /api/locate/{id}?room= 清掉
 GET  /api/energy             用電（插座自己記錄的開機時間 × 瓦數）
 GET  /api/plugs/{id}/usage  插座自己記錄的使用時間；POST /api/plugs/{id}/reboot 重新啟動
 PUT/DELETE /api/kasa-rules  直接修改／刪除插座裡 Kasa App 設的排程
@@ -58,6 +59,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 
 from . import auth as authmod
+from .locate import MIN_SAMPLES as LOCATE_MIN, TRAIN_S as LOCATE_TRAIN_S
 from .assistant import MODELS as ASSISTANT_MODELS, Assistant
 from .hub import APP_VERSION, SOURCE, Hub, Locked
 from .notify import LineError, Notifier
@@ -1063,6 +1065,50 @@ async def weekly() -> dict[str, Any]:
 def _mac(v: Any) -> str | None:
     v = str(v or "").strip().upper()
     return v if re.fullmatch(r"([0-9A-F]{2}:){5}[0-9A-F]{2}", v) else None
+
+
+def _locate_person(pid: str) -> dict[str, Any]:
+    p = next((x for x in store.data["people"] if x["id"] == pid), None)
+    if p is None:
+        raise HTTPException(404, "找不到這個人")
+    return p
+
+
+@app.get("/api/locate/{pid}")
+async def locate_get(pid: str) -> dict[str, Any]:
+    """人在哪個房間（實驗）：每個房間教了幾筆、現在的判斷、是不是正在教。"""
+    p = _locate_person(pid)
+    counts = hub.locator.counts(p["macs"])
+    return {"rooms": [{**r, "count": counts.get(r["id"], 0)} for r in hub.locate_rooms()],
+            "where": hub.person_where(p), "training": hub.locator.training_left(p["macs"]),
+            "min": LOCATE_MIN, "train_s": LOCATE_TRAIN_S, "online": any(hub.router.online(m) for m in p["macs"])}
+
+
+@app.post("/api/locate/{pid}/train")
+async def locate_train(pid: str, body: dict = Body(...)) -> dict[str, Any]:
+    """拿著這個人的手機站在某個房間：記 2 分鐘訊號。"""
+    p = _locate_person(pid)
+    room = str(body.get("room") or "")
+    if room not in {r["id"] for r in hub.locate_rooms()}:
+        raise HTTPException(400, "沒有這個房間")
+    if not any(hub.router.online(m) for m in p["macs"]):
+        raise HTTPException(409, "這個人的手機現在沒連著 Wi-Fi")
+    hub.locator.train(p["macs"], room)
+    return {"ok": True, "training": hub.locator.training_left(p["macs"])}
+
+
+@app.delete("/api/locate/{pid}/train")
+async def locate_cancel(pid: str) -> dict[str, Any]:
+    hub.locator.cancel(_locate_person(pid)["macs"])
+    return {"ok": True}
+
+
+@app.delete("/api/locate/{pid}")
+async def locate_forget(pid: str, room: str | None = None) -> dict[str, Any]:
+    """清掉教過的訊號（room 不給就全部清掉）。"""
+    hub.locator.forget(_locate_person(pid)["macs"], room)
+    store.save()
+    return {"ok": True}
 
 
 @app.get("/api/net")

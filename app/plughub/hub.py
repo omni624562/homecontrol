@@ -21,7 +21,7 @@ from typing import Any, Callable
 
 from kasa import Device, Discover, Module
 
-from . import anomaly, arpprobe, habits, native, netprobe, sun, tariff
+from . import anomaly, arpprobe, habits, locate, native, netprobe, sun, tariff
 from .sensing import INTERVAL as SENSE_INTERVAL, SAVE_EVERY as SENSE_SAVE_EVERY, Sensing
 from .notify import Notifier
 from .daysoff import DaysOff
@@ -140,6 +140,7 @@ class Hub:
         except Exception:  # noqa: BLE001
             pass
         self.sensing = Sensing()
+        self.locator = locate.Locator(self.store.data.setdefault("locate", {}))
         self._sense_path = store.dir / "sensing.json.gz"
         self.sensing.load(self._sense_path)
         self._sense_saved = time.monotonic()
@@ -1202,6 +1203,7 @@ class Hub:
         if not self._router_since:
             self._router_since = now
         self._router_sense(now)
+        self._router_locate()
         self._router_traffic()
         changed = self._router_new_devices(now)
         changed = self._router_presence(now) or changed
@@ -1225,6 +1227,36 @@ class Hub:
             if at > self._router_fed.get(mac, 0):
                 self._router_fed[mac] = at
                 self.sensing.add(mac, c["rssi"], at)
+
+    def _router_locate(self) -> None:
+        """家人的手機：路由器的新讀數交給「在哪個房間」（教房間時也從這裡收指紋）。"""
+        for p in self.store.data["people"]:
+            for mac in p["macs"]:
+                c = self.router.clients.get(mac)
+                if not c or c.get("wired") or not self.router.online(mac):
+                    continue
+                at = max(c.get("live", 0), c.get("list", 0))
+                if self.locator.feed(mac, at, c.get("node"), c.get("rssi")) and mac in self.locator.training:
+                    self._dirty = True
+
+    def locate_rooms(self) -> list[dict[str, str]]:
+        """可以教的房間：訊號地圖上畫的房間（比較完整），沒畫就用插座的房間。同名的加編號。"""
+        fp = (self.store.data.get("floorplan") or {}).get("rooms") or []
+        src = [{"id": r["id"], "name": r["name"]} for r in fp] or [{"id": r["id"], "name": r["name"]} for r in self.store.data["rooms"]]
+        seen: dict[str, int] = {}
+        for r in src:
+            seen[r["name"]] = seen.get(r["name"], 0) + 1
+            if seen[r["name"]] > 1 or sum(x["name"] == r["name"] for x in src) > 1:
+                r["name"] = f"{r['name']} {seen[r['name']]}"
+        return src
+
+    def person_where(self, p: dict[str, Any]) -> dict[str, Any] | None:
+        est = self.locator.estimate_any(p["macs"])
+        if not est:
+            return None
+        names = {r["id"]: r["name"] for r in self.locate_rooms()}
+        return {**est, "name": names.get(est["room"]) if est["room"] else None,
+                "top": [{**t, "name": names.get(t["room"], "?")} for t in est["top"]]}
 
     def _router_traffic(self) -> None:
         """每台裝置今天用了多少網路（下載＋上傳）。路由器的計數器在裝置重新連線時會歸零。"""
@@ -1545,7 +1577,11 @@ class Hub:
         }
 
     def people_report(self) -> list[dict[str, Any]]:
-        return [{**p, **self._presence.get(p["id"], {"home": None, "since": None})} for p in self.store.data["people"]]
+        out = []
+        for p in self.store.data["people"]:
+            st = self._presence.get(p["id"], {"home": None, "since": None})
+            out.append({**p, **st, "where": self.person_where(p) if st.get("home") else None})
+        return out
 
     def _target(self, plug_id: str) -> tuple[Any, dict[str, Any]]:
         plug = self.plugs[plug_id]

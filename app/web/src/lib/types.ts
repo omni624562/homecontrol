@@ -122,6 +122,15 @@ export interface Person {
   macs: string[];
   home: boolean | null;
   since?: number;
+  where?: Where | null; // 在哪個房間（實驗，教過房間才有）
+}
+
+export interface Where {
+  room: string | null; // 把握不夠時是 null
+  name: string | null;
+  p: number;
+  top: { room: string; name: string; p: number }[];
+  samples: number;
 }
 
 export interface Hourly {

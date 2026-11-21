@@ -16,6 +16,7 @@ import { useHub } from "@/lib/hub";
 import { useLook } from "@/lib/look";
 import { KIND, devKind, fmtBytes, isRawName, netAgo, netName, type NetClient, type NetData } from "@/lib/net";
 import type { PresenceEvent } from "@/lib/types";
+import { whereText } from "@/components/locate";
 import { cn } from "@/lib/utils";
 
 // 誰在家的最近變化：誰幾點回家／出門、為什麼這樣判斷、有沒有因此執行情境
@@ -261,6 +262,7 @@ export function NetPage() {
                             {x.name}
                             <Badge variant="secondary" className={cn(x.home && "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300")}>{x.home == null ? "—" : x.home ? "在家" : "出門"}</Badge>
                             {when && <span className="text-sm font-normal text-muted-foreground">{when}</span>}
+                            {x.home && whereText(x.where) && <span className="text-sm font-normal text-muted-foreground">・{whereText(x.where)}</span>}
                           </span>
                           <span className="flex flex-wrap gap-1.5">
                             {devs.length ? devs.map((c) => {
