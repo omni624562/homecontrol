@@ -179,7 +179,7 @@ async def _done() -> dict[str, Any]:
 
 # ---- 配對 ----
 
-_last_sent = 0.0
+_last_sent: float | None = None  # 上次送配對碼（monotonic；開機不到 1 分鐘時 0 會被誤判成剛送過）
 
 
 @app.get("/api/auth")
@@ -212,7 +212,7 @@ async def auth_pair(request: Request, body: dict = Body(...)) -> Response:
 async def auth_send_code() -> dict[str, Any]:
     """配對畫面：把配對碼送到手機通知（LINE／ntfy），也印在伺服器紀錄裡。"""
     global _last_sent
-    if time.monotonic() - _last_sent < 60:
+    if _last_sent is not None and time.monotonic() - _last_sent < 60:
         raise HTTPException(429, "剛剛送過了，1 分鐘後再試")
     _last_sent = time.monotonic()
     code = auth.new_code()
