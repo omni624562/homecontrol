@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 
 export type MapSel = { kind: "room" | "ap" | "dev"; id: string } | null;
 // 地圖上的人：猜到在哪個區域（sure=false 是把握不夠，只是最可能的那間）
-export type MapPerson = { id: string; name: string; room: string; sure: boolean; p: number };
+export type MapPerson = { id: string; name: string; room: string; roomName: string; sure: boolean; p: number };
 type Drag = { kind: "item" | "room" | "resize"; id: string };
 
 const STROKE: Record<string, string> = { good: "var(--primary)", mid: "color-mix(in srgb, var(--primary) 45%, var(--card))", weak: "var(--color-orange-500, #f97316)" };
@@ -203,7 +203,7 @@ export function MapCanvas({
           right -= w;
           const x = right;
           right -= 6 * k;
-          const tip = p.sure ? `${p.name} 大概在${r.name}（${Math.round(p.p * 100)}% 把握）` : `${p.name} 可能在${r.name}（${Math.round(p.p * 100)}%，不確定）`;
+          const tip = p.sure ? `${p.name} 大概在${p.roomName}（${Math.round(p.p * 100)}% 把握）` : `${p.name} 可能在${p.roomName}（${Math.round(p.p * 100)}%，不確定）`;
           return (
             <g key={p.id} opacity={p.sure ? 1 : 0.6} onMouseEnter={() => onTip(tip)} onMouseLeave={() => onTip(null)}>
               <title>{tip}</title>

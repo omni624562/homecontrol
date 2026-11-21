@@ -208,7 +208,9 @@ export function MapPage() {
     const w = p.home ? p.where : null;
     const room = w?.room || w?.top[0]?.room;
     if (!w || !room || !fpRooms.has(room)) return [];
-    return [{ id: p.id, name: p.name, room, sure: !!w.room, p: w.room ? w.p : w.top[0].p }];
+    // 名字用家庭中控的區域名（地圖上的區域名可能是舊的，例如工作區寫成「臥室」）
+    const roomName = (w.room ? w.name : w.top[0].name) || fp.rooms!.find((r) => r.id === room)?.name || "";
+    return [{ id: p.id, name: p.name, room, roomName, sure: !!w.room, p: w.room ? w.p : w.top[0].p }];
   });
   const nodes = sense?.net?.nodes || [];
   const ssids = [...new Set(devs.map((d) => d.ssid).filter(Boolean))] as string[];
@@ -476,7 +478,7 @@ export function MapPage() {
                 <SideCard title="誰在哪裡">
                   {people.map((p) => (
                     <Note key={p.id}>
-                      <b className="text-foreground">{p.name}</b>：{p.sure ? "大概在" : "可能在"}{fp.rooms!.find((r) => r.id === p.room)?.name}（{Math.round(p.p * 100)}%{p.sure ? " 把握" : "，不確定"}）
+                      <b className="text-foreground">{p.name}</b>：{p.sure ? "大概在" : "可能在"}{p.roomName}（{Math.round(p.p * 100)}%{p.sure ? " 把握" : "，不確定"}）
                     </Note>
                   ))}
                   <Note>用手機的 Wi-Fi 訊號猜的（實驗）；房間在「網路裝置 → 誰在家 → 點人 → 在哪個房間」教。</Note>
