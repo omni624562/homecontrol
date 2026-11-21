@@ -235,7 +235,9 @@ export interface Local {
   garbage: {
     stop: GarbageStop;
     today: string[];
-    next: { date: string; kinds: string[] }[];
+    next: { date: string; kinds: string[]; off?: string }[]; // off：停收（春節停收、除夕停收）
+    off_today?: string | null; // 今天照星期該收，但是停收日
+    history?: { d: string; m: number }[]; // 最近幾次實際到的時間（第幾分鐘）
     truck: Truck | null;
     watching: boolean;
     done?: boolean; // 今天的已經收過了（next 從明天以後開始）

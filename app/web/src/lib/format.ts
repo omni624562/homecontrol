@@ -43,6 +43,12 @@ export function dayLabel(iso: string) {
   return i === 0 ? "今天" : i === 1 ? "明天" : `週${WEEK[d.getDay()]}`;
 }
 
+// 下一次收垃圾（跳過停收日）的文字：「週一 約 20:11」
+export function nextPickup(g: { next: { date: string; off?: string }[]; usual?: string; stop: { time: string } }): string {
+  const n = g.next.find((x) => !x.off);
+  return n ? `${dayLabel(n.date)} ${g.usual ? `約 ${g.usual}` : g.stop.time}` : "";
+}
+
 // 分鐘數：「45 分鐘」「3 小時 20 分」
 export const fmtMin = (m: number) => (m < 60 ? `${Math.round(m)} 分鐘` : `${Math.floor(m / 60)} 小時${Math.round(m % 60) ? ` ${Math.round(m % 60)} 分` : ""}`);
 

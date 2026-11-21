@@ -80,6 +80,7 @@ class LocalInfo:
     def __init__(self, data_dir: Path, settings: Callable[[], dict], place: Callable[[], tuple[str | None, str | None]],
                  notify: Callable[[str, str], None]) -> None:
         self.dir = data_dir
+        self.no_pickup: Callable[[date, int | None], str | None] = lambda d, m: None  # 停收日（hub 接上假日表）
         self._settings = settings  # store.data["settings"]["local"]
         self._place = place  # (縣市, 鄉鎮區)
         self._notify = notify
@@ -249,8 +250,16 @@ class LocalInfo:
         self.stops = out
 
     # ---- 垃圾車 ----
-    def today_kinds(self, stop: dict, day: date) -> list[str]:
+    def week_kinds(self, stop: dict, day: date) -> list[str]:
+        """照每週固定星期幾，這天收哪些（不管停收日）。"""
         return [label for k, label in KINDS if day.weekday() in stop["days"].get(k, [])]
+
+    def off_reason(self, stop: dict, day: date) -> str | None:
+        return self.no_pickup(day, _hm(stop.get("time") or "")) if self.week_kinds(stop, day) else None
+
+    def today_kinds(self, stop: dict, day: date) -> list[str]:
+        """這天實際收哪些：停收日（春節等）就是空的。"""
+        return [] if self.off_reason(stop, day) else self.week_kinds(stop, day)
 
     def usual(self, s: dict) -> int | None:
         """這個清運點最近幾次實際到的時間（第幾分鐘，取中間值）；還沒有紀錄就回傳 None。"""
@@ -448,15 +457,19 @@ class LocalInfo:
         if s:
             nxt = []
             done = self.done_today(s)
-            for i in range(1 if done else 0, 9):
+            for i in range(1 if done else 0, 15):
                 d = today + timedelta(days=i)
-                k = self.today_kinds(s, d)
+                k = self.week_kinds(s, d)
                 if k:
-                    nxt.append({"date": d.isoformat(), "kinds": k})
-                if len(nxt) >= 3:
+                    off = self.off_reason(s, d)
+                    nxt.append({"date": d.isoformat(), "kinds": k, **({"off": off} if off else {})})
+                if sum(1 for x in nxt if "off" not in x) >= 3 or len(nxt) >= 6:
                     break
             garbage = {"stop": {k: s[k] for k in ("lineid", "line", "rank", "name", "time", "memo", "days")},
-                       "today": self.today_kinds(s, today), "next": nxt, "truck": self.truck, "watching": self._truck_window(), "done": done}
+                       "today": self.today_kinds(s, today), "next": nxt, "truck": self.truck, "watching": self._truck_window(), "done": done,
+                       "off_today": self.off_reason(s, today),
+                       # 最近幾次實際到的時間（第幾分鐘）
+                       "history": self.arrivals.get(f"{s['lineid']}:{s['rank']}", [])[-7:]}
             u, t = self.usual(s), _hm(s["time"])
             if u is not None and t is not None and abs(u - t) >= 2:
                 garbage["usual"] = f"{u // 60:02d}:{u % 60:02d}"  # 最近實際到的時間（和表定差 2 分鐘以上才給）
