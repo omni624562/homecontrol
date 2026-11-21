@@ -98,7 +98,7 @@ class LocalInfo:
             pass
         self.bike = Bike(lambda: self._settings().setdefault("bike", {}))
         self.roads_map = Roads(data_dir)
-        self.bus = Bus(data_dir, lambda: self._settings().setdefault("bus", {}))
+        self.bus = Bus(data_dir, lambda: self._settings().setdefault("bus", {}), lambda: self.home)
         self.arrivals: dict[str, list[dict]] = {}  # 每個清運點最近幾次車子實際到的時間
         try:
             self.arrivals = json.loads((data_dir / "garbage_arrivals.json").read_text("utf-8"))

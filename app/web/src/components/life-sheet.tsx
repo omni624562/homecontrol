@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Bike, Bus, Droplets, Home, Loader2, Truck, Zap, ZapOff } from "lucide-react";
+import { Bike, Bus, Check, Droplets, Home, Loader2, Plus, Truck, X, Zap, ZapOff } from "lucide-react";
 import { toast } from "sonner";
 import { BikeMap } from "@/components/bike-map";
 import { Badge } from "@/components/ui/badge";
@@ -44,7 +44,6 @@ export function LifeSheet({ open, onClose, topic = "garbage", inline }: { open: 
   const L = state?.calendar.local;
   const [roads, setRoads] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [busNames, setBusNames] = useState<string | null>(null);
   if (!L) return null;
   const g = L.garbage;
   const B = L.bus;
@@ -179,23 +178,7 @@ export function LifeSheet({ open, onClose, topic = "garbage", inline }: { open: 
             <p className="mb-4 text-sm text-muted-foreground">{B.error ? `查詢失敗：${B.error}` : B.updated ? "這些路線在你家 800 公尺內沒有站牌" : "正在下載路線…"}</p>
           )}
           {B && B.missing.length > 0 && <p className="mb-3 text-sm text-orange-600">找不到路線：{B.missing.join("、")}</p>}
-          <div className="space-y-2">
-            <Label htmlFor="bus-names">要看的路線</Label>
-            <form
-              className="flex gap-2"
-              onSubmit={async (e) => {
-                e.preventDefault();
-                setSaving(true);
-                await put({ bus_routes: (busNames ?? "").split(/[、,，\s]+/).filter(Boolean) }, "已儲存路線");
-                setSaving(false);
-                setBusNames(null);
-              }}
-            >
-              <Input id="bus-names" value={busNames ?? (B?.names || []).join("、")} onChange={(e) => setBusNames(e.target.value)} placeholder="橘18、F312" className="h-11" />
-              <Button type="submit" className="h-11" disabled={saving || busNames == null}>儲存</Button>
-            </form>
-            <p className="text-xs leading-relaxed text-muted-foreground">新北市的公車。每分鐘更新，站牌預設選離家最近的。</p>
-          </div>
+          <BusPicker names={B?.names || []} nearby={B?.nearby || []} save={(list) => put({ bus_routes: list })} />
         </section>
         )}
 
@@ -316,6 +299,84 @@ function TruckRoad({ stops }: { stops: number }) {
         <span>{stops > FAR ? `還很遠（${stops} 站）` : stops === 0 ? "到了！" : `還有 ${stops} 站`}</span>
         <span>你家的清運點</span>
       </div>
+    </div>
+  );
+}
+
+// 要看的路線：家附近的路線點一下就加入／移除；不在附近的可以打名字加
+const BUS_MAX = 10;
+function BusPicker({ names, nearby, save }: { names: string[]; nearby: { name: string; m: number; stop: string }[]; save: (list: string[]) => Promise<unknown> }) {
+  const [all, setAll] = useState(false);
+  const [other, setOther] = useState("");
+  const [busy, setBusy] = useState(false);
+  const set = async (list: string[]) => {
+    setBusy(true);
+    try {
+      await save(list);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const toggle = (n: string) => set(names.includes(n) ? names.filter((x) => x !== n) : [...names, n]);
+  const full = names.length >= BUS_MAX;
+  const shown = all ? nearby : nearby.slice(0, 12);
+  const farAway = names.filter((n) => !nearby.some((x) => x.name === n));
+  return (
+    <div className="space-y-3">
+      <div>
+        <Label>要看的路線</Label>
+        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">新北市的公車，最多 {BUS_MAX} 條。每分鐘更新，站牌預設選離家最近的。</p>
+      </div>
+      {farAway.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {farAway.map((n) => (
+            <Button key={n} type="button" size="sm" variant="default" className="rounded-full" disabled={busy} onClick={() => toggle(n)} aria-label={`移除${n}`}>
+              {n}<X />
+            </Button>
+          ))}
+        </div>
+      )}
+      {nearby.length > 0 ? (
+        <div>
+          <div className="mb-1.5 text-sm font-medium">家附近的公車<span className="ml-1.5 font-normal text-muted-foreground">點一下加入或移除</span></div>
+          <div className="flex flex-wrap gap-2">
+            {shown.map((x) => {
+              const on = names.includes(x.name);
+              return (
+                <Button
+                  key={x.name} type="button" size="sm" variant={on ? "default" : "outline"} aria-pressed={on}
+                  className="h-auto rounded-full py-1.5" disabled={busy || (!on && full)} onClick={() => toggle(x.name)}
+                  title={`最近的站牌：${x.stop}・${x.m} 公尺`}
+                >
+                  {on && <Check />}
+                  <span>{x.name}</span>
+                  <span className={cn("text-xs font-normal tabular-nums", on ? "opacity-80" : "text-muted-foreground")}>{x.stop}・{x.m}m</span>
+                </Button>
+              );
+            })}
+          </div>
+          {nearby.length > 12 && (
+            <Button type="button" variant="link" size="sm" className="mt-1 px-0" onClick={() => setAll((v) => !v)}>
+              {all ? "收起" : `顯示全部 ${nearby.length} 條`}
+            </Button>
+          )}
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground">正在找家附近的公車…（要先知道家的位置）</p>
+      )}
+      <form
+        className="flex gap-2"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          const add = other.split(/[、,，\s]+/).map((x) => x.trim()).filter((x) => x && !names.includes(x));
+          if (!add.length) return;
+          await set([...names, ...add].slice(0, BUS_MAX));
+          setOther("");
+        }}
+      >
+        <Input value={other} onChange={(e) => setOther(e.target.value)} placeholder="其他路線，例如 965" className="h-10" aria-label="其他路線" />
+        <Button type="submit" variant="outline" className="h-10" disabled={busy || full || !other.trim()}><Plus />加入</Button>
+      </form>
     </div>
   );
 }

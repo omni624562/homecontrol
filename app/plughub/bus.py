@@ -12,6 +12,7 @@ from __future__ import annotations
 import gzip
 import json
 import logging
+import math
 import time
 import urllib.parse
 import urllib.request
@@ -29,6 +30,8 @@ NEAR_M = 800  # 多遠以內的站牌可以選
 STATIC_EVERY = 24 * 3600
 LIVE_EVERY = 60
 IDLE_EVERY = 600  # 收班後
+NEARBY_EVERY = 7 * 24 * 3600  # 家附近有哪些路線：一週更新一次（全部站牌約 4 萬筆）
+NEARBY_MAX = 60
 
 
 def _get(dataset: str, **q: str) -> list[dict]:
@@ -57,9 +60,15 @@ def _variant(route: str, name: str) -> bool:
 
 
 class Bus:
-    def __init__(self, data_dir: Path, cfg: Callable[[], dict]) -> None:
+    def __init__(self, data_dir: Path, cfg: Callable[[], dict],
+                 home: Callable[[], tuple[float, float] | None] = lambda: None) -> None:
         self.path = data_dir / "bus_routes.json"
+        self.near_path = data_dir / "bus_nearby.json"
         self._cfg = cfg  # settings.local.bus
+        self._home = home
+        self.nearby: list[dict] = []  # 家附近（NEAR_M 內）有站牌的路線：{name, m, stop}
+        self.nearby_for = ""  # 照哪個家的位置算的
+        self.nearby_at = 0.0
         self.routes: list[dict] = []  # 設定的路線（含站牌）
         self.for_names: list[str] = []  # 上面那份是照哪些名字抓的
         self.missing: list[str] = []
@@ -74,18 +83,30 @@ class Bus:
             self.static_at = d.get("at", 0)
         except Exception:  # noqa: BLE001
             pass
+        try:
+            d = json.loads(self.near_path.read_text("utf-8"))
+            self.nearby, self.nearby_for, self.nearby_at = d["routes"], d["home"], d.get("at", 0)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _home_key(self) -> str:
+        h = self._home()
+        return f"{h[0]:.4f},{h[1]:.4f}" if h else ""
 
     @property
     def names(self) -> list[str]:
         return list(self._cfg().get("routes") or [])
 
     def due(self) -> str | None:
-        """現在該做什麼：下載路線（static）、查到站時間（live），或不用做。"""
+        """現在該做什麼：家附近的路線（nearby）、下載路線（static）、查到站時間（live），或不用做。"""
         names = self.names
-        if not names:
-            return None
         now = time.time()
         if now - self._tried < 20:
+            return None
+        key = self._home_key()
+        if key and (key != self.nearby_for or now - self.nearby_at > NEARBY_EVERY):
+            return "nearby"
+        if not names:
             return None
         stale = any("firsts" not in r for r in self.routes)  # 舊版存的沒有首班車
         if names != self.for_names or now - self.static_at > STATIC_EVERY or stale:
@@ -106,6 +127,9 @@ class Bus:
     def fetch(self, what: str) -> None:
         self._tried = time.time()
         try:
+            if what == "nearby":
+                self._nearby()
+                return
             if what == "static":
                 self._static()
             self._live()
@@ -140,6 +164,32 @@ class Bus:
         self.routes, self.for_names, self.missing, self.static_at = routes, names, missing, time.time()
         self.path.write_text(json.dumps({"routes": routes, "names": names, "missing": missing, "at": self.static_at}, ensure_ascii=False), "utf-8")
         _LOGGER.info("公車：%d 條路線", len(routes))
+
+    def _nearby(self) -> None:
+        """全部站牌裡，離家 NEAR_M 內的有哪些路線（給設定用選的）。"""
+        home, key = self._home(), self._home_key()
+        if not home:
+            return
+        hl, ho = home
+        cos = math.cos(math.radians(hl))
+        names = {r["id"]: r.get("namezh") or "" for r in _get(ROUTES)}
+        best: dict[str, dict] = {}
+        for s in _get(STOPS):
+            try:
+                m = math.hypot((float(s["latitude"]) - hl) * 111200, (float(s["longitude"]) - ho) * 111200 * cos)
+            except (KeyError, ValueError):
+                continue
+            name = names.get(s.get("routeid"))
+            if not name or m > NEAR_M:
+                continue
+            if name not in best or m < best[name]["m"]:
+                best[name] = {"name": name, "m": round(m), "stop": s.get("namezh") or ""}
+        if not names:
+            raise RuntimeError("路線清單下載回來是空的")
+        self.nearby = sorted(best.values(), key=lambda x: (x["m"], x["name"]))[:NEARBY_MAX]
+        self.nearby_for, self.nearby_at = key, time.time()
+        self.near_path.write_text(json.dumps({"routes": self.nearby, "home": key, "at": self.nearby_at}, ensure_ascii=False), "utf-8")
+        _LOGGER.info("公車：家附近 %d 條路線", len(self.nearby))
 
     def _live(self) -> None:
         req = urllib.request.Request(ESTIMATE_URL, headers={"User-Agent": "home-hub/1.0"})
@@ -194,4 +244,5 @@ class Bus:
                 out.append({"id": r["id"], "name": r["name"], "dirs": dirs,
                             "base": next((n for n in self.names if _variant(r["name"], n)), r["name"])})
         return {"names": self.names, "routes": out, "missing": self.missing if self.for_names == self.names else [],
-                "error": self.error, "updated": self.live_at or None}
+                "error": self.error, "updated": self.live_at or None,
+                "nearby": self.nearby if self.nearby_for and self.nearby_for == self._home_key() else []}

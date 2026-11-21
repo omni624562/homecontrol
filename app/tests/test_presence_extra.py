@@ -102,3 +102,27 @@ def test_bus_next_first():
     mon_early = datetime(2026, 11, 23, 4, 0)
     assert Bus.next_first(r, "0", mon_early) == "06:00"
     assert Bus.next_first({}, "0", mon_early) is None
+
+
+def test_bus_nearby(tmp_path, monkeypatch):
+    import plughub.bus as bus
+
+    def fake_get(dataset, **q):
+        if dataset == bus.ROUTES:
+            return [{"id": "1", "namezh": "橘18"}, {"id": "2", "namezh": "F312"}, {"id": "3", "namezh": "遠方"}]
+        return [
+            {"routeid": "1", "namezh": "家門口", "latitude": "25.0001", "longitude": "121.5"},
+            {"routeid": "1", "namezh": "遠一點", "latitude": "25.003", "longitude": "121.5"},
+            {"routeid": "2", "namezh": "巷口", "latitude": "25.004", "longitude": "121.5"},
+            {"routeid": "3", "namezh": "山上", "latitude": "25.1", "longitude": "121.5"},
+        ]
+
+    monkeypatch.setattr(bus, "_get", fake_get)
+    b = bus.Bus(tmp_path, lambda: {}, lambda: (25.0, 121.5))
+    assert b.due() == "nearby"
+    b.fetch("nearby")
+    assert [(x["name"], x["stop"]) for x in b.nearby] == [("橘18", "家門口"), ("F312", "巷口")]
+    assert b.report(None)["nearby"][0]["m"] == 11
+    assert b.due() is None  # 沒設定路線、附近也查過了
+    # 存檔：重開也在
+    assert bus.Bus(tmp_path, lambda: {}, lambda: (25.0, 121.5)).due() is None
