@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/app-shell";
 import { NetTitle } from "@/components/net-view";
-import { MapCanvas, type MapSel } from "@/components/map-canvas";
+import { MapCanvas, type MapPerson, type MapSel } from "@/components/map-canvas";
 import { Segmented } from "@/components/schedule-bits";
 import { api } from "@/lib/api";
 import { fmt } from "@/lib/format";
@@ -202,6 +202,14 @@ export function MapPage() {
 
   const motion = Object.fromEntries((sense?.devices || []).map((d) => [d.key, d.now]));
   const links = mapLinks(fp, devs);
+  // 家人在哪個房間（在家、教過房間、地圖上有那個區域才標）
+  const fpRooms = new Set(fp.rooms.map((r) => r.id));
+  const people: MapPerson[] = (state?.people || []).flatMap((p) => {
+    const w = p.home ? p.where : null;
+    const room = w?.room || w?.top[0]?.room;
+    if (!w || !room || !fpRooms.has(room)) return [];
+    return [{ id: p.id, name: p.name, room, sure: !!w.room, p: w.room ? w.p : w.top[0].p }];
+  });
   const nodes = sense?.net?.nodes || [];
   const ssids = [...new Set(devs.map((d) => d.ssid).filter(Boolean))] as string[];
 
@@ -436,7 +444,7 @@ export function MapPage() {
           {/* 手機：地圖放大到 600px 寬，可以左右滑 */}
           <div className="-mx-4 overflow-x-auto px-4 pb-1 sm:mx-0 sm:overflow-visible sm:px-0 sm:pb-0">
             <MapCanvas
-              fp={fp} devs={devs} links={links} layer={layer} edit={edit} sel={sel} motion={motion}
+              fp={fp} devs={devs} links={links} layer={layer} edit={edit} sel={sel} motion={motion} people={people}
               onChange={setFp} onDragEnd={save} onPick={pick} onTip={setTip}
             />
           </div>
@@ -463,6 +471,16 @@ export function MapPage() {
             <>
               {picked && (sel?.kind === "dev" || sel?.kind === "ap") && (
                 <SideCard title={sel.kind === "ap" ? "Wi-Fi 基地台" : "裝置"} onClose={() => setSel(null)}>{picked}</SideCard>
+              )}
+              {people.length > 0 && (
+                <SideCard title="誰在哪裡">
+                  {people.map((p) => (
+                    <Note key={p.id}>
+                      <b className="text-foreground">{p.name}</b>：{p.sure ? "大概在" : "可能在"}{fp.rooms!.find((r) => r.id === p.room)?.name}（{Math.round(p.p * 100)}%{p.sure ? " 把握" : "，不確定"}）
+                    </Note>
+                  ))}
+                  <Note>用手機的 Wi-Fi 訊號猜的（實驗）；房間在「網路裝置 → 誰在家 → 點人 → 在哪個房間」教。</Note>
+                </SideCard>
               )}
               <SideCard title="訊號狀況">
                 {weakDevs.length ? (

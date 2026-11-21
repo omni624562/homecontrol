@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Sheet } from "@/components/responsive-sheet";
 import { ChoiceChip } from "@/components/schedule-bits";
+import { LocateSection } from "@/components/locate";
 import { Group, Row, Section, Value } from "@/components/settings-bits";
 import { api } from "@/lib/api";
 import { useHub } from "@/lib/hub";
@@ -216,6 +217,7 @@ export function PersonSheet({ open, net, onClose, onSaved }: { open: string | nu
             <p className="text-sm text-muted-foreground">{net ? "現在沒有連著 Wi-Fi 的裝置" : "讀取中…"}</p>
           )}
         </Section>
+        {person && <LocateSection personId={person.id} />}
         <Footer>
           {err && <p role="alert" className="w-full text-sm text-destructive">{err}</p>}
           {person ? (

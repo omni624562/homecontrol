@@ -4,6 +4,8 @@ import { sigQ, shortName, type Floorplan, type MapDev, type MapLink } from "@/li
 import { cn } from "@/lib/utils";
 
 export type MapSel = { kind: "room" | "ap" | "dev"; id: string } | null;
+// 地圖上的人：猜到在哪個區域（sure=false 是把握不夠，只是最可能的那間）
+export type MapPerson = { id: string; name: string; room: string; sure: boolean; p: number };
 type Drag = { kind: "item" | "room" | "resize"; id: string };
 
 const STROKE: Record<string, string> = { good: "var(--primary)", mid: "color-mix(in srgb, var(--primary) 45%, var(--card))", weak: "var(--color-orange-500, #f97316)" };
@@ -11,7 +13,7 @@ const WARN = "var(--color-orange-500, #f97316)";
 
 // 地圖本體：區域、訊號光暈、連線、基地台、裝置；編輯時可以拖曳
 export function MapCanvas({
-  fp, devs, links, layer, edit, sel, motion, onChange, onDragEnd, onPick, onTip,
+  fp, devs, links, layer, edit, sel, motion, people = [], onChange, onDragEnd, onPick, onTip,
 }: {
   fp: Floorplan;
   devs: MapDev[];
@@ -20,6 +22,7 @@ export function MapCanvas({
   edit: boolean;
   sel: MapSel;
   motion: Record<string, number | null>;
+  people?: MapPerson[];
   onChange: (fp: Floorplan) => void;
   onDragEnd: () => void;
   onPick: (s: MapSel) => void;
@@ -188,6 +191,29 @@ export function MapCanvas({
             )}
           </g>
         );
+      })}
+      {!edit && rooms.map((r) => {
+        // 人：區域右上角的名牌，同一間有好幾個人就往左排
+        const here = people.filter((p) => p.room === r.id);
+        let right = r.x + r.w - 8 * k;
+        return here.map((p) => {
+          const label = p.sure ? p.name : `${p.name}?`;
+          const tw = [...label].reduce((a, c) => a + (c.charCodeAt(0) < 256 ? 7.2 : 12.5), 0);
+          const w = (tw + 24) * k, h = 22 * k;
+          right -= w;
+          const x = right;
+          right -= 6 * k;
+          const tip = p.sure ? `${p.name} 大概在${r.name}（${Math.round(p.p * 100)}% 把握）` : `${p.name} 可能在${r.name}（${Math.round(p.p * 100)}%，不確定）`;
+          return (
+            <g key={p.id} opacity={p.sure ? 1 : 0.6} onMouseEnter={() => onTip(tip)} onMouseLeave={() => onTip(null)}>
+              <title>{tip}</title>
+              <rect x={x} y={r.y + 8 * k} width={w} height={h} rx={h / 2} className={p.sure ? "fill-foreground" : "fill-card stroke-foreground"}
+                strokeWidth={1.5 * k} strokeDasharray={p.sure ? undefined : `${3 * k} ${3 * k}`} />
+              <circle cx={x + 11 * k} cy={r.y + 8 * k + h / 2} r={3.5 * k} className="fill-emerald-500" />
+              <text x={x + 18 * k} y={r.y + 8 * k + h / 2 + 4.3 * k} className={cn("font-semibold", p.sure ? "fill-background" : "fill-foreground")} style={{ fontSize: 12 * k }}>{label}</text>
+            </g>
+          );
+        });
       })}
       {showLinks && (
         <g>
