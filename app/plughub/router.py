@@ -204,6 +204,7 @@ class Router:
         now = time.time()
         main = self.main_mac()
         for mac, (i, rssi) in live.items():
+            mac = self.canon(mac)  # 剛連上時對照表比即時資料晚到
             c = self.clients.setdefault(mac, {"mac": mac})
             info = self.ifaces.get(i, {})
             c.update(node=main or c.get("node"), band=info.get("band", ""), ssid=info.get("ssid") or None,

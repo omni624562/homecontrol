@@ -39,3 +39,11 @@ def test_clientlist_link_mac():
     r._read_names(NAMES)
     r._read_list({"60:CF:84:41:27:D0": {"5G": {LINK: {"ip": "", "rssi": "-45"}}}})
     assert r.online(MAIN) and LINK not in r.clients
+
+
+def test_live_before_names():
+    r = make()
+    live = {r.canon(LINK): ("wl1", -45)}  # 對照表還沒到
+    r._read_names(NAMES)
+    r._apply_live(live)
+    assert LINK not in r.clients and r.online(MAIN)
