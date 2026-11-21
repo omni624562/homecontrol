@@ -26,6 +26,13 @@ POST /api/cloud/unbind      斷開所有插座的 TP-Link 雲端（要帶 {"conf
 POST /api/discover          立刻重新找插座
 PUT  /api/matter            Google Home 串接外掛回報配對狀態（只接受樹莓派本機）
 GET  /api/matter/qr.svg     配對用的 QR code
+GET  /api/auth              這台裝置配對了沒；POST /api/auth/pair {"code","name"} 配對（拿到 cookie）
+POST /api/auth/send-code    配對碼送到手機通知；POST /api/auth/code 已配對的裝置產生配對碼
+GET/PATCH/DELETE /api/auth/devices[/{id}]  已配對的裝置
+GET  /api/health            健康檢查（不用配對）：{"ok", "version"}；主程式卡住回 503
+POST /api/backup            立刻備份 data/
+
+除了 /api/auth*、/api/health，所有 /api/ 都要先配對（樹莓派本機除外）。
 GET  /matterbridge          拿通行證，轉到 Matterbridge 管理頁（:8283）
 """
 
@@ -47,11 +54,12 @@ from typing import Any
 
 import segno
 from fastapi import Body, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from . import auth as authmod
 from .assistant import MODELS as ASSISTANT_MODELS, Assistant
-from .hub import SOURCE, Hub, Locked
+from .hub import APP_VERSION, SOURCE, Hub, Locked
 from .notify import LineError, Notifier
 from .store import Store, _hms
 
@@ -64,6 +72,7 @@ store = Store(DATA_DIR)
 hub = Hub(store, Notifier(lambda: store.data["settings"].get("ntfy_topic", ""), store.dir / "secrets.json"))
 assistant = Assistant(hub)
 hub.assistant = assistant
+auth = authmod.Auth(DATA_DIR)
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -76,6 +85,86 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="插座", lifespan=lifespan, docs_url=None, redoc_url=None)
 
+LOCAL = {"127.0.0.1", "::1", "localhost"}
+# 不用配對就能用的：配對本身、健康檢查
+OPEN_PATHS = {"/api/auth", "/api/auth/pair", "/api/auth/send-code", "/api/health"}
+
+
+def _is_local(request: Request) -> bool:
+    return bool(request.client and request.client.host in LOCAL)
+
+
+def _arp_mac(ip: str) -> str | None:
+    """樹莓派的 ARP 表（容器用主機網路，看得到）：IP → MAC。"""
+    try:
+        with open("/proc/net/arp", encoding="ascii") as f:
+            next(f, None)
+            for line in f:
+                cols = line.split()
+                if len(cols) >= 4 and cols[0] == ip and cols[2] != "0x0":
+                    return cols[3].upper()
+    except OSError:
+        pass
+    return None
+
+
+def _mac_of(ip: str) -> str | None:
+    """這個 IP 現在是哪台裝置：先看樹莓派的 ARP 表（最直接），再問路由器的連線清單。"""
+    mac = _arp_mac(ip)
+    if mac:
+        return mac
+    for mac, c in hub.router.clients.items():
+        if c.get("ip") == ip and hub.router.online(mac):
+            return mac
+    return None
+
+
+def trusted_devices() -> dict[str, str]:
+    """不用配對的裝置：「誰在家」登記的家人手機、網路裝置裡勾了「信任」的。MAC → 名稱。"""
+    out: dict[str, str] = {}
+    for mac, d in store.data["net_devices"].items():
+        if d.get("trusted"):
+            out[mac] = d.get("label") or hub.router.name_of(mac)
+    for person in store.data["people"]:
+        for mac in person["macs"]:
+            out[mac] = f"{person['name']}的手機"
+    return out
+
+
+def _trusted(request: Request) -> dict[str, Any] | None:
+    if not request.client:
+        return None
+    mac = _mac_of(request.client.host)
+    name = trusted_devices().get(mac or "")
+    return {"id": f"mac:{mac}", "name": name, "trusted": True} if name else None
+
+
+def _token(request: Request) -> str | None:
+    header = request.headers.get("authorization", "")
+    if header.lower().startswith("bearer "):
+        return header[7:].strip()
+    return request.cookies.get(authmod.COOKIE)
+
+
+@app.middleware("http")
+async def require_pairing(request: Request, call_next):
+    path = request.url.path
+    guarded = path.startswith("/api/") or path == "/matterbridge"
+    if guarded and request.method not in ("GET", "HEAD", "OPTIONS"):
+        # 別的網站不能借瀏覽器的通行證來按開關
+        origin = request.headers.get("origin")
+        if origin and origin != "null":
+            from urllib.parse import urlsplit
+
+            if urlsplit(origin).netloc != request.headers.get("host", ""):
+                return JSONResponse({"detail": "不接受其他網站的請求"}, status_code=403)
+    if guarded and path not in OPEN_PATHS and not _is_local(request):
+        device = auth.check(_token(request)) or _trusted(request)
+        if not device:
+            return JSONResponse({"detail": "這台裝置還沒配對", "unpaired": True}, status_code=401)
+        request.state.device = device
+    return await call_next(request)
+
 
 def _plug(plug_id: str):
     if plug_id not in hub.plugs:
@@ -86,6 +175,106 @@ def _plug(plug_id: str):
 async def _done() -> dict[str, Any]:
     await hub.changed()
     return {"ok": True}
+
+
+# ---- 配對 ----
+
+_last_sent: float | None = None  # 上次送配對碼（monotonic；開機不到 1 分鐘時 0 會被誤判成剛送過）
+
+
+@app.get("/api/auth")
+async def auth_status(request: Request) -> dict[str, Any]:
+    device = auth.check(_token(request)) or _trusted(request)
+    return {
+        "paired": bool(device) or _is_local(request),
+        "device": {"id": device["id"], "name": device["name"]} if device else None,
+        "can_send": bool(hub.notifier.status().get("line") or store.data["settings"].get("ntfy_topic")),
+        "locked_for": auth.locked_for(),
+    }
+
+
+@app.post("/api/auth/pair")
+async def auth_pair(request: Request, body: dict = Body(...)) -> Response:
+    if auth.locked_for():
+        raise HTTPException(429, f"輸錯太多次，請 {max(1, round(auth.locked_for() / 60))} 分鐘後再試")
+    got = auth.pair(str(body.get("code") or ""), str(body.get("name") or ""), request.headers.get("user-agent", ""))
+    if not got:
+        raise HTTPException(403, "配對碼不對或已經過期")
+    token, device = got
+    _LOGGER.info("新裝置配對：%s", device["name"])
+    hub.notifier.send("有新裝置配對", f"「{device['name']}」可以控制家庭中控了；不是你的話到設定 → 已配對的裝置移除")
+    response = JSONResponse({"ok": True, "device": {"id": device["id"], "name": device["name"]}})
+    response.set_cookie(authmod.COOKIE, token, max_age=authmod.COOKIE_MAX_AGE, httponly=True, samesite="strict", path="/")
+    return response
+
+
+@app.post("/api/auth/send-code")
+async def auth_send_code() -> dict[str, Any]:
+    """配對畫面：把配對碼送到手機通知（LINE／ntfy），也印在伺服器紀錄裡。"""
+    global _last_sent
+    if _last_sent is not None and time.monotonic() - _last_sent < 60:
+        raise HTTPException(429, "剛剛送過了，1 分鐘後再試")
+    _last_sent = time.monotonic()
+    code = auth.new_code()
+    _LOGGER.warning("配對碼：%s（10 分鐘內有效）", code)
+    hub.notifier.send("配對碼", f"{code}\n10 分鐘內有效。不是你要求的話，可以不用理它")
+    return {"ok": True}
+
+
+@app.post("/api/auth/code")
+async def auth_new_code() -> dict[str, Any]:
+    """已經配對的裝置幫新裝置產生配對碼。"""
+    return {"code": auth.new_code(), "expires_in": authmod.CODE_TTL}
+
+
+@app.get("/api/auth/devices")
+async def auth_devices(request: Request) -> dict[str, Any]:
+    device = getattr(request.state, "device", None)
+    online = {m for m in hub.router.clients if hub.router.online(m)}
+    return {
+        "devices": auth.public(device["id"] if device else None),
+        # 自動認得的（不用配對）
+        "trusted": [{"mac": m, "name": n, "online": m in online, "current": bool(device and device["id"] == f"mac:{m}")}
+                    for m, n in trusted_devices().items()],
+    }
+
+
+@app.patch("/api/auth/devices/{device_id}")
+async def auth_rename(device_id: str, body: dict = Body(...)) -> dict[str, Any]:
+    if not auth.rename(device_id, str(body.get("name") or "")):
+        raise HTTPException(404, "找不到這台裝置")
+    return {"ok": True}
+
+
+@app.delete("/api/auth/devices/{device_id}")
+async def auth_remove(device_id: str) -> dict[str, Any]:
+    if not auth.remove(device_id):
+        raise HTTPException(404, "找不到這台裝置")
+    return {"ok": True}
+
+
+# ---- 健康檢查、版本、備份 ----
+
+
+@app.get("/api/health")
+async def health() -> Response:
+    ok = hub.watchdog.healthy()
+    return JSONResponse(
+        {"ok": ok, "version": APP_VERSION, "stalled_s": round(hub.watchdog.stalled_for(), 1)},
+        status_code=200 if ok else 503,
+    )
+
+
+@app.post("/api/backup")
+async def backup_now() -> dict[str, Any]:
+    if hub.backup.busy:
+        raise HTTPException(409, "正在備份")
+    hub.backup.busy = True
+    result = await asyncio.to_thread(hub.backup.run)
+    await hub.changed()
+    if not result.get("ok"):
+        raise HTTPException(500, result.get("error") or "備份失敗")
+    return result
 
 
 # ---- 狀態 ----
@@ -166,7 +355,7 @@ async def update_plug(plug_id: str, body: dict = Body(...)) -> dict[str, Any]:
         if room is not None and not store.room(room):
             raise HTTPException(400, "沒有這個區域")
         meta.room = room
-    for key in ("keep_on", "night", "matter"):
+    for key in ("keep_on", "night", "matter", "risky"):
         if key in body:
             setattr(meta, key, bool(body[key]))
     if "protect" in body:
@@ -690,7 +879,7 @@ async def set_settings(body: dict = Body(...)) -> dict[str, Any]:
         settings["new_device_alert"] = bool(body["new_device_alert"])
     if isinstance(body.get("remind"), dict):  # 主動提醒：開太久、早上會下雨、明天停水停電
         rem = settings.setdefault("remind", {})
-        for key in ("long_on", "rain", "outage_eve", "dayoff", "warn", "quake", "power", "air"):
+        for key in ("long_on", "rain", "outage_eve", "dayoff", "warn", "quake", "power", "air", "anomaly"):
             if key in body["remind"]:
                 rem[key] = bool(body["remind"][key])
     if isinstance(body.get("presence"), dict):
@@ -703,6 +892,8 @@ async def set_settings(body: dict = Body(...)) -> dict[str, Any]:
             pres["grace_min"] = min(60, max(2, int(body["presence"]["grace_min"])))
         if body["presence"].get("left_on") in ("notify", "off", "none"):  # 沒人在家還有電器開著：通知／自動關／不管
             pres["left_on"] = body["presence"]["left_on"]
+        if "risky_off" in body["presence"]:  # 高風險電器：大家出門就關（False = 只緊急通知）
+            pres["risky_off"] = bool(body["presence"]["risky_off"])
         if "home_dark_only" in body["presence"]:  # 回家的情境只在天黑後執行
             pres["home_dark_only"] = bool(body["presence"]["home_dark_only"])
     if "weather" in body:  # 首頁顯示天氣（每 10 分鐘向氣象署查一次）
@@ -881,7 +1072,7 @@ async def net() -> dict[str, Any]:
 
 @app.patch("/api/net/devices/{mac}")
 async def edit_net_device(mac: str, body: dict = Body(...)) -> dict[str, Any]:
-    """{"label": 自己取的名字 或 null, "map": 放到訊號地圖}"""
+    """{"label": 自己取的名字 或 null, "map": 放到訊號地圖, "trusted": 不用配對}"""
     m = _mac(mac)
     if not m:
         raise HTTPException(400, "MAC 格式不對")
@@ -889,6 +1080,8 @@ async def edit_net_device(mac: str, body: dict = Body(...)) -> dict[str, Any]:
     if "label" in body:
         label = str(body["label"] or "").strip()[:30]
         d["label"] = label or None
+    if "trusted" in body:
+        d["trusted"] = bool(body["trusted"])
     if "map" in body:
         d["map"] = bool(body["map"])
         if not d["map"]:
@@ -972,8 +1165,6 @@ async def notify_usage() -> dict[str, Any]:
 
 
 # ---- Google Home 串接（Matter） ----
-
-LOCAL = {"127.0.0.1", "::1", "localhost"}
 
 
 @app.put("/api/matter")

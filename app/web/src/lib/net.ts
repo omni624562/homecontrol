@@ -20,6 +20,7 @@ export interface NetClient {
   seen: number | null;
   first: number | null;
   map: boolean;
+  trusted?: boolean;
   person: string | null;
   plug: string | null;
   today_bytes: number | null;

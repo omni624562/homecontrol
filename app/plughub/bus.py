@@ -15,7 +15,7 @@ import logging
 import time
 import urllib.parse
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
@@ -87,7 +87,8 @@ class Bus:
         now = time.time()
         if now - self._tried < 20:
             return None
-        if names != self.for_names or now - self.static_at > STATIC_EVERY:
+        stale = any("firsts" not in r for r in self.routes)  # 舊版存的沒有首班車
+        if names != self.for_names or now - self.static_at > STATIC_EVERY or stale:
             return "static"
         if now - self.live_at >= (LIVE_EVERY if self._running() else IDLE_EVERY):
             return "live"
@@ -132,6 +133,9 @@ class Bus:
                 routes.append({"id": r["id"], "name": r["namezh"], "from": r.get("departurezh") or "", "to": r.get("destinationzh") or "",
                                "first": min((x for x in firsts if x is not None), default=None),
                                "last": max((x for x in lasts if x is not None), default=None),
+                               # 首班車（從起點發車）：平日／假日 × 去程 0／回程 1
+                               "firsts": {"0": _hm(r.get("gofirstbustime", "")), "1": _hm(r.get("backfirstbustime", "")),
+                                          "h0": _hm(r.get("holidaygofirstbustime", "")), "h1": _hm(r.get("holidaybackfirstbustime", ""))},
                                "stops": sorted(stops, key=lambda s: s["seq"])})
         self.routes, self.for_names, self.missing, self.static_at = routes, names, missing, time.time()
         self.path.write_text(json.dumps({"routes": routes, "names": names, "missing": missing, "at": self.static_at}, ensure_ascii=False), "utf-8")
@@ -155,6 +159,17 @@ class Bus:
             raise RuntimeError("到站時間的檔案裡沒有這些路線")
         self.live, self.live_at = live, time.time()
 
+    @staticmethod
+    def next_first(r: dict, gb: str, now: datetime | None = None) -> str | None:
+        """下一班「首班車」的發車時間 HH:MM（中午以後算明天的）。假日用假日班表。"""
+        now = now or datetime.now()
+        day = now if now.hour < 12 else now + timedelta(days=1)
+        f = r.get("firsts") or {}
+        m = f.get(("h" if day.weekday() >= 5 else "") + gb)
+        if m is None:
+            m = f.get(gb)
+        return f"{m // 60:02d}:{m % 60:02d}" if m is not None else None
+
     # ---- 給前端 ----
     def report(self, dist: Callable[[float, float], float] | None) -> dict[str, Any]:
         pick = self._cfg().get("pick") or {}
@@ -173,7 +188,8 @@ class Bus:
                 chosen = pick.get(f"{r['id']}:{gb}")
                 stop = None if chosen == "off" else next((s for s in near if s["id"] == chosen), near[0])
                 sec = self.live.get(stop["id"]) if stop and fresh else None
-                dirs.append({"gb": gb, "to": r["from"] if gb == "1" else r["to"], "stop": stop, "sec": sec, "near": near})
+                dirs.append({"gb": gb, "to": r["from"] if gb == "1" else r["to"], "stop": stop, "sec": sec, "near": near,
+                             "first": self.next_first(r, gb)})
             if dirs:
                 out.append({"id": r["id"], "name": r["name"], "dirs": dirs,
                             "base": next((n for n in self.names if _variant(r["name"], n)), r["name"])})

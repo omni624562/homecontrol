@@ -15,7 +15,31 @@ import { api } from "@/lib/api";
 import { useHub } from "@/lib/hub";
 import { useLook } from "@/lib/look";
 import { KIND, devKind, fmtBytes, isRawName, netAgo, netName, type NetClient, type NetData } from "@/lib/net";
+import type { PresenceEvent } from "@/lib/types";
 import { cn } from "@/lib/utils";
+
+// 誰在家的最近變化：誰幾點回家／出門、為什麼這樣判斷、有沒有因此執行情境
+function PresenceLog({ log, now }: { log: PresenceEvent[]; now: number }) {
+  if (!log.length) return null;
+  return (
+    <details className="group border-t">
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-sm font-medium text-muted-foreground hover:bg-muted/60 sm:px-5">
+        <ChevronRight className="size-4 transition-transform group-open:rotate-90" />最近變化
+      </summary>
+      <ol className="space-y-2 px-4 pb-4 text-sm sm:px-5">
+        {[...log].reverse().map((e, i) => (
+          <li key={`${e.t}-${i}`} className="flex gap-3">
+            <span className="w-20 shrink-0 tabular-nums text-muted-foreground">{netAgo(e.t, now)}</span>
+            <span className="min-w-0 flex-1 leading-relaxed">
+              {e.scene ? <>執行「{e.scene}」<span className="text-muted-foreground">（{e.why}{e.n ? `，動了 ${e.n} 個插座` : ""}）</span></>
+                : <><b className="font-medium">{e.name}</b> {e.home ? "回家" : "出門"}<span className="text-muted-foreground">：{e.why}</span></>}
+            </span>
+          </li>
+        ))}
+      </ol>
+    </details>
+  );
+}
 
 function NCard({ icon: I, title, end, children }: { icon: React.ElementType; title: string; end?: ReactNode; children: ReactNode }) {
   return (
@@ -101,7 +125,7 @@ export function NetPage() {
       </>
     );
 
-  const pres = (state.settings.presence || {}) as { away_scene?: string | null; home_scene?: string | null; home_dark_only?: boolean; left_on?: string; grace_min?: number };
+  const pres = (state.settings.presence || {}) as { away_scene?: string | null; home_scene?: string | null; home_dark_only?: boolean; left_on?: string; grace_min?: number; risky_off?: boolean };
   const client = (mac: string) => net.clients.find((c) => c.mac === mac);
 
   // 「ERIC watch」「ERIC Phone」看起來是同一個人：建議合併
@@ -257,6 +281,7 @@ export function NetPage() {
               ) : (
                 <p className="px-4 py-4 leading-relaxed text-muted-foreground sm:px-5">新增家人、選他的手機（和手錶），就能看誰在家，最後一個人出門時自動執行「出門」。</p>
               )}
+              <PresenceLog log={state.presence_log || []} now={net.now} />
               <div className="border-t"><Foot icon={ShieldCheck}>只看裝置有沒有連著家裡的 Wi-Fi，紀錄只留在樹莓派上；請先讓家人知道。</Foot></div>
             </NCard>
 
@@ -277,6 +302,15 @@ export function NetPage() {
                   )}
                   <SRow label="沒人在家還有電器開著" hint="設成「常開」的、「出門」情境裡設成不動的不算；同一次出門只講一次">
                     <PSelect value={pres.left_on || "notify"} opts={[["notify", "通知我"], ["off", "自動關掉"], ["none", "不用管"]]} onChange={(v) => putPres({ left_on: v })} label="怎麼處理" />
+                  </SRow>
+                  <SRow
+                    label="高風險電器"
+                    hint={(() => {
+                      const r = state.plugs.filter((p) => p.risky).map((p) => p.name);
+                      return `${r.length ? r.join("、") : "還沒有，在裝置詳細 → 進階打開"}・大家一出門就處理，不等 10 分鐘`;
+                    })()}
+                  >
+                    <PSelect value={pres.risky_off === false ? "notify" : "off"} opts={[["off", "馬上關掉"], ["notify", "只緊急通知"]]} onChange={(v) => putPres({ risky_off: v === "off" })} label="高風險電器" />
                   </SRow>
                   <SRow label="離開多久才算出門" hint="手機睡著時偶爾會斷線一下，太短會誤判">
                     <PSelect value={String(pres.grace_min || 10)} opts={[5, 10, 15, 20, 30].map((m) => [String(m), `${m} 分鐘`])} onChange={(v) => putPres({ grace_min: +v })} label="分鐘" />

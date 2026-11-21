@@ -119,6 +119,15 @@ class Notifier:
         if self._token():
             threading.Thread(target=self._push, args=(title, message, priority), daemon=True).start()
 
+    def send_sync(self, title: str, message: str, priority: str = "high") -> None:
+        """在這個執行緒裡送完才回來（程式馬上要結束時用）。"""
+        _LOGGER.info("通知：%s｜%s", title, message)
+        topic = (self._topic() or "").strip()
+        if topic:
+            _ntfy(topic, title, message, priority)
+        if self._token():
+            self._push(title, message, priority)
+
     def push_now(self, title: str, message: str) -> None:
         """馬上送、失敗就丟出原因（測試用）。"""
         token = self._token()
