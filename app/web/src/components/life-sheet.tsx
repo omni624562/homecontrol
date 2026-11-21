@@ -297,7 +297,7 @@ function TopicBody({ page, setup, more, setMore, src }: { page: TopicPage; setup
   const canMore = rows.length > ROWS || (!!page.more && (page.moreAlways || rows.length > 0));
   if (setup)
     return (
-      <div className="h-[364px] space-y-5 overflow-y-auto overscroll-contain pr-1">
+      <div className="h-[364px] space-y-5 overflow-x-hidden overflow-y-auto overscroll-contain pr-1">
         {page.settings}
         <p className="text-xs leading-relaxed text-muted-foreground">資料來源：{src}。整份資料下載到樹莓派上比對，不會送出家裡的位置或地址。</p>
       </div>
@@ -314,7 +314,7 @@ function TopicBody({ page, setup, more, setMore, src }: { page: TopicPage; setup
           </>
         )}
       </div>
-      <div className={cn("min-h-0 flex-1", more && "space-y-3 overflow-y-auto overscroll-contain pr-1")}>
+      <div className={cn("min-h-0 flex-1", more && "space-y-3 overflow-x-hidden overflow-y-auto overscroll-contain pr-1")}>
         {more && page.more}
         <ul className="divide-y">
           {shown.length ? shown.map((r, i) => <li key={i}>{r}</li>) : <li className="flex h-14 items-center justify-center text-sm text-muted-foreground">{page.empty}</li>}
@@ -479,7 +479,7 @@ function ArrivalHistory({ rows, sched }: { rows: { d: string; m: number }[]; sch
   return (
     <div className="space-y-2">
       <Label>最近 {rows.length} 次幾點到</Label>
-      <div className="relative mx-2 h-16" role="img" aria-label={`最近 ${rows.length} 次在 ${hm(ms[0])} 到 ${hm(ms[ms.length - 1])} 之間到，表定 ${sched}`}>
+      <div className="relative mx-5 h-16" role="img" aria-label={`最近 ${rows.length} 次在 ${hm(ms[0])} 到 ${hm(ms[ms.length - 1])} 之間到，表定 ${sched}`}>
         <div className="absolute inset-x-0 top-7 h-0.5 bg-border" />
         <div className="absolute top-[22px] h-3.5 rounded-full bg-amber-500/20" style={{ left: x(ms[0]), width: `calc(${x(ms[ms.length - 1])} - ${x(ms[0])})` }} />
         <div className="absolute top-3 h-9 border-l-2 border-dashed border-primary" style={{ left: x(s) }}>
