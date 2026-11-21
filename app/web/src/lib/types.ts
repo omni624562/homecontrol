@@ -238,6 +238,7 @@ export interface Local {
     next: { date: string; kinds: string[] }[];
     truck: Truck | null;
     watching: boolean;
+    done?: boolean; // 今天的已經收過了（next 從明天以後開始）
     usual?: string; // 最近幾次實際到的時間（和表定差很多才有）
   } | null;
   stops: GarbageStop[];

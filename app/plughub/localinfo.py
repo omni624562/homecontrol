@@ -281,6 +281,22 @@ class LocalInfo:
         early = min(0, (self.usual(s) or t) - t) * 60  # 平常比表定早到的話，提早開始看
         return -WINDOW_BEFORE + early <= (now - sched).total_seconds() <= WINDOW_AFTER
 
+    def done_today(self, s: dict, now: datetime | None = None) -> bool:
+        """今天的已經收過了：記到車子到過，或過了追蹤時間（表定和平常到的時間取晚的 + WINDOW_AFTER）。"""
+        now = now or datetime.now()
+        if not self.today_kinds(s, now.date()):
+            return False
+        stops = (self.truck or {}).get("stops")
+        coming = bool(self.truck and not self.truck.get("none") and stops is not None and stops >= 0)
+        key = f"{s['lineid']}:{s['rank']}"
+        if not coming and any(x["d"] == now.date().isoformat() for x in self.arrivals.get(key, [])):
+            return True
+        t = _hm(s["time"])
+        if t is None:
+            return False
+        end = max(t, self.usual(s) or t) * 60 + WINDOW_AFTER
+        return now.hour * 3600 + now.minute * 60 > end
+
     def _trucks(self) -> None:
         s = self.my_stop()
         if not s:
@@ -431,7 +447,8 @@ class LocalInfo:
         garbage = None
         if s:
             nxt = []
-            for i in range(8):
+            done = self.done_today(s)
+            for i in range(1 if done else 0, 9):
                 d = today + timedelta(days=i)
                 k = self.today_kinds(s, d)
                 if k:
@@ -439,7 +456,7 @@ class LocalInfo:
                 if len(nxt) >= 3:
                     break
             garbage = {"stop": {k: s[k] for k in ("lineid", "line", "rank", "name", "time", "memo", "days")},
-                       "today": self.today_kinds(s, today), "next": nxt, "truck": self.truck, "watching": self._truck_window()}
+                       "today": self.today_kinds(s, today), "next": nxt, "truck": self.truck, "watching": self._truck_window(), "done": done}
             u, t = self.usual(s), _hm(s["time"])
             if u is not None and t is not None and abs(u - t) >= 2:
                 garbage["usual"] = f"{u // 60:02d}:{u % 60:02d}"  # 最近實際到的時間（和表定差 2 分鐘以上才給）

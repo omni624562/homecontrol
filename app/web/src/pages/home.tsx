@@ -258,7 +258,7 @@ export function HomePage() {
       {people.length > 0 && <Pill icon={HomeIcon} tone={home ? "ok" : undefined}>{home ? `${home} 人在家` : "都出門了"}{arrived && fun && <WalkIn />}</Pill>}
       {state.summary.power != null && <Pill icon={Gauge}>{fmt(state.summary.power)} W</Pill>}
       {r?.configured && <Pill icon={r.ok ? Wifi : WifiOff} tone={r.ok ? undefined : "bad"}>{r.ok ? "網路正常" : "路由器連不上"}</Pill>}
-      {g && g.today.length > 0 && (
+      {g && g.today.length > 0 && !g.done && (
         <Chip onClick={() => setSheet("garbage")} icon={Truck} label="垃圾車" moving={!!truck && !truck.none && (truck.stops ?? -1) >= 0}
           sub={truck && !truck.none ? ((truck.stops ?? -1) >= 0 ? `還有 ${truck.stops} 站` : "已經過了") : `${dayPart(g.usual || g.stop.time)} ${g.usual ? "約 " : ""}${g.usual || g.stop.time}`} />
       )}
@@ -302,7 +302,7 @@ export function HomePage() {
     const rain = (w.hourly[0]?.pop ?? 0) >= 30 ? `降雨 ${w.hourly[0].pop}%` : "";
     it("wx", WI, <><b>{fmt(w.temp)}°</b><span className="tech-item-sub">{rain || w.text || w.obs_text}</span></>, { onClick: () => setSheet("weather"), title: `天氣：${w.text || w.obs_text || ""}${rain ? `・${rain}` : ""}` });
   }
-  if (g && g.today.length > 0) {
+  if (g && g.today.length > 0 && !g.done) {
     const coming = !!truck && !truck.none && (truck.stops ?? -1) >= 0;
     const passed = !!truck && !truck.none && !coming;
     it("tr", Truck, coming ? <><b>{truck!.stops}</b><small>站</small>{truck!.eta_min != null && <span className="tech-item-sub">約 {truck!.eta_min} 分</span>}</> : <b>{passed ? "已過" : g.usual || g.stop.time}</b>,
