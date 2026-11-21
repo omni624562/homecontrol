@@ -72,6 +72,15 @@ def band_name(key: str) -> str:
     return ""
 
 
+def mlo_links(mac: str, info: dict[str, Any]) -> set[str]:
+    """nmp_cl_json 裡 Wi-Fi 7 裝置的各頻段 link MAC（mlo_2G_mac、mlo_5G_mac…、mlo_all_mac "<A<B"）。"""
+    main = norm(mac)
+    raw = [str(v) for k, v in info.items() if k.startswith("mlo_") and k.endswith("_mac") and v]
+    links = {norm(x) for v in raw for x in v.split("<") if x.count(":") == 5}
+    links.discard(main)
+    return links
+
+
 def norm(mac: str) -> str:
     return mac.strip().upper()
 
@@ -87,6 +96,9 @@ class Router:
         self.nodes: list[dict[str, Any]] = []  # [{mac, model, ip, main}]
         self.clients: dict[str, dict[str, Any]] = {}  # MAC → {mac, node, band, ssid, rssi, ip, wired, seen}
         self.names: dict[str, dict[str, Any]] = {}  # MAC → {name, vendor, custom}
+        # Wi-Fi 7（MLO）的手機：每個頻段的連線用另一個 MAC（link），路由器管理頁顯示的是主 MAC（MLD）。
+        # 即時資料只看得到 link MAC，這裡記 link → 主 MAC，全部算到主 MAC 上。
+        self.alias: dict[str, str] = {}
         self.ifaces: dict[str, dict[str, str]] = {}  # wl0.1 → {band, ssid}
         self.traffic: dict[str, int] = {}  # MAC → 累計位元組（下載＋上傳），每分鐘讀一次；hub 讀完會清掉
         self._proc: asyncio.subprocess.Process | None = None
@@ -165,11 +177,11 @@ class Router:
                     live = {}
                 elif tag == "R":
                     i, mac, rssi = rest.split(" ")
-                    live[norm(mac)] = (i, int(rssi))
+                    live[self.canon(mac)] = (i, int(rssi))
                 elif tag == "T":
                     mac, total = rest.split(" ")
                     if total.isdigit():
-                        self.traffic[norm(mac)] = int(total)
+                        self.traffic[self.canon(mac)] = int(total)
                 elif tag == "@L":
                     self._read_list(json.loads(rest or "{}"))
                 elif tag == "@N":
@@ -205,14 +217,14 @@ class Router:
         main = self.main_mac()
         # 節點用網路線接回主路由器時，連節點 Wi-Fi 的裝置也會出現在主路由器的「有線」清單裡（從網路線那頭過來）。
         # 同一份清單裡只要在哪個 Wi-Fi 頻段看到，就以 Wi-Fi 為準；主路由器 Wi-Fi 的即時資料也算。
-        wireless = {norm(mac) for bands in data.values() for bkey, members in (bands or {}).items()
+        wireless = {self.canon(mac) for bands in data.values() for bkey, members in (bands or {}).items()
                     if not bkey.startswith("wired") for mac in (members or {})}
         for node, bands in data.items():
             node = norm(node)
             for bkey, members in (bands or {}).items():
                 wired = bkey.startswith("wired")
                 for mac, info in (members or {}).items():
-                    mac = norm(mac)
+                    mac = self.canon(mac)
                     if wired and mac in wireless:
                         continue
                     c = self.clients.setdefault(mac, {"mac": mac})
@@ -239,13 +251,28 @@ class Router:
                     except (TypeError, ValueError):
                         pass
 
+    def canon(self, mac: str) -> str:
+        m = norm(mac)
+        return self.alias.get(m, m)
+
     def _read_names(self, data: dict[str, Any]) -> None:
+        alias: dict[str, str] = {}
         for mac, info in data.items():
             if not isinstance(info, dict):
                 continue
             n = self.names.setdefault(norm(mac), {})
             n["name"] = info.get("name") or None
             n["vendor"] = info.get("vendor") or None
+            alias.update({link: norm(mac) for link in mlo_links(mac, info)})
+        self.alias = {k: v for k, v in alias.items() if k not in alias.values()}
+        for link, main in self.alias.items():
+            old = self.clients.pop(link, None)
+            if old:
+                c = self.clients.setdefault(main, {"mac": main})
+                if old.get("seen", 0) > c.get("seen", 0):
+                    c.update({k: v for k, v in old.items() if k not in ("mac", "ip")})
+            if link in self.traffic:
+                self.traffic.setdefault(main, self.traffic.pop(link))
 
     def _read_nodes(self, raw: str) -> None:
         nodes = []
