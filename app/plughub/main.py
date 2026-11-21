@@ -993,7 +993,7 @@ async def local_settings(body: dict = Body(...)) -> dict[str, Any]:
         hub.local.bike._tried = 0
     bus = cfg.setdefault("bus", {})
     if isinstance(body.get("bus_routes"), list):
-        bus["routes"] = list(dict.fromkeys(str(r).strip()[:12] for r in body["bus_routes"] if str(r).strip()))[:6]
+        bus["routes"] = list(dict.fromkeys(str(r).strip()[:12] for r in body["bus_routes"] if str(r).strip()))[:10]
         hub.local.bus._tried = 0
     if isinstance(body.get("bus_pick"), dict):  # {"路線代碼:方向": 站牌代碼 或 "off"}
         bus.setdefault("pick", {}).update({str(k)[:20]: str(v)[:12] for k, v in body["bus_pick"].items()})

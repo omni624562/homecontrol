@@ -222,6 +222,7 @@ export interface BusInfo {
   missing: string[];
   error: string | null;
   updated: number | null;
+  nearby?: { name: string; m: number; stop: string }[]; // 家附近（800 公尺內）有站牌的路線，近到遠
 }
 
 export interface BikeStation { sno: string; name: string; m: number; x?: number; y?: number; // x、y：離家往東、往北幾公尺
