@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Sheet } from "@/components/responsive-sheet";
 import { api } from "@/lib/api";
-import { busEta, dayLabel, pad2, WEEK } from "@/lib/format";
+import { busEta, dayLabel, nextPickup, pad2, WEEK } from "@/lib/format";
 import { useHub } from "@/lib/hub";
 import type { Outage } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -63,10 +63,12 @@ export function LifeSheet({ open, onClose, topic = "garbage", inline }: { open: 
   const usualNote = g?.usual ? `・表定 ${g.stop.time}，最近實際大約 ${g.usual} 到` : "";
   const status = !g
     ? null
+    : g.off_today
+      ? { big: "今天停收", small: `${g.off_today}${nextPickup(g) ? `・下一次：${nextPickup(g)}` : ""}` }
     : !g.today.length
-      ? { big: "今天不收", small: g.next[0] ? `下一次：${dayLabel(g.next[0].date)} ${g.stop.time}` : "" }
+      ? { big: "今天不收", small: nextPickup(g) ? `下一次：${nextPickup(g)}` : "" }
       : g.done
-        ? { big: "今天收過了", small: g.next[0] ? `下一次：${dayLabel(g.next[0].date)} ${g.usual ? `約 ${g.usual}` : g.stop.time}・${g.next[0].kinds.join("、")}` : "" }
+        ? { big: "今天收過了", small: nextPickup(g) ? `下一次：${nextPickup(g)}・${g.next.find((x) => !x.off)!.kinds.join("、")}` : "" }
       : t && !t.none && (t.stops ?? -1) >= 0
         ? { big: `還有 ${t.stops} 站${t.eta_min != null ? `・約 ${t.eta_min} 分鐘` : ""}`, small: `車子在${t.at_stop}附近（${t.car}，${(t.at || "").slice(11, 16)} 回報）` }
         : t && !t.none
@@ -113,14 +115,15 @@ export function LifeSheet({ open, onClose, topic = "garbage", inline }: { open: 
               {running && <TruckRoad stops={t!.stops!} />}
               <div className="flex flex-wrap gap-2">
                 {g.next.map((n) => (
-                  <div key={n.date} className="rounded-xl bg-muted/60 px-3 py-2 text-sm">
-                    <div className="font-medium">
-                      {dayLabel(n.date)} {g.stop.time}
+                  <div key={n.date} className={cn("rounded-xl px-3 py-2 text-sm", n.off ? "border border-dashed" : "bg-muted/60")}>
+                    <div className={cn("font-medium", n.off && "text-destructive")}>
+                      {dayLabel(n.date)}{n.off ? ` ${+n.date.slice(5, 7)}/${+n.date.slice(8)} ${n.off}` : ` ${g.stop.time}`}
                     </div>
-                    <div className="text-muted-foreground">{n.kinds.join("、")}</div>
+                    <div className={cn("text-muted-foreground", n.off && "line-through")}>{n.kinds.join("、")}</div>
                   </div>
                 ))}
               </div>
+              {g.history && g.history.length >= 2 && <ArrivalHistory rows={g.history} sched={g.stop.time} />}
               <div className="space-y-2">
                 <Label>清運點</Label>
                 <Select value={`${g.stop.lineid}|${g.stop.rank}`} onValueChange={(v) => { const [lineid, rank] = v.split("|"); put({ stop: { lineid, rank } }, "已更換清運點"); }}>
@@ -379,6 +382,41 @@ function BusPicker({ names, nearby, save }: { names: string[]; nearby: { name: s
         <Input value={other} onChange={(e) => setOther(e.target.value)} placeholder="其他路線，例如 965" className="h-10" aria-label="其他路線" />
         <Button type="submit" variant="outline" className="h-10" disabled={busy || full || !other.trim()}><Plus />加入</Button>
       </form>
+    </div>
+  );
+}
+
+// 最近幾次垃圾車實際到的時間：橘點畫在時間軸上，虛線是表定時間
+function ArrivalHistory({ rows, sched }: { rows: { d: string; m: number }[]; sched: string }) {
+  const [sh, sm] = sched.split(":").map(Number);
+  const s = sh * 60 + sm;
+  const ms = rows.map((r) => r.m).sort((a, b) => a - b);
+  const lo = Math.floor((Math.min(ms[0], s) - 5) / 10) * 10;
+  const hi = Math.ceil((Math.max(ms[ms.length - 1], s) + 5) / 10) * 10;
+  const x = (m: number) => `${((m - lo) / (hi - lo)) * 100}%`;
+  const hm = (m: number) => `${pad2(Math.floor(m / 60))}:${pad2(m % 60)}`;
+  const ticks: number[] = [];
+  for (let t = lo; t <= hi; t += 10) ticks.push(t);
+  return (
+    <div className="space-y-2">
+      <Label>最近 {rows.length} 次幾點到</Label>
+      <div className="relative mx-2 h-16" role="img" aria-label={`最近 ${rows.length} 次在 ${hm(ms[0])} 到 ${hm(ms[ms.length - 1])} 之間到，表定 ${sched}`}>
+        <div className="absolute inset-x-0 top-7 h-0.5 bg-border" />
+        <div className="absolute top-[22px] h-3.5 rounded-full bg-amber-500/20" style={{ left: x(ms[0]), width: `calc(${x(ms[ms.length - 1])} - ${x(ms[0])})` }} />
+        <div className="absolute top-3 h-9 border-l-2 border-dashed border-primary" style={{ left: x(s) }}>
+          <span className="absolute -top-3.5 -translate-x-1/2 text-[11px] whitespace-nowrap text-primary">表定 {sched}</span>
+        </div>
+        {rows.map((r) => (
+          <span key={r.d} title={`${+r.d.slice(5, 7)}/${+r.d.slice(8)} ${hm(r.m)}`}
+            className="absolute top-[22px] size-3.5 -translate-x-1/2 rounded-full border-2 border-card bg-amber-500" style={{ left: x(r.m) }} />
+        ))}
+        {ticks.map((t) => (
+          <span key={t} className="absolute top-10 -translate-x-1/2 font-mono text-[11px] text-muted-foreground tabular-nums" style={{ left: x(t) }}>{hm(t)}</span>
+        ))}
+      </div>
+      <p className="text-xs text-muted-foreground tabular-nums">
+        最早 {hm(ms[0])}・中間 {hm(ms[Math.floor(ms.length / 2)])}・最晚 {hm(ms[ms.length - 1])}
+      </p>
     </div>
   );
 }

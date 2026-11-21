@@ -19,7 +19,7 @@ import { LifeSheet, type LifeTopic } from "@/components/life-sheet";
 import { RoomCard, type Group } from "@/components/room-card";
 import { WeatherSheet } from "@/components/weather-sheet";
 import { api } from "@/lib/api";
-import { busEta, busIdle, dayLabel, dayPart, fmt, pad2 } from "@/lib/format";
+import { busEta, busIdle, dayLabel, dayPart, fmt, nextPickup, pad2 } from "@/lib/format";
 import { useHub, useMedia, useTick } from "@/lib/hub";
 import { useLook } from "@/lib/look";
 import type { Plug } from "@/lib/types";
@@ -258,8 +258,8 @@ export function HomePage() {
       {people.length > 0 && <Pill icon={HomeIcon} tone={home ? "ok" : undefined}>{home ? `${home} 人在家` : "都出門了"}{arrived && fun && <WalkIn />}</Pill>}
       {state.summary.power != null && <Pill icon={Gauge}>{fmt(state.summary.power)} W</Pill>}
       {r?.configured && <Pill icon={r.ok ? Wifi : WifiOff} tone={r.ok ? undefined : "bad"}>{r.ok ? "網路正常" : "路由器連不上"}</Pill>}
-      {g?.done && g.next[0] && (
-        <Chip onClick={() => setSheet("garbage")} icon={Truck} label="垃圾車" sub={`${dayLabel(g.next[0].date)} ${g.usual ? "約 " : ""}${g.usual || g.stop.time}`} />
+      {g && !(g.today.length > 0 && !g.done) && nextPickup(g) && (
+        <Chip onClick={() => setSheet("garbage")} icon={Truck} label="垃圾車" sub={nextPickup(g)} />
       )}
       {g && g.today.length > 0 && !g.done && (
         <Chip onClick={() => setSheet("garbage")} icon={Truck} label="垃圾車" moving={!!truck && !truck.none && (truck.stops ?? -1) >= 0}
@@ -305,9 +305,10 @@ export function HomePage() {
     const rain = (w.hourly[0]?.pop ?? 0) >= 30 ? `降雨 ${w.hourly[0].pop}%` : "";
     it("wx", WI, <><b>{fmt(w.temp)}°</b><span className="tech-item-sub">{rain || w.text || w.obs_text}</span></>, { onClick: () => setSheet("weather"), title: `天氣：${w.text || w.obs_text || ""}${rain ? `・${rain}` : ""}` });
   }
-  if (g?.done && g.next[0]) {
-    it("tr", Truck, <><b>{g.usual || g.stop.time}</b><span className="tech-item-sub">{dayLabel(g.next[0].date)}</span></>,
-      { onClick: () => setSheet("garbage"), title: `垃圾車：今天收過了，下一次${dayLabel(g.next[0].date)}` });
+  const nextReal = g?.next.find((x) => !x.off);
+  if (g && !(g.today.length > 0 && !g.done) && nextReal) {
+    it("tr", Truck, <><b>{g.usual || g.stop.time}</b><span className="tech-item-sub">{dayLabel(nextReal.date)}</span></>,
+      { onClick: () => setSheet("garbage"), title: `垃圾車：下一次${nextPickup(g)}` });
   } else if (g && g.today.length > 0 && !g.done) {
     const coming = !!truck && !truck.none && (truck.stops ?? -1) >= 0;
     const passed = !!truck && !truck.none && !coming;

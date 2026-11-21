@@ -176,6 +176,7 @@ class Hub:
         self.local = LocalInfo(store.dir, lambda: store.data["settings"].setdefault("local", {}),
                                lambda: (self.weather.county, self.weather.town),
                                lambda title, msg: self.notifier.send(title, msg))
+        self.local.no_pickup = self.daysoff.garbage_off
         self._calendar_at = 0.0
         self._alerts_busy = False
         self._today = date.today()

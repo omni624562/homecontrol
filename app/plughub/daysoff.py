@@ -36,6 +36,7 @@ class DaysOff:
         self.weather = weather
         self.dir = data_dir
         self.holidays: dict[str, str] = {}  # "2026-10-09" → "補假"（只有平日放假的）
+        self.lunar: dict[str, str] = {}  # 農曆年：「農曆除夕」「春節」（初一～初三），不管星期幾
         self.years: set[int] = set()
         self._hol_try: dict[int, float] = {}
         for f in data_dir.glob("holidays-*.json"):
@@ -49,6 +50,8 @@ class DaysOff:
             d = str(r.get("date", ""))
             if len(d) == 8 and r.get("isHoliday"):
                 day = date(int(d[:4]), int(d[4:6]), int(d[6:]))
+                if r.get("description") in ("農曆除夕", "春節"):
+                    self.lunar[day.isoformat()] = r["description"]
                 if day.weekday() < 5:
                     self.holidays[day.isoformat()] = r.get("description") or "放假"
         self.years.add(year)
@@ -82,6 +85,15 @@ class DaysOff:
 
     def holiday(self, day: date) -> str | None:
         return self.holidays.get(day.isoformat())
+
+    def garbage_off(self, day: date, minute: int | None) -> str | None:
+        """新北市垃圾車停收：初一～初三全天停收；除夕只收到 18:00（表定在那之後的就算停收）。"""
+        kind = self.lunar.get(day.isoformat())
+        if kind == "春節":
+            return "春節停收"
+        if kind == "農曆除夕" and (minute is None or minute >= 18 * 60):
+            return "除夕停收"
+        return None
 
     def rainy(self, day: date) -> str | None:
         """過去 24 小時下過雨，或白天降雨機率高：回傳原因。"""

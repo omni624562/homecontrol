@@ -134,7 +134,7 @@ def test_garbage_done_today(tmp_path):
     from plughub.localinfo import LocalInfo
 
     li = LocalInfo.__new__(LocalInfo)
-    li.truck, li.arrivals = None, {}
+    li.truck, li.arrivals, li.no_pickup = None, {}, lambda d, m: None
     sat = datetime(2026, 11, 21, 20, 30)  # 週六
     s = {"lineid": "L", "rank": 3, "time": "20:17", "days": {"garbage": [5], "recycling": [], "foodscraps": []}}
     assert not li.done_today(s, sat)  # 還在追蹤時間內
@@ -144,3 +144,29 @@ def test_garbage_done_today(tmp_path):
     assert li.done_today(s, sat)  # 記到車子已經到過
     li.truck = {"stops": 0}
     assert not li.done_today(s, sat)  # 車子還在（剛到站）
+
+
+
+def test_garbage_lunar_new_year(tmp_path):
+    from datetime import date
+
+    from plughub.daysoff import DaysOff
+    from plughub.localinfo import LocalInfo
+
+    off = DaysOff(tmp_path, None)
+    off._read_holidays(2027, [{"date": "20270205", "isHoliday": True, "description": "農曆除夕"},
+                              {"date": "20270206", "isHoliday": True, "description": "春節"},
+                              {"date": "20270207", "isHoliday": True, "description": "春節"},
+                              {"date": "20270208", "isHoliday": True, "description": "春節"}])
+    assert off.garbage_off(date(2027, 2, 5), 20 * 60 + 17) == "除夕停收"  # 除夕只收到 18:00
+    assert off.garbage_off(date(2027, 2, 5), 10 * 60) is None
+    assert off.garbage_off(date(2027, 2, 7), 600) == "春節停收"  # 週日也算
+    assert off.garbage_off(date(2027, 2, 9), 600) is None  # 初四恢復
+
+    li = LocalInfo.__new__(LocalInfo)
+    li.no_pickup = off.garbage_off
+    s = {"time": "20:17", "days": {"garbage": [0, 1, 3, 4, 5], "recycling": [], "foodscraps": []}}
+    assert li.week_kinds(s, date(2027, 2, 5)) == ["一般垃圾"] and li.today_kinds(s, date(2027, 2, 5)) == []
+    assert li.off_reason(s, date(2027, 2, 6)) == "春節停收"
+    assert li.off_reason(s, date(2027, 2, 7)) is None  # 週日本來就不收，不用寫停收
+    assert li.today_kinds(s, date(2027, 2, 9)) == ["一般垃圾"]
