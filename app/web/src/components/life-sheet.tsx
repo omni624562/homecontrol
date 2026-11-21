@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Bike, Bus, Check, Droplets, Home, Loader2, Plus, Truck, X, Zap, ZapOff } from "lucide-react";
+import { Bike, Bus, Check, Droplets, Home, Loader2, Plus, Settings, Truck, X, Zap, ZapOff } from "lucide-react";
 import { toast } from "sonner";
 import { BikeMap } from "@/components/bike-map";
 import { Badge } from "@/components/ui/badge";
@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Sheet } from "@/components/responsive-sheet";
 import { api } from "@/lib/api";
-import { busEta, dayLabel, nextPickup, pad2, WEEK } from "@/lib/format";
+import { busEta, busIdle, dayLabel, nextPickup, pad2, WEEK } from "@/lib/format";
 import { useHub } from "@/lib/hub";
 import type { Outage } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -39,11 +39,17 @@ export function LifeSheet({ open, onClose, topic = "garbage", inline }: { open: 
   const { state } = useHub();
   const [tab, setTab] = useState<LifeTopic>(topic);
   useEffect(() => {
-    if (open) setTab(topic);
+    if (open) {
+      setTab(topic);
+      setSetup(false);
+      setMore(false);
+    }
   }, [open, topic]);
   const L = state?.calendar.local;
   const [roads, setRoads] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [setup, setSetup] = useState(false); // 齒輪：這一頁的設定
+  const [more, setMore] = useState(false); // 看全部
   if (!L) return null;
   const g = L.garbage;
   const B = L.bus;
@@ -80,148 +86,153 @@ export function LifeSheet({ open, onClose, topic = "garbage", inline }: { open: 
   const T = TOPICS.find((x) => x.key === tab)!;
   const days = (d: number[]) => (d.length ? d.map((i) => DN[i]).join("") : "不收");
 
-  return (
-    <Sheet inline={inline} open={open} onOpenChange={(v) => !v && onClose()} title={T.label}
-      description={L.place ? `${L.place}・政府開放資料` : "政府開放資料"}
-      icon={<T.icon />}
-      wide
-      aside={
-        tab === "garbage" && status ? (
-          <div className="text-right leading-tight">
-            <div className="text-xs text-muted-foreground">{g?.today.length && !g.done ? "今天" : "垃圾車"}</div>
-            <div className={cn("text-lg font-bold whitespace-nowrap", running && "text-amber-600 dark:text-amber-400")}>{status.big.replace(/^今天/, "")}</div>
-          </div>
-        ) : tab === "bus" && B?.updated ? (
-          <span className="text-xs text-muted-foreground tabular-nums">{new Date(B.updated * 1000).toTimeString().slice(0, 5)} 更新</span>
-        ) : tab === "bike" ? (
-          <label className="flex items-center gap-2 text-sm text-muted-foreground">
-            {Y?.show && Y.updated ? <span className="tabular-nums">{new Date(Y.updated * 1000).toTimeString().slice(0, 5)} 更新</span> : "顯示"}
-            <Switch checked={Y?.show ?? true} onCheckedChange={(v) => put({ bike_show: v })} aria-label="顯示 YouBike" />
-          </label>
-        ) : undefined
-      }
-    >
-      <div className="flex flex-col gap-5">
-        {!inline && <Segmented label="生活資訊" value={tab} onChange={setTab} options={TOPICS.map((x) => [x.key, <span key={x.key} className="inline-flex items-center justify-center gap-1.5"><x.icon className="size-4 max-sm:hidden" />{x.label}</span>])} />}
-{tab === "garbage" && (
-                <section>
-          {!L.garbage_supported ? (
-            <p className="text-sm text-muted-foreground">垃圾車目前只支援新北市</p>
-          ) : !g || !status ? (
-            <p className="text-sm text-muted-foreground">{L.errors.routes ? `路線下載失敗：${L.errors.routes}` : "正在下載垃圾車路線…"}</p>
-          ) : (
-            <div className="space-y-4">
-              {status.small && <div className="text-sm leading-relaxed text-muted-foreground">{status.small}</div>}
-              {running && <TruckRoad stops={t!.stops!} />}
-              <div className="flex flex-wrap gap-2">
-                {g.next.map((n) => (
-                  <div key={n.date} className={cn("rounded-xl px-3 py-2 text-sm", n.off ? "border border-dashed" : "bg-muted/60")}>
-                    <div className={cn("font-medium", n.off && "text-destructive")}>
-                      {dayLabel(n.date)}{n.off ? ` ${+n.date.slice(5, 7)}/${+n.date.slice(8)} ${n.off}` : ` ${g.stop.time}`}
-                    </div>
-                    <div className={cn("text-muted-foreground", n.off && "line-through")}>{n.kinds.join("、")}</div>
-                  </div>
+  const pick = (k: LifeTopic) => {
+    setTab(k);
+    setSetup(false);
+    setMore(false);
+  };
+  const hm = (m: number) => `${pad2(Math.floor(m / 60))}:${pad2(m % 60)}`;
+  const upd = (sec: number | null | undefined) => (sec ? `${new Date(sec * 1000).toTimeString().slice(0, 5)} 更新` : null);
+  const md = (iso: string) => `${+iso.slice(5, 7)}/${+iso.slice(8)}`;
+
+  // 每一頁都排成一樣：狀態（band）→ 固定 4 列（rows）→ 看全部；設定收在齒輪裡
+  let page: TopicPage;
+  if (tab === "garbage") {
+    const hist = g?.history || [];
+    const ms = hist.map((x) => x.m).sort((x, y) => x - y);
+    page = {
+      band: !L.garbage_supported ? { big: "不支援", small: "垃圾車目前只支援新北市" }
+        : !g || !status ? { big: "下載中", small: L.errors.routes ? `路線下載失敗：${L.errors.routes}` : "正在下載垃圾車路線…" }
+        : running ? { custom: <TruckRoad stops={t!.stops!} /> }
+        : { big: status.big, small: status.small, hot: running },
+      rows: [
+        ...(g?.next || []).map((n) => (
+          <Row key={n.date} title={`${dayLabel(n.date)} ${md(n.date)}`} sub={n.kinds.join("、")} subClass={n.off ? "line-through" : undefined}
+            value={n.off || g!.stop.time} valueClass={n.off ? "text-base text-destructive" : undefined} />
+        )),
+        ...(ms.length >= 2 ? [<Row key="hist" title={`最近 ${ms.length} 次幾點到`} sub={`表定 ${g!.stop.time}`} value={`${hm(ms[0])}–${hm(ms[ms.length - 1]).slice(3)}`} />] : []),
+      ],
+      empty: "沒有收運資料",
+      more: g && hist.length >= 2 ? <ArrivalHistory rows={hist} sched={g.stop.time} /> : undefined,
+      settings: g ? (
+        <>
+          <div className="space-y-2">
+            <Label>清運點</Label>
+            <Select value={`${g.stop.lineid}|${g.stop.rank}`} onValueChange={(v) => { const [lineid, rank] = v.split("|"); put({ stop: { lineid, rank } }, "已更換清運點"); }}>
+              <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {L.stops.map((x) => (
+                  <SelectItem key={`${x.lineid}|${x.rank}`} value={`${x.lineid}|${x.rank}`}>{x.name}・{x.time}・{x.line}・{x.m} 公尺</SelectItem>
                 ))}
-              </div>
-              {g.history && g.history.length >= 2 && <ArrivalHistory rows={g.history} sched={g.stop.time} />}
-              <div className="space-y-2">
-                <Label>清運點</Label>
-                <Select value={`${g.stop.lineid}|${g.stop.rank}`} onValueChange={(v) => { const [lineid, rank] = v.split("|"); put({ stop: { lineid, rank } }, "已更換清運點"); }}>
-                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {L.stops.map((x) => (
-                      <SelectItem key={`${x.lineid}|${x.rank}`} value={`${x.lineid}|${x.rank}`}>
-                        {x.name}・{x.time}・{x.line}・{x.m} 公尺
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs leading-relaxed text-muted-foreground">
-                  一般垃圾 {days(g.stop.days.garbage)}・回收 {days(g.stop.days.recycling)}・廚餘 {days(g.stop.days.foodscraps)}
-                </p>
-              </div>
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <Label htmlFor="g-notify">快到時通知</Label>
-                  <p className="text-xs text-muted-foreground">剩 3 站時推播（要先在設定頁設好 LINE 通知）</p>
-                </div>
-                <Switch id="g-notify" checked={L.garbage_notify} onCheckedChange={(v) => put({ garbage_notify: v })} />
-              </div>
+              </SelectContent>
+            </Select>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              一般垃圾 {days(g.stop.days.garbage)}・回收 {days(g.stop.days.recycling)}・廚餘 {days(g.stop.days.foodscraps)}・春節（除夕晚上～初三）停收
+            </p>
+          </div>
+          <SwitchRow id="g-notify" label="快到時通知" note="剩 3 站時推播（要先在設定頁設好 LINE 通知）" checked={L.garbage_notify} onChange={(v) => put({ garbage_notify: v })} />
+        </>
+      ) : null,
+    };
+  } else if (tab === "bus") {
+    const dirs = (B?.routes || []).flatMap((rt) => rt.dirs.filter((d) => d.stop).map((d) => ({ rt, d })));
+    const soon = dirs.filter((x) => x.d.sec != null && x.d.sec >= 0).sort((x, y) => x.d.sec! - y.d.sec!)[0];
+    page = {
+      aside: upd(B?.updated),
+      band: !B?.names.length ? { big: "還沒選路線", small: "按右上角的齒輪選家附近的公車" }
+        : B.error && !B.routes.length ? { big: "查詢失敗", small: B.error }
+        : soon ? { big: `${soon.rt.name} ${busEta(soon.d.sec)}`, small: `${soon.d.stop!.name}・往${soon.d.to}`, hot: soon.d.sec! < 180 }
+        : dirs.length ? { big: busIdle(B.routes), small: `${B.names.join("、")}` }
+        : { big: "沒有站牌", small: B.updated ? "這些路線在你家 800 公尺內沒有站牌" : "正在下載路線…" },
+      rows: dirs.map(({ rt, d }) => (
+        <Row key={`${rt.id}:${d.gb}`} title={<>{rt.name}<span className="ml-2 text-sm font-normal text-muted-foreground">往{d.to}</span></>}
+          sub={`${d.stop!.name}・${d.stop!.m} 公尺`} value={busEta(d.sec)}
+          valueClass={cn(d.sec != null && d.sec >= 0 && d.sec < 180 && "text-amber-600 dark:text-amber-400", (d.sec == null || d.sec < 0) && "text-base font-medium text-muted-foreground")} />
+      )),
+      empty: B?.names.length ? "這些路線附近沒有站牌" : "還沒選路線",
+      settings: (
+        <>
+          {B && B.missing.length > 0 && <p className="text-sm text-orange-600">找不到路線：{B.missing.join("、")}</p>}
+          <BusPicker names={B?.names || []} nearby={B?.nearby || []} save={(list) => put({ bus_routes: list })} />
+          {B && B.routes.length > 0 && (
+            <div className="space-y-2">
+              <Label>在哪一站等</Label>
+              <ul className="divide-y">
+                {B.routes.flatMap((rt) => rt.dirs.map((d) => (
+                  <li key={`${rt.id}:${d.gb}`} className="flex items-center gap-3 py-2">
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium">{rt.name}<span className="ml-1.5 font-normal text-muted-foreground">往{d.to}</span></span>
+                    <Select value={d.stop?.id || "off"} onValueChange={(v) => put({ bus_pick: { [`${rt.id}:${d.gb}`]: v } })}>
+                      <SelectTrigger size="sm" className="h-8 w-44 max-w-[50%]" aria-label={`${rt.name}往${d.to}的站牌`}><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {d.near.map((x) => <SelectItem key={x.id} value={x.id}>{x.name}・{x.m} 公尺</SelectItem>)}
+                        <SelectItem value="off">不顯示這個方向</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </li>
+                )))}
+              </ul>
             </div>
           )}
-        </section>
-        )}
-
-        {tab === "bus" && (
-        <section>
-          {B && B.routes.length > 0 && (
-            <ul className="mb-4 divide-y">
-              {B.routes.flatMap((rt) =>
-                rt.dirs.map((d) => (
-                  <li key={`${rt.id}:${d.gb}`} className={cn("flex items-center gap-3 py-2.5", !d.stop && "opacity-60")}>
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate font-medium">{rt.name}<span className="ml-2 text-sm font-normal text-muted-foreground">往{d.to}</span></div>
-                      <Select value={d.stop?.id || "off"} onValueChange={(v) => put({ bus_pick: { [`${rt.id}:${d.gb}`]: v } })}>
-                        <SelectTrigger size="sm" className="mt-1 h-8 max-w-full border-0 bg-muted/60 px-2 text-sm shadow-none" aria-label={`${rt.name}往${d.to}的站牌`}><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          {d.near.map((x) => <SelectItem key={x.id} value={x.id}>{x.name}・{x.m} 公尺</SelectItem>)}
-                          <SelectItem value="off">不顯示這個方向</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    {d.stop && (
-                      <div className={cn("shrink-0 text-right text-lg font-bold whitespace-nowrap tabular-nums", d.sec != null && d.sec >= 0 && d.sec < 180 && "text-amber-600 dark:text-amber-400", (d.sec == null || d.sec < 0) && "text-base font-medium text-muted-foreground")}>
-                        {busEta(d.sec)}
-                      </div>
-                    )}
-                  </li>
-                )),
-              )}
-            </ul>
-          )}
-          {B && B.names.length > 0 && !B.routes.length && (
-            <p className="mb-4 text-sm text-muted-foreground">{B.error ? `查詢失敗：${B.error}` : B.updated ? "這些路線在你家 800 公尺內沒有站牌" : "正在下載路線…"}</p>
-          )}
-          {B && B.missing.length > 0 && <p className="mb-3 text-sm text-orange-600">找不到路線：{B.missing.join("、")}</p>}
-          <BusPicker names={B?.names || []} nearby={B?.nearby || []} save={(list) => put({ bus_routes: list })} />
-        </section>
-        )}
-
-        {tab === "bike" && (
-        <section>
-          {!Y?.show ? (
-            <p className="text-sm text-muted-foreground">沒有開啟</p>
-          ) : !Y.near.length ? (
-            <p className="text-sm text-muted-foreground">{Y.error ? `查詢失敗：${Y.error}` : Y.updated ? "你家 600 公尺內沒有站" : L.garbage_supported ? "查詢中…" : "YouBike 目前只支援新北市"}</p>
-          ) : (
-            <>
-              <BikeMap stations={Y.near} main={Y.main} onPick={(sno) => put({ bike_station: sno })} />
-              <div role="radiogroup" aria-label="首頁顯示哪一站" className="mt-2 divide-y">
+        </>
+      ),
+    };
+  } else if (tab === "bike") {
+    const main = Y?.near.find((x) => x.sno === Y.main) || Y?.near[0];
+    const bikes = (x: { ok: boolean; bikes: number }) => (!x.ok ? "暫停" : x.bikes ? `${x.bikes} 台` : "沒車");
+    page = {
+      aside: Y?.show ? upd(Y.updated) : null,
+      band: !Y?.show ? { big: "沒有開啟", small: "按右上角的齒輪打開 YouBike" }
+        : main ? { big: bikes(main), small: `${main.name}・空位 ${main.docks}${main.ebikes ? `・電輔 ${main.ebikes}` : ""}`, hot: main.ok && main.bikes > 0 && main.bikes <= 2 }
+        : { big: "附近沒有站", small: Y.error ? `查詢失敗：${Y.error}` : Y.updated ? "你家 600 公尺內沒有站" : L.garbage_supported ? "查詢中…" : "YouBike 目前只支援新北市" },
+      rows: Y?.show ? Y.near.map((x) => (
+        <Row key={x.sno} title={<>{x.name}{x.sno === Y.main && <Badge variant="secondary" className="ml-2 align-middle">首頁</Badge>}</>}
+          sub={`${x.m} 公尺・空位 ${x.docks}${x.ebikes > 0 ? `・電輔 ${x.ebikes}` : ""}`} value={bikes(x)}
+          valueClass={cn((!x.ok || !x.bikes) && "text-base font-medium text-muted-foreground", x.ok && x.bikes > 0 && x.bikes <= 2 && "text-amber-600 dark:text-amber-400")} />
+      )) : [],
+      empty: Y?.show ? "附近沒有站" : "沒有開啟",
+      more: Y?.show && Y.near.length ? <BikeMap stations={Y.near} main={Y.main} onPick={(sno) => put({ bike_station: sno })} /> : undefined,
+      moreAlways: true,
+      settings: (
+        <>
+          <SwitchRow id="y-show" label="顯示 YouBike" note="首頁和生活資訊顯示附近的站" checked={Y?.show ?? true} onChange={(v) => put({ bike_show: v })} />
+          {Y?.show && Y.near.length > 0 && (
+            <div className="space-y-1">
+              <Label>首頁顯示哪一站</Label>
+              <div role="radiogroup" aria-label="首頁顯示哪一站" className="divide-y">
                 {Y.near.map((x) => {
                   const on = x.sno === Y.main;
                   return (
                     <button key={x.sno} role="radio" aria-checked={on} onClick={() => put({ bike_station: x.sno })}
-                      className="flex w-full items-center gap-3 py-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                      className="flex w-full items-center gap-3 py-2 text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                       <span className={cn("flex size-4 shrink-0 items-center justify-center rounded-full border", on && "border-primary")}>{on && <i className="size-2 rounded-full bg-primary" />}</span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate font-medium">{x.name}</span>
-                        <span className="text-sm text-muted-foreground tabular-nums">{x.m} 公尺・空位 {x.docks}{x.ebikes > 0 && `・電輔 ${x.ebikes}`}</span>
-                      </span>
-                      <span className={cn("shrink-0 text-lg font-bold whitespace-nowrap tabular-nums", (!x.ok || !x.bikes) && "text-base font-medium text-muted-foreground", x.ok && x.bikes > 0 && x.bikes <= 2 && "text-amber-600 dark:text-amber-400")}>
-                        {!x.ok ? "暫停" : x.bikes ? `${x.bikes} 台` : "沒車"}
-                      </span>
+                      <span className="min-w-0 flex-1 truncate">{x.name}</span>
+                      <span className="text-muted-foreground tabular-nums">{x.m} 公尺</span>
                     </button>
                   );
                 })}
               </div>
-              <p className="mt-2 text-xs leading-relaxed text-muted-foreground">圓點選的那一站會顯示在首頁。每 2 分鐘更新。</p>
-            </>
+            </div>
           )}
-        </section>
-        )}
-
-{tab === "outage" && (
-                <section>
+        </>
+      ),
+    };
+  } else {
+    const hits = L.outages.filter((x) => x.hit === "road");
+    page = {
+      band: L.errors.outages && !L.outages.length ? { big: "查詢失敗", small: L.errors.outages }
+        : hits.length ? { big: `${hits.length} 則有你家的路`, small: `接下來兩週・${range(hits[0])}`, hot: true }
+        : { big: "沒有影響", small: `接下來兩週${L.outages.length ? ` ${L.outages.length} 則公告都沒寫到` : ""}・${L.roads.length ? L.roads.join("、") : "還沒設定路名"}` },
+      rows: L.outages.map((x) => {
+        const I = x.kind === "power" ? Zap : Droplets;
+        return (
+          <Row key={x.id} icon={<I className={cn("size-5", x.hit === "road" ? "text-orange-600" : "text-muted-foreground")} />}
+            title={<>{x.kind === "power" ? "停電" : x.pressure ? "停水／降壓" : "停水"} {range(x)}{x.hit === "road" && <Badge className="ml-2 bg-orange-100 align-middle text-orange-700 hover:bg-orange-100 dark:bg-orange-500/15 dark:text-orange-300">有你家的路</Badge>}</>}
+            sub={x.area} wrap={more} />
+        );
+      }),
+      empty: L.updated.outages ? "接下來兩週沒有停水、停電的公告" : "查詢中…",
+      settings: (
+        <>
           <div className="space-y-2">
             <Label htmlFor="roads">你家的路名</Label>
             <form
@@ -235,49 +246,117 @@ export function LifeSheet({ open, onClose, topic = "garbage", inline }: { open: 
               }}
             >
               <Input id="roads" value={roads ?? L.roads.join("、")} onChange={(e) => setRoads(e.target.value)} placeholder="中興街、集賢路" className="h-11" />
-              <Button type="submit" className="h-11" disabled={saving}>
-                {saving && <Loader2 className="animate-spin" />}儲存
-              </Button>
+              <Button type="submit" className="h-11" disabled={saving}>{saving && <Loader2 className="animate-spin" />}儲存</Button>
             </form>
             <p className="text-xs leading-relaxed text-muted-foreground">停水、停電的範圍寫到這些路就標出來並通知。只存在樹莓派上。</p>
           </div>
-          <div className="mt-4 flex items-center justify-between gap-4">
-            <div>
-              <Label htmlFor="o-notify">有你家的路時通知</Label>
-              <p className="text-xs text-muted-foreground">新公告一出來就推播（要先在設定頁設好 LINE 通知）</p>
-            </div>
-            <Switch id="o-notify" checked={L.outage_notify} onCheckedChange={(v) => put({ outage_notify: v })} />
-          </div>
-          <h4 className="mt-5 mb-1 text-sm font-medium text-muted-foreground">接下來兩週{L.place ? `・${L.place}` : ""}</h4>
-          {L.outages.length ? (
-            <ul className="divide-y">
-              {L.outages.map((x) => {
-                const I = x.kind === "power" ? Zap : Droplets;
-                return (
-                  <li key={x.id} className="flex gap-3 py-3">
-                    <I className={cn("mt-0.5 size-5 shrink-0", x.hit === "road" ? "text-orange-600" : "text-muted-foreground")} />
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2 text-sm font-semibold">
-                        {x.kind === "power" ? "停電" : x.pressure ? "停水／降壓" : "停水"} {range(x)}
-                        {x.hit === "road" && <Badge className="bg-orange-100 text-orange-700 hover:bg-orange-100 dark:bg-orange-500/15 dark:text-orange-300">有你家的路</Badge>}
-                      </div>
-                      <p className="mt-0.5 line-clamp-3 text-sm leading-relaxed text-muted-foreground">{x.area}</p>
-                      <p className="text-xs text-muted-foreground/80">{x.src}{x.reason && `・${x.reason}`}</p>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          ) : (
-            <p className="py-2 text-sm text-muted-foreground">{L.errors.outages ? `查詢失敗：${L.errors.outages}` : L.updated.outages ? "沒有停水、停電的公告" : "查詢中…"}</p>
-          )}
-        </section>
-        )}
-        <p className="text-xs leading-relaxed text-muted-foreground">
-          資料來源：{T.src}。整份資料下載到樹莓派上比對，不會送出家裡的位置或地址。
-        </p>
+          <SwitchRow id="o-notify" label="有你家的路時通知" note="新公告一出來就推播（要先在設定頁設好 LINE 通知）" checked={L.outage_notify} onChange={(v) => put({ outage_notify: v })} />
+        </>
+      ),
+    };
+  }
+
+  return (
+    <Sheet inline={inline} open={open} onOpenChange={(v) => !v && onClose()} title={T.label}
+      description={L.place ? `${L.place}・政府開放資料` : "政府開放資料"}
+      icon={<T.icon />}
+      wide
+      aside={
+        <>
+          {page.aside && <span className="text-xs text-muted-foreground tabular-nums">{page.aside}</span>}
+          <Button type="button" variant={setup ? "default" : "outline"} size="icon" className="size-9" aria-pressed={setup}
+            aria-label={setup ? `完成${T.label}設定` : `${T.label}設定`} onClick={() => { setSetup((v) => !v); setMore(false); }}>
+            {setup ? <Check /> : <Settings />}
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-4">
+        {!inline && <Segmented label="生活資訊" value={tab} onChange={pick} options={TOPICS.map((x) => [x.key, <span key={x.key} className="inline-flex items-center justify-center gap-1.5"><x.icon className="size-4 max-sm:hidden" />{x.label}</span>])} />}
+        <TopicBody page={page} setup={setup} more={more} setMore={setMore} src={T.src} />
       </div>
     </Sheet>
+  );
+}
+
+// 一頁的內容：band 是最上面的狀態，rows 一列一筆
+interface TopicPage {
+  aside?: string | null;
+  band: { big?: string; small?: string; hot?: boolean; custom?: React.ReactNode };
+  rows: React.ReactNode[];
+  empty: string;
+  more?: React.ReactNode; // 按「看全部」才出現（圖表、地圖）
+  moreAlways?: boolean; // 只有 4 列以內也給「看全部」（為了看 more）
+  settings: React.ReactNode;
+}
+
+const ROWS = 4;
+// 四頁一樣高：狀態 84px＋4 列×56px＋底下一行；設定、看全部都在同一個高度裡捲動
+function TopicBody({ page, setup, more, setMore, src }: { page: TopicPage; setup: boolean; more: boolean; setMore: (v: boolean) => void; src: string }) {
+  const { band, rows } = page;
+  const canMore = rows.length > ROWS || (!!page.more && (page.moreAlways || rows.length > 0));
+  if (setup)
+    return (
+      <div className="h-[364px] space-y-5 overflow-y-auto overscroll-contain pr-1">
+        {page.settings}
+        <p className="text-xs leading-relaxed text-muted-foreground">資料來源：{src}。整份資料下載到樹莓派上比對，不會送出家裡的位置或地址。</p>
+      </div>
+    );
+  const shown = more ? rows : rows.slice(0, ROWS);
+  const blanks = more ? 0 : Math.max(0, ROWS - Math.max(1, shown.length));
+  return (
+    <div className="flex h-[364px] flex-col gap-3">
+      <div className="flex h-[84px] shrink-0 flex-col justify-center rounded-xl bg-muted/60 px-4">
+        {band.custom ?? (
+          <>
+            <div className={cn("truncate text-xl font-bold tracking-tight tabular-nums", band.hot && "text-amber-600 dark:text-amber-400")}>{band.big}</div>
+            {band.small && <div className="line-clamp-2 text-sm leading-snug text-muted-foreground">{band.small}</div>}
+          </>
+        )}
+      </div>
+      <div className={cn("min-h-0 flex-1", more && "space-y-3 overflow-y-auto overscroll-contain pr-1")}>
+        {more && page.more}
+        <ul className="divide-y">
+          {shown.length ? shown.map((r, i) => <li key={i}>{r}</li>) : <li className="flex h-14 items-center justify-center text-sm text-muted-foreground">{page.empty}</li>}
+          {Array.from({ length: blanks }, (_, i) => <li key={`b${i}`} aria-hidden className="h-14" />)}
+        </ul>
+      </div>
+      <div className="flex h-8 shrink-0 items-center justify-between gap-3 text-sm">
+        {canMore ? (
+          <Button type="button" variant="link" size="sm" className="h-8 px-0" onClick={() => setMore(!more)}>
+            {more ? "收起" : rows.length > ROWS ? `看全部 ${rows.length} 筆` : "看更多"}
+          </Button>
+        ) : <span />}
+        <span className="truncate text-xs text-muted-foreground">資料：{src.split(/[（、；]/)[0]}</span>
+      </div>
+    </div>
+  );
+}
+
+function Row({ title, sub, value, icon, valueClass, subClass, wrap }: {
+  title: React.ReactNode; sub?: React.ReactNode; value?: React.ReactNode; icon?: React.ReactNode; valueClass?: string; subClass?: string; wrap?: boolean;
+}) {
+  return (
+    <div className={cn("flex items-center gap-3", wrap ? "min-h-14 py-2" : "h-14")}>
+      {icon && <span className="shrink-0">{icon}</span>}
+      <div className="min-w-0 flex-1">
+        <div className="truncate font-medium">{title}</div>
+        {sub && <div className={cn("text-sm text-muted-foreground", wrap ? "leading-relaxed" : "truncate", subClass)}>{sub}</div>}
+      </div>
+      {value != null && <div className={cn("shrink-0 text-right text-lg font-bold whitespace-nowrap tabular-nums", valueClass)}>{value}</div>}
+    </div>
+  );
+}
+
+function SwitchRow({ id, label, note, checked, onChange }: { id: string; label: string; note: string; checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <div className="flex items-center justify-between gap-4">
+      <div>
+        <Label htmlFor={id}>{label}</Label>
+        <p className="text-xs text-muted-foreground">{note}</p>
+      </div>
+      <Switch id={id} checked={checked} onCheckedChange={onChange} />
+    </div>
   );
 }
 
