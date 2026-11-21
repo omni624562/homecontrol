@@ -72,11 +72,13 @@ def test_api(app_module):
 
     hub = app_module.hub
     hub.store.data["people"] = [{"id": "p1", "name": "ERIC", "macs": [PHONE]}]
-    hub.store.data["floorplan"] = {"rooms": [{"id": "r1", "name": "臥室"}, {"id": "r2", "name": "臥室"}, {"id": "r3", "name": "客廳"}]}
+    hub.store.data["floorplan"] = {"rooms": [{"id": "r1", "name": "臥室"}, {"id": "r2", "name": "臥室"}, {"id": "r3", "name": "客廳"},
+                                             {"id": "w1", "name": "臥室"}]}
+    hub.store.data["rooms"] = [{"id": "w1", "name": "工作區"}, {"id": "d1", "name": "用餐區"}]
     app_module._is_local = lambda request: True
     c = TestClient(app_module.app)
     r = c.get("/api/locate/p1").json()
-    assert [x["name"] for x in r["rooms"]] == ["臥室 1", "臥室 2", "客廳"] and r["where"] is None
+    assert [x["name"] for x in r["rooms"]] == ["臥室 1", "臥室 2", "客廳", "工作區", "用餐區"] and r["where"] is None
     assert c.post("/api/locate/p1/train", json={"room": "r3"}).status_code == 409  # 手機沒連線
     import time
     hub.router.clients = {PHONE: {"mac": PHONE, "seen": time.time(), "node": MAIN, "rssi": -50, "live": time.time()}}

@@ -1241,8 +1241,11 @@ class Hub:
 
     def locate_rooms(self) -> list[dict[str, str]]:
         """可以教的房間：訊號地圖上畫的房間（比較完整），沒畫就用插座的房間。同名的加編號。"""
+        # 同一個房間代碼用插座房間的名字（地圖上的名字可能沒改到）；地圖上沒畫的插座房間也列進來
         fp = (self.store.data.get("floorplan") or {}).get("rooms") or []
-        src = [{"id": r["id"], "name": r["name"]} for r in fp] or [{"id": r["id"], "name": r["name"]} for r in self.store.data["rooms"]]
+        plug_rooms = {r["id"]: r["name"] for r in self.store.data["rooms"]}
+        src = [{"id": r["id"], "name": plug_rooms.get(r["id"], r["name"])} for r in fp]
+        src += [{"id": i, "name": n} for i, n in plug_rooms.items() if i not in {r["id"] for r in src}]
         seen: dict[str, int] = {}
         for r in src:
             seen[r["name"]] = seen.get(r["name"], 0) + 1
