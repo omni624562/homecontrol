@@ -58,6 +58,39 @@ def test_needs_training_and_recent_data():
     assert loc.estimate(PHONE, t + 1000) is None  # 最近沒有訊號
 
 
+def test_borrows_other_peoples_rooms():
+    other = "AA:BB:CC:00:00:01"
+    loc = Locator({})
+    t = teach(loc, "客廳", MAIN, -45, 1000)
+    t = teach(loc, "主臥", MAIN, -70, t)
+    t = teach(loc, "廚房", NODE, -50, t)
+    # 另一支手機沒教過：借用，訊號整體弱 3 dBm 也猜得到
+    for i in range(8):
+        loc.feed(other, t + 500 + i * 4, MAIN, -48 + (i % 3) - 1)
+    e = loc.estimate_any([other], t + 540)
+    assert e["room"] == "客廳" and e["borrowed"]
+    assert loc.estimate(other, t + 540) is None  # 不給 others 就不借
+    # 自己的手機有教夠：不借
+    end = live(loc, MAIN, -46, t + 600)
+    assert loc.estimate_any([PHONE], end)["borrowed"] is False
+
+
+def test_borrow_shift_from_shared_room():
+    other = "AA:BB:CC:00:00:01"
+    loc = Locator({})
+    t = teach(loc, "工作區", MAIN, -55, 1000)
+    t = teach(loc, "主臥", MAIN, -63, t)
+    # 另一支手機收訊比較弱 8 dBm：只教了主臥（-71），所以工作區應該在 -63 附近
+    loc.train([other], "主臥", seconds=200, now=t)
+    for i in range(40):
+        loc.feed(other, t + i * 4, MAIN, -71 + (i % 3) - 1)
+    t += 400
+    for i in range(8):
+        loc.feed(other, t + i * 4, MAIN, -63 + (i % 3) - 1)
+    e = loc.estimate_any([other], t + 40)
+    assert e["borrowed"] and e["top"][0]["room"] == "工作區"
+
+
 def test_training_stops_and_forget():
     loc = Locator({})
     loc.train([PHONE], "客廳", seconds=10, now=0)

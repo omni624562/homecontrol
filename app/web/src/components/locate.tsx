@@ -54,7 +54,7 @@ export function LocateSection({ personId }: { personId: string }) {
   return (
     <Section
       title="在哪個房間（實驗）"
-      note={<>拿著他的手機站在房間裡，按「我在這裡」，手機照平常的樣子拿著或放著 {Math.round(d.train_s / 60)} 分鐘。至少教兩間才會開始猜；只有 2 台路由器，隔一道牆的房間常分不出來，可以多教幾次（不同位置、手機放口袋或桌上）。訊號只存在樹莓派上。</>}
+      note={<>拿著他的手機站在房間裡，按「我在這裡」，手機照平常的樣子拿著或放著 {Math.round(d.train_s / 60)} 分鐘。至少教兩間才會開始猜（還沒教的話，先借用其他家人教的房間）；只有 2 台路由器，隔一道牆的房間常分不出來，可以多教幾次（不同位置、手機放口袋或桌上）。訊號只存在樹莓派上。</>}
     >
       <div className="rounded-xl border p-3">
         <div className="flex items-center gap-2 text-sm">
@@ -65,6 +65,7 @@ export function LocateSection({ personId }: { personId: string }) {
               <span className="text-muted-foreground">
                 {d.where.name ? `（${Math.round(d.where.p * 100)}% 把握）` : `：可能是${d.where.top.slice(0, 2).map((t) => `${t.name} ${Math.round(t.p * 100)}%`).join("、")}`}
               </span>
+              {d.where.borrowed && <span className="block text-xs text-muted-foreground">還沒教夠兩間，先借用其他家人教的房間（手機不同，可能比較不準；自己教過的房間會優先用自己的）</span>}
             </span>
           ) : (
             <span className="text-muted-foreground">{!d.online ? "手機現在沒連著 Wi-Fi" : taught < 2 ? `還要教 ${2 - taught} 間` : "訊號不夠，等一下"}</span>

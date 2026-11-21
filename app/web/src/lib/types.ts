@@ -131,6 +131,7 @@ export interface Where {
   p: number;
   top: { room: string; name: string; p: number }[];
   samples: number;
+  borrowed?: boolean; // 自己沒教夠，借用其他家人教的房間
 }
 
 export interface Hourly {

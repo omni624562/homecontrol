@@ -6,6 +6,8 @@
 
 - 每個房間的模型：連到每台路由器的機率 ×（那台路由器的訊號強度：平均、標準差的常態分布）
 - 只用教過（至少 MIN_SAMPLES 筆）的房間；把握不到 65% 就說「不確定」，並列出最可能的兩間
+- 還沒教（或只教一間）的人：借用其他家人教過的房間。不同手機收訊強弱不一樣，借來的標準差至少算
+  BORROW_SD；他自己教過的房間如果別人也教過，就用兩邊同一台路由器的平均差校正
 - 只有 2 台路由器，隔一道牆的相鄰房間常分不出來；家具、門開關、手機放口袋或桌上都會影響
 
 指紋、最近的訊號都只存在樹莓派上。
@@ -25,6 +27,7 @@ MIN_SAMPLES = 15  # 房間至少要有幾筆才拿來比
 MIN_ROOMS = 2
 KEEP = 240  # 每個房間每台路由器最多留幾筆（新的蓋舊的）
 MIN_SD = 3.0  # 訊號標準差至少算 3 dBm（避免教的時候剛好很穩，之後差一點就判不是）
+BORROW_SD = 5.0  # 借別人的指紋時，訊號標準差至少算多少（手機不同，收訊會差幾 dBm）
 SURE = 0.65  # 兩間時最高的一定 ≥ 0.5，所以門檻要高一點
 
 
@@ -81,7 +84,7 @@ class Locator:
 
     # ---- 判斷 ----
     @staticmethod
-    def _model(per: dict[str, list[int]]) -> dict[str, tuple[float, float, float]]:
+    def _model(per: dict[str, list[float]], min_sd: float = MIN_SD) -> dict[str, tuple[float, float, float]]:
         """房間的模型：路由器 → (連到它的比例, 平均, 標準差)。"""
         total = sum(len(v) for v in per.values())
         out = {}
@@ -90,19 +93,44 @@ class Locator:
                 continue
             mu = sum(vals) / len(vals)
             sd = math.sqrt(sum((v - mu) ** 2 for v in vals) / len(vals))
-            out[node] = (len(vals) / total, mu, max(MIN_SD, sd))
+            out[node] = (len(vals) / total, mu, max(min_sd, sd))
         return out
 
-    def estimate(self, mac: str, now: float | None = None) -> dict[str, Any] | None:
+    def _trained(self, mac: str) -> dict[str, dict[str, list[int]]]:
+        return {r: per for r, per in self.data["prints"].get(mac, {}).items()
+                if sum(len(v) for v in per.values()) >= MIN_SAMPLES}
+
+    def _borrow(self, own: dict[str, dict[str, list[int]]], others: list[str]) -> dict[str, dict[str, list[float]]]:
+        """把其他人教過的房間合起來；自己教過的房間用自己的。"""
+        pool: dict[str, dict[str, list[float]]] = {}
+        for m in others:
+            theirs = self._trained(m)
+            if len(theirs) < MIN_ROOMS:
+                continue
+            # 校正：兩邊都教過的房間，同一台路由器的平均差（自己 − 別人）
+            diffs = [sum(own[r][n]) / len(own[r][n]) - sum(theirs[r][n]) / len(theirs[r][n])
+                     for r in own.keys() & theirs.keys() for n in own[r].keys() & theirs[r].keys()
+                     if own[r][n] and theirs[r][n]]
+            shift = sum(diffs) / len(diffs) if diffs else 0.0
+            for r, per in theirs.items():
+                for n, vals in per.items():
+                    pool.setdefault(r, {}).setdefault(n, []).extend(v + shift for v in vals)
+        pool.update(own)
+        return pool
+
+    def estimate(self, mac: str, now: float | None = None, others: list[str] | None = None) -> dict[str, Any] | None:
+        """others：其他人的裝置；自己教不到兩間時借用他們教的房間。"""
         now = time.time() if now is None else now
         recent = [s for s in self.recent.get(mac, ()) if now - s[0] <= RECENT_S]
-        rooms = {r: per for r, per in self.data["prints"].get(mac, {}).items()
-                 if sum(len(v) for v in per.values()) >= MIN_SAMPLES}
+        rooms: dict[str, dict[str, Any]] = self._trained(mac)
+        borrowed = False
+        if len(rooms) < MIN_ROOMS and others:
+            rooms, borrowed = self._borrow(rooms, others), True
         if len(recent) < MIN_RECENT or len(rooms) < MIN_ROOMS:  # 只教一間的話每次都會猜那間
             return None
         scores = {}
         for room, per in rooms.items():
-            model = self._model(per)
+            model = self._model(per, BORROW_SD if borrowed else MIN_SD)
             ll = 0.0
             for _, node, rssi in recent:
                 if node in model:
@@ -120,11 +148,12 @@ class Locator:
         best, p = ranked[0]
         return {"room": best if p >= SURE else None, "p": round(p, 2),
                 "top": [{"room": r, "p": round(q, 2)} for r, q in ranked[:3]],
-                "samples": len(recent), "at": recent[-1][0]}
+                "samples": len(recent), "at": recent[-1][0], "borrowed": borrowed}
 
     def estimate_any(self, macs: list[str], now: float | None = None) -> dict[str, Any] | None:
-        """一個人有好幾台裝置：用最近有訊號的那台。"""
-        ests = [e for m in macs if (e := self.estimate(m, now))]
+        """一個人有好幾台裝置：用最近有訊號的那台。沒教夠的借用別人（不是這個人的裝置）教的。"""
+        others = [m for m in self.data["prints"] if m not in macs]
+        ests = [e for m in macs if (e := self.estimate(m, now, others))]
         return max(ests, key=lambda e: e["at"]) if ests else None
 
     def training_left(self, macs: list[str], now: float | None = None) -> dict[str, Any] | None:
