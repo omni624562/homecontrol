@@ -53,6 +53,8 @@ def test_needs_training_and_recent_data():
         loc.feed(PHONE, i + 1, MAIN, -50)
     assert loc.estimate(PHONE, 30) is None  # 教得不夠
     t = teach(loc, "客廳", MAIN, -50, 100)
+    assert loc.estimate(PHONE, live(loc, MAIN, -50, t)) is None  # 只教一間：不猜
+    t = teach(loc, "廚房", NODE, -50, t + 100)
     assert loc.estimate(PHONE, t + 1000) is None  # 最近沒有訊號
 
 

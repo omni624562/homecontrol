@@ -22,6 +22,7 @@ TRAIN_S = 120  # 每次教多久
 RECENT_S = 90  # 用最近多久的訊號判斷
 MIN_RECENT = 3
 MIN_SAMPLES = 15  # 房間至少要有幾筆才拿來比
+MIN_ROOMS = 2
 KEEP = 240  # 每個房間每台路由器最多留幾筆（新的蓋舊的）
 MIN_SD = 3.0  # 訊號標準差至少算 3 dBm（避免教的時候剛好很穩，之後差一點就判不是）
 SURE = 0.65  # 兩間時最高的一定 ≥ 0.5，所以門檻要高一點
@@ -97,7 +98,7 @@ class Locator:
         recent = [s for s in self.recent.get(mac, ()) if now - s[0] <= RECENT_S]
         rooms = {r: per for r, per in self.data["prints"].get(mac, {}).items()
                  if sum(len(v) for v in per.values()) >= MIN_SAMPLES}
-        if len(recent) < MIN_RECENT or not rooms:
+        if len(recent) < MIN_RECENT or len(rooms) < MIN_ROOMS:  # 只教一間的話每次都會猜那間
             return None
         scores = {}
         for room, per in rooms.items():
