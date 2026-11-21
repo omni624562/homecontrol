@@ -126,3 +126,21 @@ def test_bus_nearby(tmp_path, monkeypatch):
     assert b.due() is None  # 沒設定路線、附近也查過了
     # 存檔：重開也在
     assert bus.Bus(tmp_path, lambda: {}, lambda: (25.0, 121.5)).due() is None
+
+
+def test_garbage_done_today(tmp_path):
+    from datetime import datetime
+
+    from plughub.localinfo import LocalInfo
+
+    li = LocalInfo.__new__(LocalInfo)
+    li.truck, li.arrivals = None, {}
+    sat = datetime(2026, 11, 21, 20, 30)  # 週六
+    s = {"lineid": "L", "rank": 3, "time": "20:17", "days": {"garbage": [5], "recycling": [], "foodscraps": []}}
+    assert not li.done_today(s, sat)  # 還在追蹤時間內
+    assert li.done_today(s, datetime(2026, 11, 21, 21, 0))  # 過了 20:17 + 40 分
+    assert not li.done_today(s, datetime(2026, 11, 22, 21, 0))  # 週日不收
+    li.arrivals = {"L:3": [{"d": "2026-11-21", "m": 20 * 60 + 11}]}
+    assert li.done_today(s, sat)  # 記到車子已經到過
+    li.truck = {"stops": 0}
+    assert not li.done_today(s, sat)  # 車子還在（剛到站）

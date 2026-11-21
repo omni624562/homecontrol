@@ -65,6 +65,8 @@ export function LifeSheet({ open, onClose, topic = "garbage", inline }: { open: 
     ? null
     : !g.today.length
       ? { big: "今天不收", small: g.next[0] ? `下一次：${dayLabel(g.next[0].date)} ${g.stop.time}` : "" }
+      : g.done
+        ? { big: "今天收過了", small: g.next[0] ? `下一次：${dayLabel(g.next[0].date)} ${g.usual ? `約 ${g.usual}` : g.stop.time}・${g.next[0].kinds.join("、")}` : "" }
       : t && !t.none && (t.stops ?? -1) >= 0
         ? { big: `還有 ${t.stops} 站${t.eta_min != null ? `・約 ${t.eta_min} 分鐘` : ""}`, small: `車子在${t.at_stop}附近（${t.car}，${(t.at || "").slice(11, 16)} 回報）` }
         : t && !t.none
@@ -72,7 +74,7 @@ export function LifeSheet({ open, onClose, topic = "garbage", inline }: { open: 
           : g.watching
             ? { big: `今天${when}`, small: `還沒看到這條路線的車子出勤${usualNote}` }
             : { big: `今天${when}`, small: `${g.today.join("、")}・表定時間前 45 分鐘開始追蹤車子${usualNote}` };
-  const running = !!g && g.today.length > 0 && !!t && !t.none && (t.stops ?? -1) >= 0;
+  const running = !!g && g.today.length > 0 && !g.done && !!t && !t.none && (t.stops ?? -1) >= 0;
   const T = TOPICS.find((x) => x.key === tab)!;
   const days = (d: number[]) => (d.length ? d.map((i) => DN[i]).join("") : "不收");
 
@@ -84,7 +86,7 @@ export function LifeSheet({ open, onClose, topic = "garbage", inline }: { open: 
       aside={
         tab === "garbage" && status ? (
           <div className="text-right leading-tight">
-            <div className="text-xs text-muted-foreground">{g?.today.length ? "今天" : "垃圾車"}</div>
+            <div className="text-xs text-muted-foreground">{g?.today.length && !g.done ? "今天" : "垃圾車"}</div>
             <div className={cn("text-lg font-bold whitespace-nowrap", running && "text-amber-600 dark:text-amber-400")}>{status.big.replace(/^今天/, "")}</div>
           </div>
         ) : tab === "bus" && B?.updated ? (
