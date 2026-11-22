@@ -611,10 +611,11 @@ async def put_floorplan(body: dict = Body(...)) -> dict[str, Any]:
         fp["walls"] = [{"id": str(x.get("id"))[:20], "x1": _num(x.get("x1"), 0, w), "y1": _num(x.get("y1"), 0, h),
                         "x2": _num(x.get("x2"), 0, w), "y2": _num(x.get("y2"), 0, h)}
                        for x in (body["walls"] or [])[:300] if isinstance(x, dict)]
-    if "doors" in body:  # 門：開在哪道牆、在牆的哪裡（0～1）、多寬、往哪開
+    if "doors" in body:  # 門窗：開在哪道牆、在牆的哪裡（0～1）、多寬、往哪開；kind：win 一般窗、fwin 落地窗，沒有就是門
         walls = {x["id"] for x in fp.get("walls") or []}
         fp["doors"] = [{"id": str(x.get("id"))[:20], "wall": str(x.get("wall"))[:20], "t": _num(x.get("t"), 0, 1),
-                        "w": _num(x.get("w"), 10, 400), "flip": int(_num(x.get("flip") or 0, 0, 3))}
+                        "w": _num(x.get("w"), 10, 600), "flip": int(_num(x.get("flip") or 0, 0, 3)),
+                        **({"kind": x["kind"]} if x.get("kind") in ("win", "fwin") else {})}
                        for x in (body["doors"] or [])[:150] if isinstance(x, dict) and str(x.get("wall")) in walls]
     z = lambda v: None if v is None else _num(v, 0, 5)  # noqa: E731
     if "items" in body:

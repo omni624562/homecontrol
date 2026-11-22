@@ -149,9 +149,12 @@ def test_floorplan_walls_doors(app_module, client):
     client.cookies.set("plughub_token", token)
     r = client.put("/api/floorplan", json={
         "walls": [{"id": "w1", "x1": 0, "y1": 0, "x2": 300, "y2": 0}, "壞的"],
-        "doors": [{"id": "d1", "wall": "w1", "t": 0.5, "w": 75, "flip": 2}, {"id": "d2", "wall": "沒有這道牆", "t": 0.5, "w": 75}],
+        "doors": [{"id": "d1", "wall": "w1", "t": 0.5, "w": 75, "flip": 2}, {"id": "d2", "wall": "沒有這道牆", "t": 0.5, "w": 75},
+                  {"id": "n1", "wall": "w1", "t": 0.2, "w": 100, "kind": "fwin"}, {"id": "n2", "wall": "w1", "t": 0.8, "w": 60, "kind": "亂寫"}],
     })
     assert r.status_code == 200
     fp = r.json()
     assert [x["id"] for x in fp["walls"]] == ["w1"]
-    assert fp["doors"] == [{"id": "d1", "wall": "w1", "t": 0.5, "w": 75, "flip": 2}]
+    assert fp["doors"] == [{"id": "d1", "wall": "w1", "t": 0.5, "w": 75, "flip": 2},
+                           {"id": "n1", "wall": "w1", "t": 0.2, "w": 100, "flip": 0, "kind": "fwin"},
+                           {"id": "n2", "wall": "w1", "t": 0.8, "w": 60, "flip": 0}]

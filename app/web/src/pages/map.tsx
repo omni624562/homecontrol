@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlertCircle, Check, CheckCircle2, DoorOpen, FlipHorizontal2, ImagePlus, LayoutGrid, Minus, MousePointer2, Pencil, Plus, Square, Trash2, Wifi, WifiOff, X } from "lucide-react";
+import { AlertCircle, AppWindow, Check, CheckCircle2, DoorOpen, FlipHorizontal2, ImagePlus, LayoutGrid, Minus, MousePointer2, Pencil, Plus, Square, Trash2, Wifi, WifiOff, X } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -274,7 +274,7 @@ export function MapPage() {
   if (edit && !sel)
     picked = (
       <>
-        <Note>{tool === "wall" ? "畫牆：在地圖上按住，拖到牆的另一端放開。會自動對齊別的牆和區域的轉角；按住 Shift 可以畫斜的。畫完按「選取」或 Esc。" : tool === "door" ? "放門：點一道牆，就在那裡開一扇門（預設 90 公分）。之後可以選它改寬度、換開門方向。" : "點區域、裝置、牆、門或 Wi-Fi 基地台可以選取、拖曳移動。選了區域可以拖轉角、拖牆改形狀。上面的「畫牆」「放門」可以加上實牆和門。"}</Note>
+        <Note>{tool === "wall" ? "畫牆：在地圖上按住，拖到牆的另一端放開。會自動對齊別的牆和區域的轉角；按住 Shift 可以畫斜的。畫完按「選取」或 Esc。" : tool === "door" ? "放門：點一道牆，就在那裡開一扇門（預設 90 公分）。之後可以選它改寬度、換開門方向。" : tool === "window" ? "放窗：點一道牆，就在那裡開一扇窗（預設一般窗 120 公分）。之後可以選它改成落地窗、改寬度。" : "點區域、裝置、牆、門或 Wi-Fi 基地台可以選取、拖曳移動。選了區域可以拖轉角、拖牆改形狀。上面的「畫牆」「放門」「放窗」可以加上實牆和門窗。"}</Note>
         <Q sub="用來算距離">地圖的實際寬度</Q>
         <div className="flex items-center gap-2">
           <CommitInput
@@ -319,7 +319,7 @@ export function MapPage() {
           <Note>拖牆移動、拖兩端的圓點改長度（會對齊別的牆和轉角，按住 Shift 可以斜的）。按 Delete 也能刪掉。</Note>
           <Button variant="outline" className="h-10 self-start text-destructive hover:text-destructive"
             onClick={() => { update({ ...fp, walls: (fp.walls || []).filter((x) => x.id !== w.id), doors: (fp.doors || []).filter((x) => x.wall !== w.id) }); setSel(null); }}>
-            <Trash2 />刪掉這道牆{(fp.doors || []).some((x) => x.wall === w.id) ? "（和上面的門）" : ""}
+            <Trash2 />刪掉這道牆{(fp.doors || []).some((x) => x.wall === w.id) ? "（和上面的門窗）" : ""}
           </Button>
         </>
       );
@@ -327,11 +327,27 @@ export function MapPage() {
     const d = (fp.doors || []).find((x) => x.id === sel.id);
     const u = fp.w / (fp.meters || 12);
     const setDoor = (patch: Partial<NonNullable<typeof d>>) => update({ ...fp, doors: (fp.doors || []).map((x) => (x.id === sel.id ? { ...x, ...patch } : x)) });
-    if (d)
+    const isWin = !!d?.kind;
+    const widths = isWin ? [0.6, 0.9, 1.2, 1.5, 1.8, 2.4, 3] : [0.7, 0.8, 0.9, 1.2, 1.6];
+    if (d && isWin)
+      picked = (
+        <>
+          <Q>哪一種窗</Q>
+          <Segmented label="窗的種類" value={d.kind!} onChange={(v) => setDoor({ kind: v as "win" | "fwin" })} options={[["win", "一般窗"], ["fwin", "落地窗"]]} />
+          <Q>窗寬</Q>
+          <Segmented label="窗寬" value={String(widths.reduce((a, b) => (Math.abs(b * u - d.w) < Math.abs(a * u - d.w) ? b : a)))}
+            onChange={(v) => setDoor({ w: Math.round(Number(v) * u) })}
+            options={widths.map((x) => [String(x), String(Math.round(x * 100))] as [string, string])} />
+          <p className="text-xs text-muted-foreground">公分。</p>
+          <Button variant="outline" className="h-10 w-fit text-destructive hover:text-destructive" onClick={() => { update({ ...fp, doors: (fp.doors || []).filter((x) => x.id !== d.id) }); setSel(null); }}><Trash2 />刪掉</Button>
+          <Note>沿著牆拖曳可以移動窗的位置。一般窗畫成牆上的細框，落地窗多畫兩片拉門的樣子。</Note>
+        </>
+      );
+    else if (d)
       picked = (
         <>
           <Q>門寬</Q>
-          <Segmented label="門寬" value={String([0.7, 0.8, 0.9, 1.2, 1.6].reduce((a, b) => (Math.abs(b * u - d.w) < Math.abs(a * u - d.w) ? b : a)))}
+          <Segmented label="門寬" value={String(widths.reduce((a, b) => (Math.abs(b * u - d.w) < Math.abs(a * u - d.w) ? b : a)))}
             onChange={(v) => setDoor({ w: Math.round(Number(v) * u) })}
             options={[["0.7", "70"], ["0.8", "80"], ["0.9", "90"], ["1.2", "120"], ["1.6", "160"]]} />
           <p className="text-xs text-muted-foreground">公分。廁所門大約 70～80、房門 90、大門或雙開 120 以上。</p>
@@ -408,7 +424,7 @@ export function MapPage() {
     const l = links.find((x) => x.dev.key === sel.id);
     if (d && fp.items[d.key]) {
       const linkTxt = l ? (
-        <>連到「{l.ap.name}」{l.guess ? "（同名的 Wi-Fi 有好幾台，先猜最近的）" : ""}，相距約 {fmt(l.L, 1)} 公尺，其中約 {fmt(l.band, 1)} 公尺經過人的腰到胸的高度{l.walls ? `，中間隔了 ${l.walls} 道牆（門口不算）` : (fp.walls || []).length ? "，中間沒有隔牆" : ""}：<b className="text-foreground">{qText[l.q]}</b>{l.walls >= 2 ? "（牆會吃掉訊號，人走過去的跳動比較小）" : ""}{l.rooms.length > 0 && <>。這條線有動靜時，人可能在{l.rooms.join("、")}</>}</>
+        <>連到「{l.ap.name}」{l.guess ? "（同名的 Wi-Fi 有好幾台，先猜最近的）" : ""}，相距約 {fmt(l.L, 1)} 公尺，其中約 {fmt(l.band, 1)} 公尺經過人的腰到胸的高度{l.walls ? `，中間隔了 ${l.walls} 道牆（門窗的地方不算）` : (fp.walls || []).length ? "，中間沒有隔牆" : ""}：<b className="text-foreground">{qText[l.q]}</b>{l.walls >= 2 ? "（牆會吃掉訊號，人走過去的跳動比較小）" : ""}{l.rooms.length > 0 && <>。這條線有動靜時，人可能在{l.rooms.join("、")}</>}</>
       ) : d.node ? (
         `連在 ${nodes.find((n) => n.mac === d.node)?.model || ""}，在地圖上加一台 Wi-Fi 基地台、選這一台，就會畫出連線`
       ) : d.ssid ? (
@@ -445,7 +461,7 @@ export function MapPage() {
           {edit ? (
             <div className="flex flex-wrap gap-2">
               <div className="flex rounded-lg border bg-muted/50 p-0.5" role="group" aria-label="工具">
-                {([["select", MousePointer2, "選取"], ["wall", Minus, "畫牆"], ["door", DoorOpen, "放門"]] as const).map(([t, I, label]) => (
+                {([["select", MousePointer2, "選取"], ["wall", Minus, "畫牆"], ["door", DoorOpen, "放門"], ["window", AppWindow, "放窗"]] as const).map(([t, I, label]) => (
                   <Button key={t} size="sm" variant={tool === t ? "default" : "ghost"} className="h-8" aria-pressed={tool === t} onClick={() => setTool(t)}><I />{label}</Button>
                 ))}
               </div>

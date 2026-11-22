@@ -63,7 +63,8 @@ export function topEdge(r: FpRoom): { y: number; left: number; right: number } {
 }
 // 實牆：一條線段；門：開在某道牆上，t = 門的中心在牆的哪裡（0～1），w = 門寬（地圖單位），flip = 開的方向（0～3：哪一側、鉸鏈在哪頭）
 export interface FpWall { id: string; x1: number; y1: number; x2: number; y2: number }
-export interface FpDoor { id: string; wall: string; t: number; w: number; flip?: number }
+// kind：win 一般窗、fwin 落地窗，沒有就是門
+export interface FpDoor { id: string; wall: string; t: number; w: number; flip?: number; kind?: "win" | "fwin" }
 export interface FpAp { id: string; name: string; ssid?: string | null; node?: string | null; z?: number | null }
 export interface FpItem { x: number; y: number; z?: number | null }
 export interface Floorplan {
@@ -249,7 +250,7 @@ export function fpPayload(fp: Floorplan) {
     rooms: (fp.rooms || []).map((r) => ({ ...r, x: R(r.x), y: R(r.y), w: R(r.w), h: R(r.h), pts: r.pts ? r.pts.map(([x, y]) => [R(x), R(y)]) : null })),
     items: Object.fromEntries(Object.entries(fp.items).map(([k, v]) => [k, { x: R(v.x), y: R(v.y), z: v.z ?? null }])),
     walls: (fp.walls || []).map((x) => ({ ...x, x1: R(x.x1), y1: R(x.y1), x2: R(x.x2), y2: R(x.y2) })),
-    doors: (fp.doors || []).map((x) => ({ ...x, t: Math.round(x.t * 1000) / 1000, w: R(x.w), flip: x.flip || 0 })),
+    doors: (fp.doors || []).map((x) => ({ ...x, kind: x.kind || undefined, t: Math.round(x.t * 1000) / 1000, w: R(x.w), flip: x.flip || 0 })),
     aps: fp.aps,
     auto_nodes: fp.auto_nodes || [],
   };
@@ -289,7 +290,7 @@ function segHit(x1: number, y1: number, x2: number, y2: number, x3: number, y3: 
   return s > 0 && s < 1 && u >= 0 && u <= 1 ? { s, u } : null;
 }
 
-// 兩點之間隔了幾道實牆；剛好從門口穿過去的不算
+// 兩點之間隔了幾道實牆；剛好從門口或窗戶穿過去的不算
 export function wallsCrossed(fp: Floorplan, x1: number, y1: number, x2: number, y2: number): number {
   let n = 0;
   for (const w of fp.walls || []) {
