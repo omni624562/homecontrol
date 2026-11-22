@@ -1,5 +1,5 @@
 import { useSyncExternalStore, type ReactNode } from "react";
-import { BarChart3, Clock, Home, MessageSquareText, PanelLeftClose, PanelLeftOpen, Settings, Sun, Wifi } from "lucide-react";
+import { BarChart3, Clock, Home, Map as MapIcon, MessageSquareText, PanelLeftClose, PanelLeftOpen, Settings, Sun, Wifi } from "lucide-react";
 import { useLook } from "@/lib/look";
 import { useAsk } from "@/components/ask-sheet";
 import { useHub } from "@/lib/hub";
@@ -10,9 +10,10 @@ import { cn } from "@/lib/utils";
 export const TABS = [
   { key: "plugs", label: "首頁", icon: Home, mobile: true },
   { key: "life", label: "生活", icon: Sun, mobile: true },
+  { key: "map", label: "家中地圖", icon: MapIcon, mobile: true },
   { key: "schedule", label: "排程", icon: Clock, mobile: false },
   { key: "energy", label: "用電", icon: BarChart3, mobile: true },
-  { key: "net", label: "網路裝置", icon: Wifi, mobile: true },
+  { key: "net", label: "網路裝置", icon: Wifi, mobile: false },
   { key: "settings", label: "設定", icon: Settings, mobile: true },
 ] as const;
 
@@ -46,7 +47,7 @@ function useRail(): boolean {
 }
 
 export function AppShell({ tab: raw, children }: { tab: string; children: ReactNode }) {
-  const tab = raw === "edit" ? "plugs" : raw === "map" ? "net" : raw;
+  const tab = raw === "edit" ? "plugs" : raw;
   const { connected, state } = useHub();
   const mini = useRail();
   const connText = connected ? "已連線" : state ? "重新連線中…" : "連線中…";

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlertCircle, AppWindow, Check, CheckCircle2, DoorOpen, FlipHorizontal2, ImagePlus, LayoutGrid, Minus, MousePointer2, Pencil, Plus, Square, Trash2, Wifi, WifiOff, X } from "lucide-react";
+import { AlertCircle, AppWindow, List, Check, CheckCircle2, DoorOpen, FlipHorizontal2, ImagePlus, LayoutGrid, Minus, MousePointer2, Pencil, Plus, Square, Trash2, Wifi, WifiOff, X } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -10,7 +10,6 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/app-shell";
-import { NetTitle } from "@/components/net-view";
 import { MapCanvas, type MapPerson, type MapSel, type MapTool } from "@/components/map-canvas";
 import { Segmented } from "@/components/schedule-bits";
 import { api } from "@/lib/api";
@@ -200,12 +199,15 @@ export function MapPage() {
 
   const head = (
     <PageHeader
-      title={<NetTitle view="map" />}
-      sub={edit ? "拖曳區域和裝置到實際的位置；選了區域可以改形狀；也可以畫牆、放門" : "各裝置的 Wi-Fi 訊號：藍色好、橘色弱；點裝置看詳細、設定高度"}
+      title="家中地圖"
+      sub={edit ? "拖曳區域和裝置到實際的位置；選了區域可以改形狀；也可以畫牆、放門窗" : "家人在哪、哪裡有動靜、各裝置的 Wi-Fi 訊號；點裝置看詳細、設定高度"}
       actions={
+        <>
+        {!edit && <Button asChild variant="ghost" className="h-10 lg:hidden"><a href="#net"><List />網路裝置</a></Button>}
         <Button variant={edit ? "default" : "outline"} className="h-10" onClick={() => { setEdit((v) => !v); setSel(null); setTool("select"); }}>
           {edit ? <><Check />完成</> : <><Pencil />編輯</>}
         </Button>
+        </>
       }
     />
   );

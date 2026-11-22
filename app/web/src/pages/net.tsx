@@ -8,7 +8,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { PageHeader } from "@/components/app-shell";
-import { NetTitle } from "@/components/net-view";
 import { NetDevSheet, PersonSheet } from "@/components/net-sheets";
 import { ChoiceChip } from "@/components/schedule-bits";
 import { api } from "@/lib/api";
@@ -107,7 +106,7 @@ export function NetPage() {
       : `${(r.nodes || []).map((n) => n.model).join(" + ")}${people.length ? `・${people.some((x) => x.home) ? `${people.filter((x) => x.home).length} 人在家` : "大家都出門了"}` : "・看誰在家、陌生裝置通知"}`;
   const head = (chips?: ReactNode[]) => (
     <PageHeader
-      title={<NetTitle view="list" />}
+      title="網路裝置"
       sub={routerLine}
       chips={chips?.length ? chips : undefined}
       chipsClassName="xl:justify-start xl:[&>:first-child]:ml-auto"
