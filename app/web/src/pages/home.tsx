@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { DndContext, KeyboardSensor, PointerSensor, closestCorners, useDroppable, useSensor, useSensors, type DragEndEvent, type DragOverEvent } from "@dnd-kit/core";
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Bike, Bus, Clock, DoorOpen, MessageSquareText, Droplets, Gauge, Home as HomeIcon, Loader2, Pencil, Power, RotateCcw, Truck, Wifi, WifiOff, Zap } from "lucide-react";
+import { Bike, Bus, Clock, DoorOpen, MessageSquareText, Droplets, Gauge, Home as HomeIcon, Loader2, Pencil, Power, Truck, Wifi, WifiOff, Zap } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -251,7 +251,6 @@ export function HomePage() {
   const sideKey = JSON.stringify(serverSide || null);
   const [localSide, setLocalSide] = useState<{ base: string; order: SideId[] | null } | null>(null);
   const sideOrder = (localSide && localSide.base === sideKey ? localSide.order : serverSide) || SIDE_DEFAULT;
-  const customSide = JSON.stringify(sideOrder) !== JSON.stringify(SIDE_DEFAULT);
   const saveSide = (order: SideId[] | null) => {
     setLocalSide({ base: sideKey, order });
     putLayout({ home_side: order });
@@ -553,20 +552,6 @@ export function HomePage() {
                 ))
               )}
             </div>
-            {canDrag && (custom || (side && customSide)) && !dragCols && (
-              <div className="-mt-1 mb-4 flex items-center justify-end gap-2 text-xs text-muted-foreground">
-                <span>卡片的位置是你自己拖的</span>
-                <Button variant="outline" size="sm" className="bg-background text-muted-foreground"
-                  onClick={() => {
-                    setLocal({ base: serverKey, lay: Object.fromEntries(Object.entries(layout || {}).filter(([k]) => k !== String(nCols))) });
-                    setLocalSide({ base: sideKey, order: null });
-                    putLayout({ home_layout: { [String(nCols)]: null }, home_side: null });
-                  }}
-                  title="房間照插座數自動分欄、右邊回到原本的順序">
-                  <RotateCcw />恢復預設排列
-                </Button>
-              </div>
-            )}
           </div>
           {look === "tech" && (() => {
             const panel = (id: SideId, handle?: DragHandle, dragging?: boolean) => {
