@@ -598,7 +598,7 @@ def _fp_room(r: dict, w: float, h: float) -> dict[str, Any]:
 
 @app.put("/api/floorplan")
 async def put_floorplan(body: dict = Body(...)) -> dict[str, Any]:
-    """{"w","h","meters","rooms":[{id,name,x,y,w,h}],"items":{key:{x,y,z}},"aps":[{id,name,ssid,z}]}
+    """{"w","h","meters","rooms":[{id,name,x,y,w,h,pts}],"walls":[{id,x1,y1,x2,y2}],"doors":[{id,wall,t,w,flip}],"items":{key:{x,y,z}},"aps":[{id,name,ssid,z}]}
 
     meters = 地圖寬度是幾公尺（算距離用）；z = 離地高度（公尺），None = 用預設值。
     """
@@ -607,6 +607,15 @@ async def put_floorplan(body: dict = Body(...)) -> dict[str, Any]:
     h = _num(body.get("h", fp["h"]), 200, 4000)
     if "rooms" in body:
         fp["rooms"] = [_fp_room(r, w, h) for r in body["rooms"][:40]] if body["rooms"] is not None else None
+    if "walls" in body:  # 實牆：線段
+        fp["walls"] = [{"id": str(x.get("id"))[:20], "x1": _num(x.get("x1"), 0, w), "y1": _num(x.get("y1"), 0, h),
+                        "x2": _num(x.get("x2"), 0, w), "y2": _num(x.get("y2"), 0, h)}
+                       for x in (body["walls"] or [])[:300] if isinstance(x, dict)]
+    if "doors" in body:  # 門：開在哪道牆、在牆的哪裡（0～1）、多寬、往哪開
+        walls = {x["id"] for x in fp.get("walls") or []}
+        fp["doors"] = [{"id": str(x.get("id"))[:20], "wall": str(x.get("wall"))[:20], "t": _num(x.get("t"), 0, 1),
+                        "w": _num(x.get("w"), 10, 400), "flip": int(_num(x.get("flip") or 0, 0, 3))}
+                       for x in (body["doors"] or [])[:150] if isinstance(x, dict) and str(x.get("wall")) in walls]
     z = lambda v: None if v is None else _num(v, 0, 5)  # noqa: E731
     if "items" in body:
         fp["items"] = {str(k)[:80]: {"x": _num(v.get("x"), 0, w), "y": _num(v.get("y"), 0, h), "z": z(v.get("z"))}

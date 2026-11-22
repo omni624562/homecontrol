@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlertCircle, Check, CheckCircle2, ImagePlus, LayoutGrid, Pencil, Plus, Square, Trash2, Wifi, WifiOff, X } from "lucide-react";
+import { AlertCircle, Check, CheckCircle2, DoorOpen, FlipHorizontal2, ImagePlus, LayoutGrid, Minus, MousePointer2, Pencil, Plus, Square, Trash2, Wifi, WifiOff, X } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/app-shell";
 import { NetTitle } from "@/components/net-view";
-import { MapCanvas, type MapPerson, type MapSel } from "@/components/map-canvas";
+import { MapCanvas, type MapPerson, type MapSel, type MapTool } from "@/components/map-canvas";
 import { Segmented } from "@/components/schedule-bits";
 import { api } from "@/lib/api";
 import { fmt } from "@/lib/format";
@@ -102,6 +102,7 @@ export function MapPage() {
   const [edit, setEdit] = useState(false);
   const [layer, setLayer] = useState<"signal" | "motion">("signal");
   const [sel, setSel] = useState<MapSel>(null);
+  const [tool, setTool] = useState<MapTool>("select");
   const [tip, setTip] = useState<string | null>(null);
   const fpRef = useRef<Floorplan | null>(null);
   const saveT = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -173,6 +174,25 @@ export function MapPage() {
 
   useEffect(() => () => clearTimeout(saveT.current), []);
 
+  // 編輯時按 Delete 刪掉選取的牆或門；Esc 回到選取工具
+  useEffect(() => {
+    if (!edit) return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement)?.closest("input, textarea, select, [contenteditable]")) return;
+      const f = fpRef.current;
+      if (e.key === "Escape") setTool("select");
+      if ((e.key === "Delete" || e.key === "Backspace") && f && sel && (sel.kind === "wall" || sel.kind === "door")) {
+        e.preventDefault();
+        update(sel.kind === "wall"
+          ? { ...f, walls: (f.walls || []).filter((x) => x.id !== sel.id), doors: (f.doors || []).filter((x) => x.wall !== sel.id) }
+          : { ...f, doors: (f.doors || []).filter((x) => x.id !== sel.id) });
+        setSel(null);
+      }
+    };
+    addEventListener("keydown", onKey);
+    return () => removeEventListener("keydown", onKey);
+  }, [edit, sel, update]);
+
   const pick = (s: MapSel) => {
     setSel(s);
     if (s && narrow) requestAnimationFrame(() => sideRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }));
@@ -181,9 +201,9 @@ export function MapPage() {
   const head = (
     <PageHeader
       title={<NetTitle view="map" />}
-      sub={edit ? "拖曳區域和裝置到實際的位置；拉右下角改大小" : "各裝置的 Wi-Fi 訊號：藍色好、橘色弱；點裝置看詳細、設定高度"}
+      sub={edit ? "拖曳區域和裝置到實際的位置；選了區域可以改形狀；也可以畫牆、放門" : "各裝置的 Wi-Fi 訊號：藍色好、橘色弱；點裝置看詳細、設定高度"}
       actions={
-        <Button variant={edit ? "default" : "outline"} className="h-10" onClick={() => { setEdit((v) => !v); setSel(null); }}>
+        <Button variant={edit ? "default" : "outline"} className="h-10" onClick={() => { setEdit((v) => !v); setSel(null); setTool("select"); }}>
           {edit ? <><Check />完成</> : <><Pencil />編輯</>}
         </Button>
       }
@@ -254,7 +274,7 @@ export function MapPage() {
   if (edit && !sel)
     picked = (
       <>
-        <Note>點區域、裝置或 Wi-Fi 基地台可以選取、拖曳移動。選了區域可以拖轉角、拖牆改形狀。</Note>
+        <Note>{tool === "wall" ? "畫牆：在地圖上按住，拖到牆的另一端放開。會自動對齊別的牆和區域的轉角；按住 Shift 可以畫斜的。畫完按「選取」或 Esc。" : tool === "door" ? "放門：點一道牆，就在那裡開一扇門（預設 90 公分）。之後可以選它改寬度、換開門方向。" : "點區域、裝置、牆、門或 Wi-Fi 基地台可以選取、拖曳移動。選了區域可以拖轉角、拖牆改形狀。上面的「畫牆」「放門」可以加上實牆和門。"}</Note>
         <Q sub="用來算距離">地圖的實際寬度</Q>
         <div className="flex items-center gap-2">
           <CommitInput
@@ -287,6 +307,39 @@ export function MapPage() {
               <Square />改回長方形
             </Button>
           )}
+        </>
+      );
+  } else if (sel?.kind === "wall" && edit) {
+    const w = (fp.walls || []).find((x) => x.id === sel.id);
+    const mpu = (fp.meters || 12) / fp.w;
+    if (w)
+      picked = (
+        <>
+          <Q sub={`長 ${fmt(Math.hypot(w.x2 - w.x1, w.y2 - w.y1) * mpu, 1)} 公尺`}>牆</Q>
+          <Note>拖牆移動、拖兩端的圓點改長度（會對齊別的牆和轉角，按住 Shift 可以斜的）。按 Delete 也能刪掉。</Note>
+          <Button variant="outline" className="h-10 self-start text-destructive hover:text-destructive"
+            onClick={() => { update({ ...fp, walls: (fp.walls || []).filter((x) => x.id !== w.id), doors: (fp.doors || []).filter((x) => x.wall !== w.id) }); setSel(null); }}>
+            <Trash2 />刪掉這道牆{(fp.doors || []).some((x) => x.wall === w.id) ? "（和上面的門）" : ""}
+          </Button>
+        </>
+      );
+  } else if (sel?.kind === "door" && edit) {
+    const d = (fp.doors || []).find((x) => x.id === sel.id);
+    const u = fp.w / (fp.meters || 12);
+    const setDoor = (patch: Partial<NonNullable<typeof d>>) => update({ ...fp, doors: (fp.doors || []).map((x) => (x.id === sel.id ? { ...x, ...patch } : x)) });
+    if (d)
+      picked = (
+        <>
+          <Q>門寬</Q>
+          <Segmented label="門寬" value={String([0.7, 0.8, 0.9, 1.2, 1.6].reduce((a, b) => (Math.abs(b * u - d.w) < Math.abs(a * u - d.w) ? b : a)))}
+            onChange={(v) => setDoor({ w: Math.round(Number(v) * u) })}
+            options={[["0.7", "70"], ["0.8", "80"], ["0.9", "90"], ["1.2", "120"], ["1.6", "160"]]} />
+          <p className="text-xs text-muted-foreground">公分。廁所門大約 70～80、房門 90、大門或雙開 120 以上。</p>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" className="h-10" onClick={() => setDoor({ flip: ((d.flip || 0) + 1) % 4 })}><FlipHorizontal2 />換開門方向</Button>
+            <Button variant="outline" className="h-10 text-destructive hover:text-destructive" onClick={() => { update({ ...fp, doors: (fp.doors || []).filter((x) => x.id !== d.id) }); setSel(null); }}><Trash2 />刪掉</Button>
+          </div>
+          <Note>沿著牆拖曳可以移動門的位置。「換開門方向」每按一次換一種（往裡、往外、鉸鏈在左、在右）。</Note>
         </>
       );
   } else if (sel?.kind === "ap") {
@@ -390,6 +443,11 @@ export function MapPage() {
         <Card className="gap-3 px-3 py-3 sm:px-4 sm:py-4">
           {edit ? (
             <div className="flex flex-wrap gap-2">
+              <div className="flex rounded-lg border bg-muted/50 p-0.5" role="group" aria-label="工具">
+                {([["select", MousePointer2, "選取"], ["wall", Minus, "畫牆"], ["door", DoorOpen, "放門"]] as const).map(([t, I, label]) => (
+                  <Button key={t} size="sm" variant={tool === t ? "default" : "ghost"} className="h-8" aria-pressed={tool === t} onClick={() => setTool(t)}><I />{label}</Button>
+                ))}
+              </div>
               <Button variant="outline" size="sm" onClick={() => {
                 const id = `r${Date.now().toString(36)}`;
                 update({ ...fp, rooms: [...fp.rooms!, { id, name: "新區域", x: fp.w / 2 - 120, y: fp.h / 2 - 90, w: 240, h: 180 }] });
@@ -452,7 +510,7 @@ export function MapPage() {
           {/* 手機：地圖放大到 600px 寬，可以左右滑 */}
           <div className="-mx-4 overflow-x-auto px-4 pb-1 sm:mx-0 sm:overflow-visible sm:px-0 sm:pb-0">
             <MapCanvas
-              fp={fp} devs={devs} links={links} layer={layer} edit={edit} sel={sel} motion={motion} people={people}
+              fp={fp} devs={devs} links={links} layer={layer} edit={edit} sel={sel} motion={motion} people={people} tool={tool}
               onChange={setFp} onDragEnd={save} onPick={pick} onTip={setTip}
             />
           </div>
