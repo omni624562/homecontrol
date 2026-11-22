@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { DndContext, KeyboardSensor, PointerSensor, closestCorners, useDroppable, useSensor, useSensors, type DragEndEvent, type DragOverEvent } from "@dnd-kit/core";
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Bike, Bus, Clock, DoorOpen, MessageSquareText, Droplets, Gauge, Home as HomeIcon, Loader2, Pencil, Power, Truck, Wifi, WifiOff, Zap } from "lucide-react";
+import { Bike, Bus, DoorOpen, MessageSquareText, Droplets, Gauge, Home as HomeIcon, Loader2, Pencil, Power, Truck, Wifi, WifiOff, Zap } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -485,10 +485,6 @@ export function HomePage() {
         actions={<>
           <Button variant="outline" className="h-9 rounded-full bg-background" onClick={() => setLeave(true)} title="出門前檢查：還開著的電器、要不要帶傘、垃圾車、停水停電">
             <DoorOpen /><span className="max-sm:sr-only">出門前檢查</span>
-          </Button>
-          {/* 手機、平板的下方分頁沒有「排程」，從這裡進 */}
-          <Button variant="outline" asChild className="h-9 rounded-full bg-background lg:hidden">
-            <a href="#schedule" title="排程"><Clock /><span className="sr-only">排程</span></a>
           </Button>
           <Button variant="outline" asChild className="h-9 rounded-full bg-background">
             <a href="#edit" title="排順序、換區域、改情境"><Pencil />編輯</a>
