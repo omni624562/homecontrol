@@ -18,6 +18,7 @@ PUT  /api/away              離家模式 {"enabled", "start", "end", "plugs"}
 GET/PUT /api/floorplan      訊號地圖（房間、裝置位置、Wi-Fi 基地台）；POST/GET/DELETE /api/floorplan/image 底圖
 GET/PUT /api/sensing        Wi-Fi 感測（實驗）：訊號擾動、各房間動靜；{"enabled": false} 停止記錄
 GET /api/sensing/replay     動靜回放：最近 24 小時每 5 分鐘一格
+GET/PUT /api/motion-rules   動靜自動化：{"rules": [{"room","plug","start","end","off_min","need_home","enabled"}]}
 GET /api/locate/{id}         人在哪個房間（實驗）：每個房間教了幾筆、現在的判斷；POST …/train {"room"} 教 2 分鐘、DELETE …/train 停止、DELETE /api/locate/{id}?room= 清掉
 GET  /api/energy             用電（插座自己記錄的開機時間 × 瓦數）
 GET  /api/plugs/{id}/usage  插座自己記錄的使用時間；POST /api/plugs/{id}/reboot 重新啟動
@@ -713,6 +714,35 @@ async def sensing(minutes: int = 60, range: str = "1h") -> dict[str, Any]:  # no
     if range in hub.SENSE_RANGES:
         return hub.sensing_history(range)
     return hub.sensing_report(max(5, min(60, minutes)))
+
+
+@app.get("/api/motion-rules")
+async def motion_rules() -> dict[str, Any]:
+    """動靜自動化：房間有人走動就開插座，沒動靜幾分鐘後關掉。"""
+    return {"rules": store.data.get("motion_rules") or [], "state": hub.motion_rules_state()}
+
+
+def _hm(v: Any) -> str:
+    v = str(v or "")
+    return v if re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", v) else ""
+
+
+@app.put("/api/motion-rules")
+async def set_motion_rules(body: dict = Body(...)) -> dict[str, Any]:
+    rooms = {r["id"] for r in (store.data.get("floorplan") or {}).get("rooms") or []}
+    rules = []
+    for x in (body.get("rules") or [])[:20]:
+        if not isinstance(x, dict) or x.get("room") not in rooms or x.get("plug") not in hub.plugs:
+            continue
+        start, end = _hm(x.get("start")), _hm(x.get("end"))
+        if not start or not end:
+            start = end = ""
+        rules.append({"id": str(x.get("id") or uuid.uuid4().hex[:8])[:20], "room": x["room"], "plug": x["plug"], "start": start, "end": end,
+                      "off_min": int(_num(x.get("off_min") or 5, 1, 120)), "need_home": bool(x.get("need_home", True)),
+                      "enabled": bool(x.get("enabled", True))})
+    store.data["motion_rules"] = rules
+    store.save()
+    return await motion_rules()
 
 
 @app.get("/api/sensing/replay")

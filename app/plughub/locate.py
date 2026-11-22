@@ -148,7 +148,8 @@ class Locator:
         best, p = ranked[0]
         return {"room": best if p >= SURE else None, "p": round(p, 2),
                 "top": [{"room": r, "p": round(q, 2)} for r, q in ranked[:3]],
-                "samples": len(recent), "at": recent[-1][0], "borrowed": borrowed}
+                "samples": len(recent), "at": recent[-1][0], "borrowed": borrowed,
+                "dist": {r: round(q, 4) for r, q in ranked}}
 
     def estimate_any(self, macs: list[str], now: float | None = None) -> dict[str, Any] | None:
         """一個人有好幾台裝置：用最近有訊號的那台。沒教夠的借用別人（不是這個人的裝置）教的。"""

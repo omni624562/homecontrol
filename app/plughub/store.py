@@ -43,6 +43,8 @@ DEFAULTS: dict[str, Any] = {
     "net_seeded": False,  # 第一次讀到路由器清單時，把已經在的裝置都當作認得的（不通知）
     # 在家的人：[{"id","name","macs":[手機的 MAC...]}]
     "people": [],
+    # 動靜自動化：[{"id","room","plug","start":"23:00","end":"06:00"（空白=整天）,"off_min":5,"need_home":true,"enabled":true}]
+    "motion_rules": [],
     # 整個 Wi-Fi 網路的插座同時斷線（多半是路由器的問題）：[{"ssid","start","end","devices"}]，最近 30 筆
     "net_events": [],
     # 關閉時記住關了哪些，之後可以還原：

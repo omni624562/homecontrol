@@ -169,3 +169,62 @@ def test_sensing_rooms_and_replay(app_module, client):
     assert r.status_code == 200
     d = r.json()
     assert d["n"] == 24 and d["bucket"] == 300
+
+
+def test_motion_rules_validation(app_module, client):
+    token, _ = app_module.auth.pair(app_module.auth.new_code())
+    client.cookies.set("plughub_token", token)
+    app_module.store.data["floorplan"]["rooms"] = [{"id": "r1", "name": "走道", "x": 0, "y": 0, "w": 10, "h": 10}]
+    plug = "p-test"
+    app_module.hub.plugs[plug] = object()
+    rules = [{"room": "r1", "plug": plug, "start": "23:00", "end": "06:00", "off_min": 999},
+             {"room": "沒有", "plug": plug}, {"room": "r1", "plug": plug, "start": "25:00", "end": "06:00"}]
+    r = client.put("/api/motion-rules", json={"rules": rules})
+    assert r.status_code == 200
+    got = r.json()["rules"]
+    del app_module.hub.plugs[plug]
+    assert len(got) == 2 and got[0]["off_min"] == 120 and got[0]["start"] == "23:00"
+    assert got[1]["start"] == "" and got[1]["end"] == ""  # 時間不對 → 整天
+
+
+def test_motion_rules_engine(app_module, monkeypatch):
+    import asyncio
+    import types
+
+    hub = app_module.hub
+    plug = types.SimpleNamespace(id="p-eng", online=True, is_on=False)
+    hub.plugs["p-eng"] = plug
+    calls = []
+
+    async def fake_power(pid, on, force=False):
+        calls.append(on)
+        plug.is_on = on
+
+    monkeypatch.setattr(hub, "set_power", fake_power)
+    monkeypatch.setattr(hub, "_spawn", lambda coro: asyncio.run(coro))
+    app_module.store.data["people"] = []
+    app_module.store.data["motion_rules"] = [{"id": "m1", "room": "r1", "plug": "p-eng", "start": "", "end": "", "off_min": 2, "enabled": True}]
+    hot, quiet = {"r1": {"score": 1.5}}, {"r1": {"score": 0.0}}
+    try:
+        hub._motion_rules(hot, 1000)
+        assert calls == [True] and hub._mrule["m1"]["own"]
+        hub._motion_rules(quiet, 1060)  # 才 1 分鐘：不關
+        assert calls == [True]
+        hub._motion_rules(quiet, 1121)  # 超過 2 分鐘沒動靜：關
+        assert calls == [True, False] and not hub._mrule["m1"]["own"]
+        hub._motion_rules(hot, 1200)
+        assert calls == [True, False, True]
+        plug.is_on = False  # 有人自己關掉
+        hub._motion_rules(hot, 1210)  # 交還控制；還在動也不馬上再開
+        hub._motion_rules(hot, 1250)
+        assert calls == [True, False, True]
+        hub._motion_rules(quiet, 1400)  # 安靜超過 2 分鐘：解除
+        hub._motion_rules(hot, 1410)  # 之後再有人走動 → 再開
+        assert calls == [True, False, True, True]
+        plug.is_on = True
+        hub._mrule["m1"]["own"] = False  # 本來就開著（不是規則開的）：不會被關
+        hub._motion_rules(quiet, 5000)
+        assert calls[-1] is True
+    finally:
+        del hub.plugs["p-eng"]
+        app_module.store.data["motion_rules"] = []
