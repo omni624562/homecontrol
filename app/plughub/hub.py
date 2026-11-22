@@ -1394,8 +1394,11 @@ class Hub:
                 rooms.setdefault(r, [None] * n)[i] = v["score"]
         return {"start": start, "bucket": bucket, "n": n, "devices": devices, "rooms": rooms}
 
-    def sensing_week(self, days: int = 28) -> dict[str, Any]:
-        """一週動靜：最近 days 天，每間房「星期幾 × 幾點」有動靜的比例。算一次要一點時間，10 分鐘內重複問用上次的。"""
+    async def sensing_week(self, days: int = 28) -> dict[str, Any]:
+        """一週動靜：最近 days 天，每間房「星期幾 × 幾點」有動靜的比例。
+
+        讀資料庫很快；算分數要零點幾秒，放到背景執行緒（不卡住開關插座）。10 分鐘內重複問用上次的。
+        """
         now = time.time()
         if self._week_cache and self._week_cache[1] == days and now - self._week_cache[0] < 600:
             return self._week_cache[2]
@@ -1404,26 +1407,40 @@ class Hub:
         n = days * 86400 // bucket
         data = self.store.energy.sense_buckets(start, bucket)
         lks = self._room_links()
-        rooms: dict[str, list[float | None]] = {}
-        for i in range(n):
-            m = {k: per[i][1] for k, per in data.items() if i in per}
-            if not m:
-                continue
-            for r, v in roommotion.scores(lks, m).items():
-                rooms.setdefault(r, [None] * n)[i] = v["score"]
-        out = netlog.week_grid(start, bucket, rooms, roommotion.ACTIVE)
+
+        def calc() -> dict[str, Any]:
+            rooms: dict[str, list[float | None]] = {}
+            for i in range(n):
+                m = {k: per[i][1] for k, per in data.items() if i in per}
+                if not m:
+                    continue
+                for r, v in roommotion.scores(lks, m).items():
+                    rooms.setdefault(r, [None] * n)[i] = v["score"]
+            return netlog.week_grid(start, bucket, rooms, roommotion.ACTIVE)
+
+        out = await asyncio.to_thread(calc)
         first = self.store.energy.sense_first()
         out["days"] = days
         out["since"] = max(start, first) if first else None
         self._week_cache = (now, days, out)
         return out
 
-    def sensing_report(self, minutes: int = 60) -> dict[str, Any]:
+    def sensing_report(self, minutes: int = 60, lite: bool = False) -> dict[str, Any]:
         """每台插座（排插算一台）一列：用它的孔的名稱表示。"""
         names = {k: "、".join(self.name(self.plugs[p]) for p in e.plugs) for k, e in self.devices.items()}
         for mac, d in self.store.data["net_devices"].items():
             if d.get("map") and mac not in names:
                 names[mac] = d.get("label") or self.router.name_of(mac)
+        if lite:  # 地圖用：現在的擾動就好，網路裝置只留地圖用得到的欄位
+            now = time.time()
+            devs = []
+            for key in names:
+                cur = self.sensing.motion.get(key)
+                devs.append({"key": key, "name": names[key], "now": round(cur[-1][1], 2) if cur and now - cur[-1][0] < 10 else None})
+            net = self.net_report()
+            keep = ("mac", "name", "node", "online", "rssi", "ssid", "map", "plug", "wired")
+            return {"enabled": bool(self.store.data["settings"].get("sensing", True)), "devices": devs, "rooms": self.room_motion(),
+                    "net": {"nodes": net["nodes"], "clients": [{k: c.get(k) for k in keep} for c in net["clients"]]}}
         rep = self.sensing.report(names, minutes)
         rep["devices"] = [d for d in rep["devices"] if d["key"] in names]
         rep["net"] = self.net_report()

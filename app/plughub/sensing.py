@@ -125,12 +125,19 @@ class Sensing:
         start = now - minutes * 60
         out = []
         for key, buf in self.samples.items():
-            cols: list[dict[str, Any]] = []
-            for i in range(minutes):
-                a, b = start + i * 60, start + (i + 1) * 60
-                vals = [v for t, v in buf if a <= t < b]
-                mot = [m for t, m in self.motion.get(key, []) if a <= t < b]
-                cols.append({"rssi": round(statistics.mean(vals), 1) if vals else None, "motion": round(max(mot), 2) if mot else None})
+            # 每筆只看一次，分到它那一分鐘（以前每分鐘都把整個緩衝掃一遍，地圖每 10 秒問一次很吃 CPU）
+            vals: list[list[float]] = [[] for _ in range(minutes)]
+            mots: list[float | None] = [None] * minutes
+            for t, v in buf:
+                i = int((t - start) // 60)
+                if 0 <= i < minutes:
+                    vals[i].append(v)
+            for t, m in self.motion.get(key, []):
+                i = int((t - start) // 60)
+                if 0 <= i < minutes:
+                    mots[i] = m if mots[i] is None else max(mots[i], m)  # type: ignore[type-var]
+            cols = [{"rssi": round(statistics.mean(v), 1) if v else None, "motion": round(m, 2) if m is not None else None}
+                    for v, m in zip(vals, mots)]
             cur = self.motion.get(key)
             out.append({
                 "key": key, "name": names.get(key, key),

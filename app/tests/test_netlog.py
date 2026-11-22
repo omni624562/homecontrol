@@ -150,3 +150,47 @@ def test_ap_stuck_notifies(app_module, monkeypatch):
     r.clients["x"] = {"node": "BB"}
     hub._check_aps(11000)
     assert "恢復" in sent[-1][0] and hub.store.data["net_events"][-1]["kind"] == "ap"
+
+
+def test_gzip_and_sensing_lite(app_module):
+    from fastapi.testclient import TestClient
+
+    c = TestClient(app_module.app, base_url="http://hub:8100")
+    token, _ = app_module.auth.pair(app_module.auth.new_code())
+    c.cookies.set("plughub_token", token)
+    r = c.get("/api/state", headers={"Accept-Encoding": "gzip"})
+    assert r.status_code == 200 and r.headers.get("content-encoding") == "gzip"
+    r = c.get("/api/sensing?lite=1")
+    d = r.json()
+    assert set(d) >= {"enabled", "devices", "rooms", "net"} and "cols" not in str(d["devices"])
+
+
+def test_gzip_skips_event_stream(app_module):
+    import asyncio as aio
+
+    seen = []
+
+    async def inner(scope, receive, send):
+        seen.append(scope["path"])
+
+    g = app_module._Gzip(inner)
+    g.gz = None  # 走到壓縮就會出錯
+    aio.run(g({"type": "http", "path": "/api/events"}, None, None))
+    assert seen == ["/api/events"]
+
+
+def test_sensing_report_buckets():
+    import time as t
+
+    from plughub.sensing import Sensing
+
+    s = Sensing()
+    now = t.time()
+    from collections import deque
+    s.samples["k"] = deque([(now - 125, -50), (now - 119, -52), (now - 30, -60)])
+    s.motion["k"] = deque([(now - 119, 0.5), (now - 110, 1.5), (now - 5, 0.2)])
+    rep = s.report({"k": "燈"}, 5)
+    cols = rep["devices"][0]["cols"]
+    assert [c["rssi"] for c in cols] == [None, None, -50, -52, -60]
+    assert [c["motion"] for c in cols] == [None, None, None, 1.5, 0.2]
+    assert rep["devices"][0]["now"] == 0.2

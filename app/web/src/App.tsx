@@ -1,17 +1,22 @@
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { HomePage } from "@/pages/home";
-import { SchedulePage } from "@/pages/schedule";
-import { EnergyPage } from "@/pages/energy";
-import { SettingsPage } from "@/pages/settings";
-import { EditPage } from "@/pages/edit";
-import { NetPage } from "@/pages/net";
-import { MapPage } from "@/pages/map";
-import { LifePage } from "@/pages/life";
 import { AskProvider } from "@/components/ask-sheet";
 import { TruckRush } from "@/components/truck-rush";
 import { FxLayer } from "@/components/fx";
 import { Standby } from "@/components/standby";
+
+// 首頁以外的頁面用到才載入（首頁比較快出現）；首頁出來後趁空檔先載好，切換時就不用等
+const load = {
+  schedule: () => import("@/pages/schedule").then((m) => ({ default: m.SchedulePage })),
+  energy: () => import("@/pages/energy").then((m) => ({ default: m.EnergyPage })),
+  settings: () => import("@/pages/settings").then((m) => ({ default: m.SettingsPage })),
+  edit: () => import("@/pages/edit").then((m) => ({ default: m.EditPage })),
+  net: () => import("@/pages/net").then((m) => ({ default: m.NetPage })),
+  map: () => import("@/pages/map").then((m) => ({ default: m.MapPage })),
+  life: () => import("@/pages/life").then((m) => ({ default: m.LifePage })),
+};
+const PAGES = Object.fromEntries(Object.entries(load).map(([k, f]) => [k, lazy(f)])) as Record<keyof typeof load, React.LazyExoticComponent<() => React.JSX.Element>>;
 
 export default function App() {
   const [tab, setTab] = useState(() => location.hash.slice(1) || "plugs");
@@ -20,10 +25,15 @@ export default function App() {
     addEventListener("hashchange", on);
     return () => removeEventListener("hashchange", on);
   }, []);
+  useEffect(() => {
+    const t = setTimeout(() => Object.values(load).forEach((f) => f().catch(() => {})), 2500);
+    return () => clearTimeout(t);
+  }, []);
+  const Page = tab in PAGES ? PAGES[tab as keyof typeof load] : null;
   return (
     <AskProvider>
       <AppShell tab={tab}>
-        {tab === "schedule" ? <SchedulePage /> : tab === "energy" ? <EnergyPage /> : tab === "settings" ? <SettingsPage /> : tab === "edit" ? <EditPage /> : tab === "net" ? <NetPage /> : tab === "map" ? <MapPage /> : tab === "life" ? <LifePage /> : <HomePage />}
+        {Page ? <Suspense fallback={<div className="min-h-[60vh]" />}><Page /></Suspense> : <HomePage />}
       </AppShell>
       <TruckRush />
       <FxLayer />
