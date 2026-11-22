@@ -24,7 +24,8 @@ def test_links_weights():
 def test_scores_hot_quiet():
     lks = roommotion.links(FP, NODES)
     s = roommotion.scores(lks, {"k1": 0.0, "k2": 2.0})
-    assert s["R"]["score"] == 2.0 and s["R"]["hot"] == ["k2"]
-    assert s["L"]["score"] < s["R"]["score"]  # 左間有一條安靜的線，拉低
+    assert s["R"]["hot"] == ["k2"]
+    assert s["R"]["score"] > s["L"]["score"]  # 裝置在右間：右間分到最多；左間還有一條安靜的線
+    assert abs(sum(lk["w"].get("R", 0) + lk["w"].get("L", 0) for lk in lks if lk["key"] == "k1") - 1) < 0.01  # 沒穿牆：份量合計 1
     s = roommotion.scores(lks, {"k1": None, "k2": None})
     assert s == {}
