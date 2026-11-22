@@ -35,6 +35,7 @@ DEFAULTS: dict[str, Any] = {
         # 讀路由器的連線裝置清單（SSH 金鑰登入，只讀）；host 空白 = 不用
         "router": {"host": "", "port": 22, "user": ""},
         "new_device_alert": True,  # 沒看過的裝置連上 Wi-Fi 就通知
+        "power_restore": True,  # 停電回來後，插座開關跟停電前不一樣就恢復（高風險電器不自動開）
         # 誰在家：最後一個人離開 / 第一個人回來時執行的情境（None = 不做事）；手機離線多久才算出門
         "presence": {"away_scene": None, "home_scene": None, "grace_min": 10},
     },
@@ -45,7 +46,8 @@ DEFAULTS: dict[str, Any] = {
     "people": [],
     # 動靜自動化：[{"id","room","plug","start":"23:00","end":"06:00"（空白=整天）,"off_min":5,"need_home":true,"enabled":true}]
     "motion_rules": [],
-    # 整個 Wi-Fi 網路的插座同時斷線（多半是路由器的問題）：[{"ssid","start","end","devices"}]，最近 30 筆
+    # 斷線紀錄（最近 200 筆）：kind = wifi（同一個 Wi-Fi 的插座全斷，{"ssid","devices"}）、ap（基地台卡住，{"name","mac"}）、
+    # wan（外網斷）、plug（單一插座斷超過 10 分鐘，{"name"}）、power（停電後恢復插座，{"on","off","failed"}）；都有 start、end
     "net_events": [],
     # 關閉時記住關了哪些，之後可以還原：
     #   {"night": [插座 ID...]}（被關掉的）或 {"undo": {插座 ID: 原本開著嗎}}

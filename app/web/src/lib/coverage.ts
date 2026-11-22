@@ -189,3 +189,26 @@ export function covColor(v: number): string {
   const z = STOPS[STOPS.length - 1];
   return `rgba(${z.slice(1, 4).join(",")},${z[4]})`;
 }
+
+export interface FarAp { key: string; name: string; ap: string; alt: string; rssi: number; est: number }
+
+// 連到比較遠的基地台：旁邊另一台預估好很多（至少 minGain dB），而且現在訊號不算好（-60 以下）
+// 預估也算進一點這台裝置自己的實測偏差（例如放在櫃子裡，連哪台都會差一點）；只算三成，
+// 因為偏差多半是「到現在這台的路上」模型沒算準（例如牆比較厚），換一台基地台就不一定有
+export function farApHints(fp: Floorplan, m: SigModel, links: MapLink[], minGain = 8): FarAp[] {
+  const aps = fp.aps.filter((a) => apPos(fp, a.id) && m.p0[a.id] != null);
+  const out: FarAp[] = [];
+  for (const l of links) {
+    const rssi = l.dev.rssi;
+    if (l.guess || !l.dev.online || rssi == null || rssi >= 0 || rssi > -60 || m.p0[l.ap.id] == null) continue;
+    const bias = 0.3 * Math.max(-10, Math.min(10, rssi - predictAt(fp, m, l.ap.id, l.x1, l.y1)));
+    let best: { id: string; v: number } | null = null;
+    for (const a of aps) {
+      if (a.id === l.ap.id) continue;
+      const v = predictAt(fp, m, a.id, l.x1, l.y1) + bias;
+      if (!best || v > best.v) best = { id: a.id, v };
+    }
+    if (best && best.v - rssi >= minGain) out.push({ key: l.dev.key, name: l.dev.full, ap: l.ap.id, alt: best.id, rssi, est: Math.round(Math.min(-35, best.v)) });
+  }
+  return out.sort((a, b) => b.est - b.rssi - (a.est - a.rssi));
+}

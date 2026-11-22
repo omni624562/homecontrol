@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useState, type ReactNode } from "react";
-import { AlertCircle, BarChart3, Cable, ChevronRight, CircleHelp, Home, Info, Plug, Plus, ShieldCheck, Router, User, Wand2, Wifi, WifiOff } from "lucide-react";
+import { Activity, AlertCircle, BarChart3, Cable, ChevronRight, CircleHelp, Home, Info, Plug, Plus, ShieldCheck, Router, User, Wand2, Wifi, WifiOff } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { PageHeader } from "@/components/app-shell";
 import { NetDevSheet, PersonSheet } from "@/components/net-sheets";
+import { NetLog } from "@/components/net-log";
 import { ChoiceChip } from "@/components/schedule-bits";
 import { api } from "@/lib/api";
 import { useHub } from "@/lib/hub";
@@ -319,6 +320,10 @@ export function NetPage() {
                 </div>
               </NCard>
             )}
+
+            <NCard icon={Activity} title="斷線紀錄">
+              <NetLog />
+            </NCard>
 
             {/* 今天用最多網路 */}
             {heavy.length > 0 && (

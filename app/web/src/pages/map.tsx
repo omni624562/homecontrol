@@ -12,7 +12,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/app-shell";
 import { MotionRules } from "@/components/motion-rules";
 import { MapCanvas, ROOM_ACTIVE, ROOM_STRONG, type MapGhost, type MapLayer, type MapPerson, type MapSel, type MapTool } from "@/components/map-canvas";
-import { COV_TEXT, bestApSpot, covColor, covQ, coverage, fitModel, gapSpots, type ApSuggest } from "@/lib/coverage";
+import { COV_TEXT, bestApSpot, covColor, covQ, coverage, farApHints, fitModel, gapSpots, type ApSuggest } from "@/lib/coverage";
+import { WeekHeat } from "@/components/week-heat";
 import { Segmented } from "@/components/schedule-bits";
 import { api } from "@/lib/api";
 import { fmt } from "@/lib/format";
@@ -519,6 +520,7 @@ export function MapPage() {
   const tray = devs.filter((d) => !fp.items[d.key]);
   const weakDevs = devs.filter((d) => d.online && d.rssi != null && d.rssi < -70);
   const off = devs.filter((d) => !d.online);
+  const far = model && covFp ? farApHints(covFp, model, links) : [];
   const good = links.filter((l) => l.q === "good");
   const hot = links.filter((l) => (motion[l.dev.key] ?? 0) > 0.15).sort((a, b) => motion[b.dev.key]! - motion[a.dev.key]!);
   const gaps = model && covFp && layer === "motion" ? gapSpots(covFp, model, roomCover) : [];
@@ -664,6 +666,11 @@ export function MapPage() {
                 ) : (
                   <Note icon={CheckCircle2} tone="ok">所有裝置的訊號都在 -70 dBm 以上。</Note>
                 )}
+                {far.map((f) => (
+                  <Note key={f.key} icon={AlertCircle} tone="warn">
+                    <b className="text-foreground">{f.name} 連到比較遠的 {apName(f.ap)}</b>（{f.rssi} dBm）。旁邊的 {apName(f.alt)} 預估可以到 {f.est} 左右，讓它重新連一次通常就會換過去：插座拔掉再插回去，其他裝置把 Wi-Fi 關掉再打開。
+                  </Note>
+                ))}
                 {off.length > 0 && <Note icon={WifiOff} tone="warn">{off.length} 台離線：{off.map((d) => d.name).join("、")}</Note>}
                 {layer === "coverage" && model && (
                   <CoveragePanel model={model} rooms={roomCov} aps={fp.aps.filter((a) => fp.items[`ap:${a.id}`])} sug={apSug}
@@ -681,6 +688,7 @@ export function MapPage() {
                 {layer === "motion" && (
                   <RoomMotionList rooms={fp.rooms} heat={roomHeat} covered={past != null ? replay!.rooms : roomCover} past={past != null} />
                 )}
+                {layer === "motion" && past == null && <WeekHeat rooms={fp.rooms} />}
                 {layer === "motion" && past == null && (
                   <MotionRules rooms={fp.rooms.filter((r) => r.id in roomCover)} plugs={(state?.plugs || []).filter((p) => p.online)} />
                 )}

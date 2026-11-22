@@ -280,7 +280,7 @@ export interface HubState {
   assistant?: Assistant;
   notify?: { line: boolean; name: string; error: string | null };
   matter?: { online: boolean; commissioned: boolean; manual_code: string; qr_code: string; fabrics: { vendor: string; label: string }[]; plugs: number; running: boolean };
-  net_events?: { start: number; end: number | null; ssid: string; devices: number }[];
+  net_events?: { kind?: string; start: number; end: number | null; ssid?: string; devices?: number }[];
   backup?: Backup;
   app_version?: string;
 }

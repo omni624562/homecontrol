@@ -21,7 +21,7 @@ from typing import Any, Callable
 
 from kasa import Device, Discover, Module
 
-from . import anomaly, arpprobe, habits, locate, native, netprobe, roommotion, sun, tariff
+from . import anomaly, arpprobe, habits, locate, native, netlog, netprobe, roommotion, sun, tariff
 from .sensing import INTERVAL as SENSE_INTERVAL, SAVE_EVERY as SENSE_SAVE_EVERY, Sensing
 from .notify import Notifier
 from .daysoff import DaysOff
@@ -156,6 +156,12 @@ class Hub:
         self._offline_notified: set[str] = set()
         self._state_known: set[str] = set()  # 讀過開關狀態的插座（第一次讀到的不算「被按了」）
         self._outage: dict[str, dict[str, Any]] = {}  # SSID → 正在斷線的紀錄
+        self._ap_state: dict[str, dict[str, Any]] = {}  # 基地台 MAC → {last, zero, stuck}（netlog.ap_check）
+        self._wan: dict[str, Any] = {"fails": 0, "first": None, "down": None}  # 外網：連續失敗次數、第一次失敗、斷線開始
+        self._plug_out: dict[str, float] = {}  # 斷線超過 10 分鐘、已通知的插座 → 斷線開始時間（恢復時記到斷線紀錄）
+        self._before: dict[str, bool] = {}  # 斷線（或停電）前插座是開還是關：回來時狀態變了就恢復
+        self._restore_q: dict[str, bool] = {}  # 等著一起恢復的插座 → 要開還是關
+        self._week_cache: tuple[float, int, dict[str, Any]] | None = None
         self.habits: list[dict[str, Any]] = []
         self.habit_days = 0
         self._habits_at = 0.0
@@ -207,7 +213,11 @@ class Hub:
         return {
             "plugs": [{"id": p.id, "device_key": p.device_key, "kasa_name": p.kasa_name, "model": p.model, "host": p.host,
                        "child_index": p.child_index, "led": p.led, "rssi": p.rssi, "cloud": p.cloud,
-                       "offline_since": p.offline_since} for p in self.plugs.values()],
+                       "offline_since": p.offline_since, "is_on": p.is_on if p.online else self._before.get(p.id)} for p in self.plugs.values()],
+            "saved_at": time.time(),
+            "ap_state": self._ap_state,
+            "wan": self._wan,
+            "plug_out": self._plug_out,
             "dev_info": self.dev_info,
             "native": self.native,
             "schedule_done": self._schedule_done,
@@ -248,6 +258,12 @@ class Hub:
             self._offline_notified = set(d.get("offline_notified") or [])
             self._overload_notified = set(d.get("overload_notified") or [])
             self._outage = d.get("outage") or {}
+            self._ap_state = d.get("ap_state") or {}
+            self._wan = {**self._wan, **(d.get("wan") or {}), "fails": 0}
+            self._plug_out = d.get("plug_out") or {}
+            # 樹莓派剛開機（多半是停電）、上次存檔沒多久：記下停電前每個插座是開還是關，連上後狀態不同就恢復
+            if netlog.uptime() < 900 and now - (d.get("saved_at") or 0) < netlog.RESTORE_MAX_H * 3600:
+                self._before = {x["id"]: bool(x["is_on"]) for x in d.get("plugs", []) if x.get("is_on") is not None}
             self._traffic_last = {k: int(v) for k, v in (d.get("traffic_last") or {}).items()}
             self.habits = d.get("habits") or []
             self._home_loc = tuple(d["home_loc"]) if d.get("home_loc") else None
@@ -272,7 +288,7 @@ class Hub:
             _LOGGER.exception("整理要保存的資料失敗")
             return
         # 訊號強度、看到的時間每次都不一樣：不拿來判斷有沒有變，但最久 10 分鐘還是寫一次
-        sig = str(len(text) // 64) + str(sorted(p.id + str(p.online) for p in self.plugs.values()))
+        sig = str(len(text) // 64) + str(sorted(p.id + str(p.online) + str(p.is_on) for p in self.plugs.values()))
         if sig == self._runtime_sig and time.time() - getattr(self, "_runtime_at", 0) < 600:
             return
         self._runtime_sig, self._runtime_at = sig, time.time()
@@ -318,6 +334,7 @@ class Hub:
             asyncio.create_task(self._loop(self._local_tick, 15)),
             asyncio.create_task(self.router.run()),
             asyncio.create_task(self._loop(self._probe_tick, 120)),
+            asyncio.create_task(self._loop(self._wan_tick, netlog.WAN_EVERY)),
         ]
 
     async def stop(self) -> None:
@@ -470,6 +487,8 @@ class Hub:
                         plug.online = False
                         plug.offline_since = time.time()
                         plug.power = None
+                        if plug.is_on is not None:
+                            self._before[pid] = bool(plug.is_on)
 
     def _read(self, entry: DeviceEntry) -> None:
         device = entry.device
@@ -479,6 +498,8 @@ class Hub:
             now_on = bool(source.is_on)
             if pid in self._state_known and plug.online and now_on != plug.is_on:
                 self._log_switch(plug, now_on, "button")
+            if not plug.online:
+                self._maybe_restore(plug, now_on)
             self._state_known.add(pid)
             self._set_is_on(plug, now_on)
             # 「開了多久」用插座自己記錄的（樹莓派重開也不會歸零）
@@ -613,12 +634,108 @@ class Hub:
                     self.notifier.send("Wi-Fi 可能斷了", f"連「{ssid}」的 {len(plugs)} 台插座同時斷線，可能是路由器的問題", "high")
             elif cur is not None:
                 cur["end"] = now
-                events = self.store.data["net_events"]
-                events.append(cur)
-                del events[:-30]
-                self._dirty = True
+                self._net_event({**cur, "kind": "wifi"})
                 del self._outage[ssid]
                 self.notifier.send("Wi-Fi 恢復了", f"「{ssid}」的插座又連得上了，斷了大約 {max(1, round((now - cur['start']) / 60))} 分鐘")
+
+    # ---- 斷線紀錄、基地台卡住、外網、停電恢復 ----
+
+    def _net_event(self, ev: dict[str, Any]) -> None:
+        events = self.store.data["net_events"]
+        events.append(ev)
+        del events[:-netlog.EVENTS_KEEP]
+        self._dirty = True
+
+    def _ap_name(self, n: dict[str, Any]) -> str:
+        fp = self.store.data.get("floorplan") or {}
+        return next((a.get("name") for a in fp.get("aps") or [] if a.get("node") == n["mac"] and a.get("name")), None) or n.get("model") or n["mac"]
+
+    def _check_aps(self, now: float) -> None:
+        """AiMesh 基地台還找得到、但一台 Wi-Fi 裝置都沒連超過 10 分鐘：多半是它的 Wi-Fi 卡住了。"""
+        r = self.router
+        if not r.ok or not r.nodes or len(r.nodes) < 2 or now - self._router_since < 180:
+            return
+        counts = netlog.wifi_by_node(r.clients, (m for m in r.clients if r.online(m)))
+        for kind, n in netlog.ap_check(r.nodes, counts, self._ap_state, now):
+            name = self._ap_name(n)
+            if kind == "stuck":
+                self.notifier.send("Wi-Fi 基地台可能卡住了",
+                                   f"{name} 已經 {netlog.AP_IDLE_MIN} 分鐘沒有任何裝置連著（網路上還找得到它），附近的裝置都跑去連比較遠的基地台。重開 {name} 試試。", "high")
+            else:
+                self._net_event({"kind": "ap", "name": name, "mac": n["mac"], "start": n["start"], "end": now})
+                self.notifier.send("Wi-Fi 基地台恢復了", f"{name} 又有裝置連上了，卡了大約 {netlog.fmt_dur(now - n['start'])}")
+            self._spawn(self.changed())
+
+    async def _wan_tick(self) -> None:
+        """外網：每 30 秒試著連幾個公用位址，連續 2 次都不通才算斷。斷的時候 LINE 送不出去，所以恢復後才通知。"""
+        now = time.time()
+        ok = await netlog.wan_ok()
+        w = self._wan
+        if ok:
+            w["fails"], w["first"] = 0, None
+            if w.get("down"):
+                start, w["down"] = w["down"], None
+                self._net_event({"kind": "wan", "start": start, "end": now})
+                self.notifier.send("外網恢復了", f"家裡的網路剛剛連不到外面，斷了大約 {netlog.fmt_dur(now - start)}（{datetime.fromtimestamp(start):%H:%M} 開始）")
+                await self.changed()
+            return
+        w["fails"] = w.get("fails", 0) + 1
+        w["first"] = w.get("first") or now
+        if w["fails"] >= netlog.WAN_FAILS and not w.get("down"):
+            w["down"] = w["first"]
+            _LOGGER.warning("外網連不到")
+            await self.changed()
+
+    def _maybe_restore(self, plug: Plug, now_on: bool) -> None:
+        """插座斷線（或樹莓派停電重開）後又連上：開關跟斷線前不一樣，多半是停電後插座回到預設，排著一起恢復。"""
+        was = self._before.pop(plug.id, None)
+        if was is None or was == now_on or not self.store.data["settings"].get("power_restore", True):
+            return
+        if time.time() - (plug.offline_since or time.time()) > netlog.RESTORE_MAX_H * 3600:
+            return
+        meta = self.store.meta(plug.id)
+        if meta.protect == "lock" or (was and meta.risky):  # 鎖定的不動；高風險電器不自動打開
+            return
+        self._restore_q[plug.id] = was
+        if len(self._restore_q) == 1:
+            self._spawn(self._restore_later())
+
+    async def _restore_later(self) -> None:
+        await asyncio.sleep(15)  # 等其他插座也連上，一起恢復、一起通知
+        q, self._restore_q = self._restore_q, {}
+        SOURCE.set("restore")
+        on, off, failed = [], [], []
+        for pid, want in q.items():
+            plug = self.plugs.get(pid)
+            if not plug or not plug.online or plug.is_on == want:
+                continue
+            try:
+                await self.set_power(pid, want)
+                (on if want else off).append(self.name(plug))
+            except Exception:  # noqa: BLE001
+                failed.append(self.name(plug))
+        if not (on or off or failed):
+            return
+        now = time.time()
+        self._net_event({"kind": "power", "start": now, "end": now, "on": on, "off": off, "failed": failed})
+        parts = [f"開回 {'、'.join(on)}" if on else "", f"關掉 {'、'.join(off)}" if off else "", f"{'、'.join(failed)} 沒有成功" if failed else ""]
+        self.notifier.send("停電後恢復插座", "插座斷電又回來，開關跟斷電前不一樣，已經恢復：" + "；".join(p for p in parts if p))
+
+    def net_events_report(self, days: int = 30) -> dict[str, Any]:
+        now = time.time()
+        since = now - days * 86400
+        evs = [{"kind": "wifi", **e} for e in self.store.data["net_events"] if (e.get("end") or now) >= since]
+        ongoing = [{"kind": "wifi", **e} for e in self._outage.values()]
+        for mac, st in self._ap_state.items():
+            if st.get("stuck"):
+                n = next((x for x in self.router.nodes if x["mac"] == mac), {"mac": mac})
+                ongoing.append({"kind": "ap", "name": self._ap_name(n), "mac": mac, "start": st["stuck"], "end": None})
+        if self._wan.get("down"):
+            ongoing.append({"kind": "wan", "start": self._wan["down"], "end": None})
+        for pid, start in self._plug_out.items():
+            if pid in self.plugs:
+                ongoing.append({"kind": "plug", "name": self.name(self.plugs[pid]), "start": start, "end": None})
+        return {"now": now, "days": days, "events": evs + ongoing, "wan_ok": not self._wan.get("down")}
 
     def _check_alerts(self) -> None:
         now = time.time()
@@ -635,10 +752,14 @@ class Hub:
             if not plug.online and plug.offline_since and now - plug.offline_since > OFFLINE_NOTIFY_MINUTES * 60:
                 if plug.id not in self._offline_notified:
                     self._offline_notified.add(plug.id)
+                    self._plug_out[plug.id] = plug.offline_since
                     self.notifier.send("插座連不上", f"{name} 已經斷線超過 {OFFLINE_NOTIFY_MINUTES} 分鐘")
             elif plug.online and plug.id in self._offline_notified:
                 self._offline_notified.discard(plug.id)
-                self.notifier.send("插座恢復連線", f"{name} 又連得上了")
+                start = self._plug_out.pop(plug.id, None)
+                if start:
+                    self._net_event({"kind": "plug", "name": name, "start": start, "end": now})
+                self.notifier.send("插座恢復連線", f"{name} 又連得上了{f'，斷了大約 {netlog.fmt_dur(now - start)}' if start else ''}")
             # 功率過高持續 1 分鐘
             if plug.power is not None and plug.power > settings["overload_watts"]:
                 plug.overload_since = plug.overload_since or now
@@ -1273,6 +1394,30 @@ class Hub:
                 rooms.setdefault(r, [None] * n)[i] = v["score"]
         return {"start": start, "bucket": bucket, "n": n, "devices": devices, "rooms": rooms}
 
+    def sensing_week(self, days: int = 28) -> dict[str, Any]:
+        """一週動靜：最近 days 天，每間房「星期幾 × 幾點」有動靜的比例。算一次要一點時間，10 分鐘內重複問用上次的。"""
+        now = time.time()
+        if self._week_cache and self._week_cache[1] == days and now - self._week_cache[0] < 600:
+            return self._week_cache[2]
+        bucket = 300
+        start = int((now // bucket + 1) * bucket - days * 86400)
+        n = days * 86400 // bucket
+        data = self.store.energy.sense_buckets(start, bucket)
+        lks = self._room_links()
+        rooms: dict[str, list[float | None]] = {}
+        for i in range(n):
+            m = {k: per[i][1] for k, per in data.items() if i in per}
+            if not m:
+                continue
+            for r, v in roommotion.scores(lks, m).items():
+                rooms.setdefault(r, [None] * n)[i] = v["score"]
+        out = netlog.week_grid(start, bucket, rooms, roommotion.ACTIVE)
+        first = self.store.energy.sense_first()
+        out["days"] = days
+        out["since"] = max(start, first) if first else None
+        self._week_cache = (now, days, out)
+        return out
+
     def sensing_report(self, minutes: int = 60) -> dict[str, Any]:
         """每台插座（排插算一台）一列：用它的孔的名稱表示。"""
         names = {k: "、".join(self.name(self.plugs[p]) for p in e.plugs) for k, e in self.devices.items()}
@@ -1302,6 +1447,7 @@ class Hub:
         changed = self._router_new_devices(now)
         changed = self._router_presence(now) or changed
         self._check_left_on(now)
+        self._check_aps(now)
         sig = (self.router.ok, frozenset(m for m in self.router.clients if self.router.online(m)))
         if changed or sig != self._router_sig:
             self._router_sig = sig
