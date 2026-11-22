@@ -57,8 +57,20 @@ export function MapCanvas({
 
   const W = fp.w;
   const H = fp.h;
+  // 看的時候只顯示有畫東西的範圍（牆、區域、裝置），旁邊留一點邊；編輯時整張畫布都在，才能往空白處畫
+  const vb = (() => {
+    const xs: number[] = [], ys: number[] = [];
+    for (const w of fp.walls || []) { xs.push(w.x1, w.x2); ys.push(w.y1, w.y2); }
+    for (const r of fp.rooms || []) for (const [x, y] of roomPts(r)) { xs.push(x); ys.push(y); }
+    for (const it of Object.values(fp.items)) { xs.push(it.x); ys.push(it.y); }
+    if (edit || fp.image || xs.length < 2) return { x: 0, y: 0, w: W, h: H };
+    const pad = Math.max(24, W * 0.03);
+    const x0 = Math.max(0, Math.min(...xs) - pad), y0 = Math.max(0, Math.min(...ys) - pad);
+    const x1 = Math.min(W, Math.max(...xs) + pad), y1 = Math.min(H, Math.max(...ys) + pad * 1.8);
+    return x1 - x0 < W * 0.3 || y1 - y0 < H * 0.3 ? { x: 0, y: 0, w: W, h: H } : { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+  })();
   // 標記的字在畫面上大約 12px：k = 地圖單位／畫面像素 × 1.1
-  const k = Math.max(1, Math.min(2.6, (W / px) * 1.1));
+  const k = Math.max(1, Math.min(2.6, (vb.w / px) * 1.1));
   const showNames = k < 2.3;
   const rooms = fp.rooms || [];
   const placed = devs.filter((d) => fp.items[d.key]);
@@ -396,7 +408,7 @@ export function MapCanvas({
   return (
     <svg
       ref={svg}
-      viewBox={`0 0 ${W} ${H}`}
+      viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`}
       role="img"
       aria-label="訊號地圖"
       className={cn("block h-auto w-full min-w-[600px] rounded-xl bg-muted select-none sm:min-w-0", edit && "touch-none")}
@@ -431,7 +443,7 @@ export function MapCanvas({
       {layer === "motion" && !edit && rooms.map((r) => {
         // 房間的動靜：整間染成橘色，越熱越深
         const h = roomHeat[r.id];
-        return h != null && h >= 0.15 ? <path key={`heat-${r.id}`} d={roomPath(r)} fill={WARN} fillOpacity={Math.min(0.4, 0.06 + h * 0.17)} className="pointer-events-none" /> : null;
+        return h != null && h >= 0.25 ? <path key={`heat-${r.id}`} d={roomPath(r)} fill={WARN} fillOpacity={Math.min(0.4, 0.04 + h * 0.2)} className="pointer-events-none" /> : null;
       })}
       {rooms.map((r) => {
         const isSel = edit && sel?.kind === "room" && sel.id === r.id;
