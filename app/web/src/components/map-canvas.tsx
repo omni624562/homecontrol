@@ -13,10 +13,12 @@ type Drag = { kind: "item" | "room" | "corner" | "edge" | "wall" | "wallEnd" | "
 
 const STROKE: Record<string, string> = { good: "var(--primary)", mid: "color-mix(in srgb, var(--primary) 45%, var(--card))", weak: "var(--color-orange-500, #f97316)" };
 const WARN = "var(--color-orange-500, #f97316)";
+export const ROOM_ACTIVE = 0.4; // 跟伺服器 roommotion.ACTIVE 一樣
+export const ROOM_STRONG = 1.0;
 
 // 地圖本體：區域、訊號光暈、連線、基地台、裝置；編輯時可以拖曳
 export function MapCanvas({
-  fp, devs, links, layer, edit, sel, motion, people = [], tool = "select", onChange, onDragEnd, onPick, onTip,
+  fp, devs, links, layer, edit, sel, motion, roomHeat = {}, people = [], tool = "select", onChange, onDragEnd, onPick, onTip,
 }: {
   fp: Floorplan;
   devs: MapDev[];
@@ -25,6 +27,7 @@ export function MapCanvas({
   edit: boolean;
   sel: MapSel;
   motion: Record<string, number | null>;
+  roomHeat?: Record<string, number | null>;
   people?: MapPerson[];
   tool?: MapTool;
   onChange: (fp: Floorplan) => void;
@@ -329,9 +332,15 @@ export function MapCanvas({
           ))}
         </g>
       )}
+      {layer === "motion" && !edit && rooms.map((r) => {
+        // 房間的動靜：整間染成橘色，越熱越深
+        const h = roomHeat[r.id];
+        return h != null && h >= 0.15 ? <path key={`heat-${r.id}`} d={roomPath(r)} fill={WARN} fillOpacity={Math.min(0.4, 0.06 + h * 0.17)} className="pointer-events-none" /> : null;
+      })}
       {rooms.map((r) => {
         const isSel = edit && sel?.kind === "room" && sel.id === r.id;
         const top = topEdge(r);
+        const h = layer === "motion" && !edit ? roomHeat[r.id] : null;
         return (
           <g key={r.id}>
             <path
@@ -342,6 +351,9 @@ export function MapCanvas({
               onPointerDown={(e) => startDrag(e, { kind: "room", id: r.id })}
             />
             <text x={top.left + 12 * k} y={top.y + 24 * k} className="pointer-events-none fill-muted-foreground font-semibold" style={{ fontSize: 15 * k }}>{r.name}</text>
+            {h != null && h >= ROOM_ACTIVE && (
+              <text x={top.left + 12 * k} y={top.y + 42 * k} className="pointer-events-none font-semibold" fill={WARN} style={{ fontSize: 12 * k }}>{h >= ROOM_STRONG ? "有人走動" : "有動靜"}</text>
+            )}
           </g>
         );
       })}

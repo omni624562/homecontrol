@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlertCircle, AppWindow, List, Check, CheckCircle2, DoorOpen, FlipHorizontal2, ImagePlus, LayoutGrid, Minus, MousePointer2, Pencil, Plus, Square, Trash2, Wifi, WifiOff, X } from "lucide-react";
+import { AlertCircle, AppWindow, List, Check, Pause, Play, Radio, CheckCircle2, DoorOpen, FlipHorizontal2, ImagePlus, LayoutGrid, Minus, MousePointer2, Pencil, Plus, Square, Trash2, Wifi, WifiOff, X } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -10,13 +10,13 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/app-shell";
-import { MapCanvas, type MapPerson, type MapSel, type MapTool } from "@/components/map-canvas";
+import { MapCanvas, ROOM_ACTIVE, ROOM_STRONG, type MapPerson, type MapSel, type MapTool } from "@/components/map-canvas";
 import { Segmented } from "@/components/schedule-bits";
 import { api } from "@/lib/api";
 import { fmt } from "@/lib/format";
 import { useHub, useMedia } from "@/lib/hub";
 import {
-  AP_HEIGHTS, AP_Z, DEV_HEIGHTS, DEV_Z, autoAps, autoLayout, fpPayload, mapDevices, mapLinks, type Floorplan, type FpAp, type MapSense,
+  AP_HEIGHTS, AP_Z, DEV_HEIGHTS, DEV_Z, autoAps, autoLayout, fpPayload, mapDevices, mapLinks, type Floorplan, type FpAp, type MapSense, type MapReplay, type FpRoom,
 } from "@/lib/map-model";
 import { cn } from "@/lib/utils";
 
@@ -103,6 +103,9 @@ export function MapPage() {
   const [sel, setSel] = useState<MapSel>(null);
   const [tool, setTool] = useState<MapTool>("select");
   const [tip, setTip] = useState<string | null>(null);
+  const [replay, setReplay] = useState<MapReplay | null>(null);
+  const [frame, setFrame] = useState<number | null>(null); // null = 現在
+  const [playing, setPlaying] = useState(false);
   const fpRef = useRef<Floorplan | null>(null);
   const saveT = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -163,6 +166,41 @@ export function MapPage() {
     };
   }, []);
 
+  // 動靜回放的資料：看動靜圖層時才讀，每 5 分鐘更新
+  const wantReplay = layer === "motion" && !edit;
+  useEffect(() => {
+    if (!wantReplay) return;
+    let alive = true;
+    const load = () => api<MapReplay>("GET", "/api/sensing/replay?hours=24").then((d) => alive && setReplay(d)).catch(() => {});
+    load();
+    const t = setInterval(load, 300000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [wantReplay]);
+  useEffect(() => {
+    if (!wantReplay) {
+      setFrame(null);
+      setPlaying(false);
+    }
+  }, [wantReplay]);
+  // 播放：每 0.3 秒往後一格（5 分鐘），播到最後回到「現在」
+  useEffect(() => {
+    if (!playing || !replay) return;
+    const t = setInterval(() => {
+      setFrame((f) => {
+        const next = (f ?? -1) + 1;
+        if (next >= replay.n) {
+          setPlaying(false);
+          return null;
+        }
+        return next;
+      });
+    }, 300);
+    return () => clearInterval(t);
+  }, [playing, replay]);
+
   // 路由器讀到的主路由器、節點自動擺上去
   useEffect(() => {
     const f = fpRef.current;
@@ -222,7 +260,14 @@ export function MapPage() {
       </>
     );
 
-  const motion = Object.fromEntries((sense?.devices || []).map((d) => [d.key, d.now]));
+  const past = frame != null && replay ? frame : null;
+  const motion: Record<string, number | null> = past != null
+    ? Object.fromEntries(Object.entries(replay!.devices).map(([k, v]) => [k, v[past]]))
+    : Object.fromEntries((sense?.devices || []).map((d) => [d.key, d.now]));
+  const roomHeat: Record<string, number | null> = past != null
+    ? Object.fromEntries(Object.entries(replay!.rooms).map(([k, v]) => [k, v[past]]))
+    : Object.fromEntries(Object.entries(sense?.rooms || {}).map(([k, v]) => [k, v.score]));
+  const roomCover = sense?.rooms || {};
   const links = mapLinks(fp, devs);
   // 家人在哪個房間（在家、教過房間、地圖上有那個區域才標）
   const fpRooms = new Set(fp.rooms.map((r) => r.id));
@@ -529,10 +574,15 @@ export function MapPage() {
           {/* 手機：地圖放大到 600px 寬，可以左右滑 */}
           <div className="-mx-4 overflow-x-auto px-4 pb-1 sm:mx-0 sm:overflow-visible sm:px-0 sm:pb-0">
             <MapCanvas
-              fp={fp} devs={devs} links={links} layer={layer} edit={edit} sel={sel} motion={motion} people={people} tool={tool}
+              fp={fp} devs={devs} links={links} layer={layer} edit={edit} sel={sel} motion={motion} roomHeat={roomHeat} people={past != null ? [] : people} tool={tool}
               onChange={setFp} onDragEnd={save} onPick={pick} onTip={setTip}
             />
           </div>
+          {wantReplay && replay && replay.n > 0 && (
+            <ReplayBar replay={replay} frame={frame} playing={playing}
+              onFrame={(f) => { setPlaying(false); setFrame(f); }}
+              onPlay={() => { if (playing) setPlaying(false); else { if (frame == null) setFrame(Math.max(0, replay.n - 72)); setPlaying(true); } }} />
+          )}
         </Card>
 
         <div ref={sideRef} className="min-w-0 space-y-4">
@@ -574,6 +624,9 @@ export function MapPage() {
                   <Note icon={CheckCircle2} tone="ok">所有裝置的訊號都在 -70 dBm 以上。</Note>
                 )}
                 {off.length > 0 && <Note icon={WifiOff} tone="warn">{off.length} 台離線：{off.map((d) => d.name).join("、")}</Note>}
+                {layer === "motion" && (
+                  <RoomMotionList rooms={fp.rooms} heat={roomHeat} covered={past != null ? replay!.rooms : roomCover} past={past != null} />
+                )}
                 {layer === "motion" ? (
                   links.length ? (
                     <>
@@ -595,5 +648,55 @@ export function MapPage() {
         </div>
       </div>
     </>
+  );
+}
+
+// 各房間的動靜：有人走動／有動靜／安靜／沒有線經過
+function RoomMotionList({ rooms, heat, covered, past }: { rooms: FpRoom[]; heat: Record<string, number | null>; covered: Record<string, unknown>; past: boolean }) {
+  const rows = rooms.map((r) => ({ r, h: heat[r.id], has: r.id in covered })).sort((a, b) => (b.h ?? -1) - (a.h ?? -1));
+  const none = rows.filter((x) => !x.has);
+  return (
+    <div className="space-y-1.5">
+      <Q>{past ? "那時候各房間" : "現在各房間"}</Q>
+      <ul className="divide-y rounded-lg border text-sm">
+        {rows.filter((x) => x.has).map(({ r, h }) => (
+          <li key={r.id} className="flex items-center gap-2 px-3 py-1.5">
+            <span className="flex-1">{r.name}</span>
+            {h == null ? <span className="text-xs text-muted-foreground">沒有讀數</span>
+              : h >= ROOM_STRONG ? <b className="text-orange-600 dark:text-orange-400">有人走動</b>
+              : h >= ROOM_ACTIVE ? <span className="text-orange-600 dark:text-orange-400">有動靜</span>
+              : <span className="text-muted-foreground">安靜</span>}
+            <span className="w-8 text-right text-xs tabular-nums text-muted-foreground">{h == null ? "" : fmt(h, 1)}</span>
+          </li>
+        ))}
+      </ul>
+      {none.length > 0 && <p className="text-xs text-muted-foreground">{none.map((x) => x.r.name).join("、")}：沒有訊號線經過，偵測不到（不代表沒人）。</p>}
+    </div>
+  );
+}
+
+// 動靜回放：最近 24 小時，每 5 分鐘一格；上面的小長條是那時候最熱的房間有多熱
+function ReplayBar({ replay, frame, playing, onFrame, onPlay }: { replay: MapReplay; frame: number | null; playing: boolean; onFrame: (f: number | null) => void; onPlay: () => void }) {
+  const peaks = useMemo(() => Array.from({ length: replay.n }, (_, i) => Math.max(0, ...Object.values(replay.rooms).map((v) => v[i] ?? 0))), [replay]);
+  const at = frame == null ? null : new Date((replay.start + frame * replay.bucket) * 1000);
+  const label = at == null ? "現在" : `${at.toDateString() === new Date().toDateString() ? "今天" : "昨天"} ${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
+  const val = frame ?? replay.n;
+  return (
+    <div className="flex items-center gap-3 rounded-lg border px-3 py-2">
+      <Button type="button" size="icon" variant="outline" className="size-9 shrink-0" aria-label={playing ? "暫停" : "播放最近 6 小時"} onClick={onPlay}>{playing ? <Pause /> : <Play />}</Button>
+      <div className="min-w-0 flex-1">
+        <div className="flex h-5 items-end gap-px" aria-hidden>
+          {peaks.map((p, i) => (
+            <i key={i} className={cn("flex-1 rounded-t-sm", i === frame ? "bg-primary" : "bg-orange-500")} style={{ height: `${Math.max(8, Math.min(100, p * 60))}%`, opacity: i === frame ? 1 : p >= ROOM_ACTIVE ? 0.85 : 0.2 }} />
+          ))}
+        </div>
+        <input type="range" min={0} max={replay.n} value={val} aria-label="回放時間" className="w-full accent-primary"
+          onChange={(e) => { const v = Number(e.target.value); onFrame(v >= replay.n ? null : v); }} />
+      </div>
+      <button type="button" className={cn("w-20 shrink-0 text-right text-sm tabular-nums", frame == null ? "font-medium text-foreground" : "text-primary underline-offset-2 hover:underline")}
+        onClick={() => onFrame(null)} title="回到現在">
+        {frame == null ? <span className="inline-flex items-center gap-1"><Radio className="size-3.5 text-emerald-500" />現在</span> : label}
+      </button>
+    </div>
   );
 }

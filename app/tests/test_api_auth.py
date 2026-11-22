@@ -158,3 +158,14 @@ def test_floorplan_walls_doors(app_module, client):
     assert fp["doors"] == [{"id": "d1", "wall": "w1", "t": 0.5, "w": 75, "flip": 2},
                            {"id": "n1", "wall": "w1", "t": 0.2, "w": 100, "flip": 0, "kind": "fwin"},
                            {"id": "n2", "wall": "w1", "t": 0.8, "w": 60, "flip": 0}]
+
+
+def test_sensing_rooms_and_replay(app_module, client):
+    token, _ = app_module.auth.pair(app_module.auth.new_code())
+    client.cookies.set("plughub_token", token)
+    r = client.get("/api/sensing")
+    assert r.status_code == 200 and "rooms" in r.json()
+    r = client.get("/api/sensing/replay?hours=2")
+    assert r.status_code == 200
+    d = r.json()
+    assert d["n"] == 24 and d["bucket"] == 300
