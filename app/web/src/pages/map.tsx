@@ -12,7 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/app-shell";
 import { MotionRules } from "@/components/motion-rules";
 import { MapCanvas, ROOM_ACTIVE, ROOM_STRONG, type MapGhost, type MapLayer, type MapPerson, type MapSel, type MapTool } from "@/components/map-canvas";
-import { COV_TEXT, bestApSpot, covQ, coverage, fitModel, gapSpots, type ApSuggest } from "@/lib/coverage";
+import { COV_TEXT, bestApSpot, covColor, covQ, coverage, fitModel, gapSpots, type ApSuggest } from "@/lib/coverage";
 import { Segmented } from "@/components/schedule-bits";
 import { api } from "@/lib/api";
 import { fmt } from "@/lib/format";
@@ -135,9 +135,17 @@ export function MapPage() {
   const devs = useMemo(() => mapDevices(state?.plugs || [], sense), [state?.plugs, sense]);
   // 連線、訊號模型、預估覆蓋（地圖或裝置變了才重算）
   const links = useMemo(() => (fp?.rooms ? mapLinks(fp, devs) : []), [fp, devs]);
-  const model = useMemo(() => (fp?.rooms ? fitModel(fp, links) : null), [fp, links]);
+  // 路由器找得到、但現在一台裝置都沒連的基地台（Wi-Fi 可能卡住了）：預估覆蓋先不算它
+  const idleAps = useMemo(() => {
+    const cl = (sense?.net?.clients || []).filter((c) => c.online);
+    const nodes = new Set((sense?.net?.nodes || []).map((n) => n.mac));
+    if (cl.length < 5 || !fp) return [];
+    return fp.aps.filter((a) => a.node && nodes.has(a.node) && !cl.some((c) => c.node === a.node));
+  }, [sense, fp]);
+  const covFp = useMemo(() => (fp && idleAps.length ? { ...fp, aps: fp.aps.filter((a) => !idleAps.includes(a)) } : fp), [fp, idleAps]);
+  const model = useMemo(() => (covFp?.rooms ? fitModel(covFp, links) : null), [covFp, links]);
   const covStep = fp ? fp.w / 50 : 20;
-  const cover = useMemo(() => (fp?.rooms && model && layer === "coverage" ? coverage(fp, model, covStep) : null), [fp, model, layer, covStep]);
+  const cover = useMemo(() => (covFp?.rooms && model && layer === "coverage" ? coverage(covFp, model, covStep) : null), [covFp, model, layer, covStep]);
   useEffect(() => setApSug(null), [fp, model]);
   const devsRef = useRef(devs);
   devsRef.current = devs;
@@ -513,7 +521,7 @@ export function MapPage() {
   const off = devs.filter((d) => !d.online);
   const good = links.filter((l) => l.q === "good");
   const hot = links.filter((l) => (motion[l.dev.key] ?? 0) > 0.15).sort((a, b) => motion[b.dev.key]! - motion[a.dev.key]!);
-  const gaps = model && layer === "motion" ? gapSpots(fp, model, roomCover) : [];
+  const gaps = model && covFp && layer === "motion" ? gapSpots(covFp, model, roomCover) : [];
   const apName = (id: string) => fp.aps.find((a) => a.id === id)?.name || "基地台";
   const ghosts: MapGhost[] = layer === "coverage"
     ? (apSug || []).filter((g) => g.then - g.now >= 3 && g.now < -60).map((g) => ({ id: `ap-${g.ap}`, kind: "ap", x: g.x, y: g.y, label: `${apName(g.ap)} 放這裡`, to: fp.items[`ap:${g.ap}`] }))
@@ -574,7 +582,7 @@ export function MapPage() {
               <div className="ml-auto flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground" aria-hidden>
                 {layer === "coverage" ? (
                   <span className="inline-flex items-center gap-1.5">
-                    {["bg-primary/60", "bg-primary/25", "bg-amber-400/70", "bg-orange-500/80"].map((c, i) => <span key={c} className="inline-flex items-center gap-1"><b className={cn("size-3 rounded-sm", c)} />{COV_TEXT[i]}</span>)}
+                    很強<b className="h-3 w-24 rounded-sm" style={{ background: `linear-gradient(90deg, ${[-45, -56, -63, -68, -76].map((v) => covColor(v)).join(",")})` }} />弱
                   </span>
                 ) : layer === "signal" ? (
                   <span className="inline-flex items-center gap-1.5">
@@ -646,6 +654,11 @@ export function MapPage() {
                 </SideCard>
               )}
               <SideCard title="訊號狀況">
+                {idleAps.map((a) => (
+                  <Note key={a.id} icon={AlertCircle} tone="warn">
+                    <b className="text-foreground">{a.name} 現在沒有任何裝置連著</b>（網路上還找得到它）。它的 Wi-Fi 可能卡住了，附近的裝置都跑去連比較遠的基地台、訊號變差。重開 {a.name} 試試。預估覆蓋先不算它。
+                  </Note>
+                ))}
                 {weakDevs.length ? (
                   weakDevs.map((d) => <Note key={d.key} icon={AlertCircle} tone="warn"><b>{d.full}</b>：訊號 {d.rssi} dBm，偏弱，容易斷線。可以考慮把 Wi-Fi 基地台移近一點。</Note>)
                 ) : (
@@ -654,7 +667,7 @@ export function MapPage() {
                 {off.length > 0 && <Note icon={WifiOff} tone="warn">{off.length} 台離線：{off.map((d) => d.name).join("、")}</Note>}
                 {layer === "coverage" && model && (
                   <CoveragePanel model={model} rooms={roomCov} aps={fp.aps.filter((a) => fp.items[`ap:${a.id}`])} sug={apSug}
-                    onFind={() => setApSug(fp.aps.filter((a) => fp.items[`ap:${a.id}`]).map((a) => bestApSpot(fp, model, a.id)).filter((x): x is ApSuggest => !!x))} />
+                    onFind={() => setApSug(covFp!.aps.filter((a) => fp.items[`ap:${a.id}`]).map((a) => bestApSpot(covFp!, model, a.id)).filter((x): x is ApSuggest => !!x))} />
                 )}
                 {layer === "motion" && gaps.length > 0 && (
                   <div className="space-y-1.5">
