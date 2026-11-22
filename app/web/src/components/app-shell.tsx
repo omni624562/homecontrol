@@ -1,12 +1,13 @@
-import { useSyncExternalStore, type ReactNode } from "react";
-import { BarChart3, Clock, Home, Map as MapIcon, MessageSquareText, PanelLeftClose, PanelLeftOpen, Settings, Sun, Wifi } from "lucide-react";
+import { useEffect, useSyncExternalStore, type ReactNode } from "react";
+import { BarChart3, Clock, Home, Map as MapIcon, Menu, MessageSquareText, PanelLeftClose, PanelLeftOpen, Settings, Sun, Wifi } from "lucide-react";
+import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from "@/components/ui/drawer";
 import { useLook } from "@/lib/look";
 import { useAsk } from "@/components/ask-sheet";
 import { useHub } from "@/lib/hub";
 import { cn } from "@/lib/utils";
 
 // 主選單
-// mobile: false 的只出現在電腦的左側選單（手機下方放不下，從首頁進）
+// mobile: false 的不放手機下方分頁（放不下）；手機從標題列左上角「☰」打開的選單裡有全部
 export const TABS = [
   { key: "plugs", label: "首頁", icon: Home, mobile: true },
   { key: "life", label: "生活", icon: Sun, mobile: true },
@@ -46,25 +47,87 @@ function useRail(): boolean {
   return v === null ? look === "tech" : v === "1";
 }
 
+// 手機的側邊選單（標題列左上角「☰」打開）
+let menuOpen = false;
+const menuListeners = new Set<() => void>();
+function setMenu(v: boolean) {
+  if (menuOpen === v) return;
+  menuOpen = v;
+  menuListeners.forEach((f) => f());
+}
+function useMenu(): boolean {
+  return useSyncExternalStore((f) => { menuListeners.add(f); return () => { menuListeners.delete(f); }; }, () => menuOpen, () => false);
+}
+
+function Logo() {
+  return (
+    <div className="logo-mark flex size-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-sm">
+      <Home className="size-5" />
+    </div>
+  );
+}
+
+function MobileMenu({ tab, status }: { tab: string; status: ReactNode }) {
+  const open = useMenu();
+  useEffect(() => {
+    const close = () => setMenu(false);
+    addEventListener("hashchange", close);
+    // 轉成電腦的寬度時關掉（電腦有左側選單）
+    const mq = matchMedia("(min-width: 1024px)");
+    mq.addEventListener("change", close);
+    return () => { removeEventListener("hashchange", close); mq.removeEventListener("change", close); };
+  }, []);
+  return (
+    <Drawer direction="left" open={open} onOpenChange={setMenu}>
+      <DrawerContent className="w-[17rem] max-w-[85vw] py-[max(1.25rem,env(safe-area-inset-top))] pr-3 pl-[max(0.75rem,env(safe-area-inset-left))] pb-[max(1.25rem,env(safe-area-inset-bottom))] lg:hidden">
+        <div className="mb-5 flex items-center gap-3 px-2">
+          <Logo />
+          <div className="leading-tight">
+            <DrawerTitle className="font-semibold">家庭中控</DrawerTitle>
+            <DrawerDescription className="text-xs text-muted-foreground">Home Hub</DrawerDescription>
+          </div>
+        </div>
+        <nav className="flex flex-col gap-1 overflow-y-auto" aria-label="全部頁面">
+          {TABS.map((t) => (
+            <a
+              key={t.key}
+              href={href(t)}
+              onClick={() => setMenu(false)}
+              aria-current={tab === t.key ? "page" : undefined}
+              className={cn(
+                "flex items-center gap-3 rounded-lg px-3 py-3 text-base font-medium text-muted-foreground transition-colors active:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                tab === t.key && "bg-primary/10 text-primary",
+              )}
+            >
+              <t.icon className="size-5 shrink-0" />
+              {t.label}
+            </a>
+          ))}
+        </nav>
+        <div className="mt-auto border-t px-2 pt-3">{status}</div>
+      </DrawerContent>
+    </Drawer>
+  );
+}
+
 export function AppShell({ tab: raw, children }: { tab: string; children: ReactNode }) {
   const tab = raw === "edit" ? "plugs" : raw;
   const { connected, state } = useHub();
   const mini = useRail();
   const connText = connected ? "已連線" : state ? "重新連線中…" : "連線中…";
-  const status = (
-    <div className={cn("flex items-center gap-2 text-sm text-muted-foreground", mini && "justify-center")} role="status" title={mini ? connText : undefined}>
+  const statusEl = (small: boolean) => (
+    <div className={cn("flex items-center gap-2 text-sm text-muted-foreground", small && "justify-center")} role="status" title={small ? connText : undefined}>
       <span className={cn("size-2 shrink-0 rounded-full", connected ? "bg-emerald-500" : "bg-amber-500 animate-pulse")} />
-      <span className={cn(mini && "sr-only")}>{connText}</span>
+      <span className={cn(small && "sr-only")}>{connText}</span>
     </div>
   );
+  const status = statusEl(mini);
   return (
     <div className="shell-root min-h-dvh bg-neutral-50 dark:bg-background">
       {/* 電腦：左側選單（可以收合成只有圖示） */}
       <aside className={cn("fixed inset-y-0 left-0 z-30 hidden flex-col border-r bg-background py-5 transition-[width] duration-200 lg:flex", mini ? "w-16 px-2" : "w-60 px-3")}>
         <div className={cn("mb-6 flex items-center gap-3", mini ? "justify-center" : "px-2")}>
-          <div className="logo-mark flex size-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-sm">
-            <Home className="size-5" />
-          </div>
+          <Logo />
           {!mini && (
             <div className="leading-tight whitespace-nowrap">
               <div className="font-semibold">家庭中控</div>
@@ -112,6 +175,8 @@ export function AppShell({ tab: raw, children }: { tab: string; children: ReactN
       <main className={cn("pb-[calc(5.5rem+env(safe-area-inset-bottom))] transition-[padding] duration-200 lg:pb-10", mini ? "lg:pl-16" : "lg:pl-60")}>{children}</main>
 
 
+      <MobileMenu tab={tab} status={statusEl(false)} />
+
       {/* 手機、平板：下方分頁 */}
       <nav
         className="fixed inset-x-0 bottom-0 z-30 flex border-t bg-background/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-md lg:hidden"
@@ -150,6 +215,11 @@ export function PageHeader({ title, sub, actions, chips, chipsClassName, hideTit
   return (
     <header className="page-header sticky top-0 z-20 bg-neutral-50/85 backdrop-blur-md dark:bg-background/85">
       <div className="mx-auto flex max-w-[112rem] flex-wrap items-center gap-x-4 gap-y-2 px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-3 sm:px-6 lg:px-8 lg:py-4">
+        {/* 手機、平板：左上角打開全部頁面的選單 */}
+        <button onClick={() => setMenu(true)} aria-label="全部頁面" title="全部頁面"
+          className="-ml-1.5 inline-flex size-9 shrink-0 items-center justify-center rounded-full text-foreground transition-colors hover:bg-muted active:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:hidden">
+          <Menu className="size-[22px]" />
+        </button>
         {/* hideTitle：標題只給螢幕閱讀器（首頁：左邊選單已經標出在哪一頁） */}
         {hideTitle && lead && <div className="min-w-0 flex-1 lg:hidden">{lead}</div>}
         {hideTitle ? <h1 className="sr-only">{title}</h1> : (
