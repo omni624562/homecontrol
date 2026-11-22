@@ -61,6 +61,7 @@ import segno
 from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.gzip import GZipMiddleware
 
 from . import auth as authmod
 from .locate import MIN_SAMPLES as LOCATE_MIN, TRAIN_S as LOCATE_TRAIN_S
@@ -90,6 +91,28 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="插座", lifespan=lifespan, docs_url=None, redoc_url=None)
+
+
+class _Gzip:
+    """壓縮網頁和 API 回應（手機在 Wi-Fi 邊緣、用 4G 時快很多）。
+
+    即時推送（/api/events）不能壓：壓縮會把小訊息卡在緩衝區裡送不出去；圖片本來就壓過了也不壓。
+    """
+    SKIP = ("/api/events", "/api/floorplan/image")
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+        self.gz = GZipMiddleware(app, minimum_size=1000, compresslevel=6)
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        path = scope.get("path", "") if scope["type"] == "http" else ""
+        if path and not path.startswith(self.SKIP) and not path.endswith((".png", ".jpg", ".webp", ".ico")):
+            await self.gz(scope, receive, send)
+        else:
+            await self.app(scope, receive, send)
+
+
+app.add_middleware(_Gzip)
 
 LOCAL = {"127.0.0.1", "::1", "localhost"}
 # 不用配對就能用的：配對本身、健康檢查
@@ -714,11 +737,14 @@ async def manifest() -> Response:
 
 
 @app.get("/api/sensing")
-async def sensing(minutes: int = 60, range: str = "1h") -> dict[str, Any]:  # noqa: A002
-    """Wi-Fi 感測（實驗）：每台插座每分鐘的訊號強度和擾動；range = 24h／7d／30d 看長期紀錄。"""
+async def sensing(minutes: int = 60, range: str = "1h", lite: bool = False) -> dict[str, Any]:  # noqa: A002
+    """Wi-Fi 感測（實驗）：每台插座每分鐘的訊號強度和擾動；range = 24h／7d／30d 看長期紀錄。
+
+    lite=1（地圖每 10 秒用）：只要現在的擾動、房間動靜、網路裝置的連線摘要，不要每分鐘的紀錄。
+    """
     if range in hub.SENSE_RANGES:
         return hub.sensing_history(range)
-    return hub.sensing_report(max(5, min(60, minutes)))
+    return hub.sensing_report(max(5, min(60, minutes)), lite=lite)
 
 
 @app.get("/api/motion-rules")
@@ -759,7 +785,7 @@ async def sensing_replay(hours: int = 24) -> dict[str, Any]:
 @app.get("/api/sensing/week")
 async def sensing_week(days: int = 28) -> dict[str, Any]:
     """一週動靜：最近 days 天（7～30），每間房每個「星期幾 × 幾點」有動靜的比例。"""
-    return hub.sensing_week(max(7, min(30, days)))
+    return await hub.sensing_week(max(7, min(30, days)))
 
 
 @app.get("/api/net/events")
@@ -1421,8 +1447,16 @@ async def service_worker() -> FileResponse:
     return FileResponse(STATIC / "sw.js", media_type="text/javascript", headers={"Cache-Control": "no-cache"})
 
 
+class _Immutable(StaticFiles):
+    """檔名有內容雜湊（改了就換檔名），瀏覽器可以放心存一年、不用每次回來問。"""
+
+    def file_response(self, *args: Any, **kwargs: Any) -> Response:
+        resp = super().file_response(*args, **kwargs)
+        resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return resp
+
+
 if (WEB / "assets").is_dir():
-    # 檔名有內容雜湊，可以放心長期快取
-    app.mount("/assets", StaticFiles(directory=WEB / "assets"), name="web")
+    app.mount("/assets", _Immutable(directory=WEB / "assets"), name="web")
 
 app.mount("/static", StaticFiles(directory=STATIC), name="static")

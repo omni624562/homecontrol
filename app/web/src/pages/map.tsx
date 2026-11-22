@@ -176,7 +176,7 @@ export function MapPage() {
   // 動靜和路由器資料：每 10 秒更新
   useEffect(() => {
     let alive = true;
-    const load = () => api<MapSense>("GET", "/api/sensing").then((d) => alive && setSense(d)).catch(() => {});
+    const load = () => api<MapSense>("GET", "/api/sensing?lite=1").then((d) => alive && setSense(d)).catch(() => {});
     load();
     const t = setInterval(load, 10000);
     return () => {
