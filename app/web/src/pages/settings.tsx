@@ -354,7 +354,7 @@ function NetCheck({ s }: { s: HubState }) {
   if (!r.devices) return null;
   const ok = !r.issues.length;
   const t = s.now;
-  const evs = (s.net_events || []).filter((e) => !e.end || t - e.end < 7 * 86400).reverse();
+  const evs = (s.net_events || []).filter((e) => (!e.kind || e.kind === "wifi") && (!e.end || t - e.end < 7 * 86400)).reverse();
   return (
     <div className="flex gap-3 px-4 py-3.5 sm:px-5">
       <div className="min-w-0 flex-1 space-y-2">
@@ -757,6 +757,9 @@ export function SettingsPage() {
           <GoogleCard />
           <SCard id="s-dev" icon={Search} title="裝置">
             <NetCheck s={state} />
+            <SRow label="停電後恢復插座" hint="停電回來，插座開關跟停電前不一樣就改回來（6 小時內）；高風險電器不會自動打開">
+              <Switch checked={state.settings.power_restore !== false} onCheckedChange={(v) => put({ power_restore: v }, v ? "停電後會恢復插座" : "停電後不自動恢復")} aria-label="停電後恢復插座" />
+            </SRow>
             <LinkRow label={<>Wi-Fi 感測 <Badge variant="secondary">實驗</Badge></>} hint="用插座的訊號擾動，猜哪裡有人在走動" onClick={() => setSheet("sense")} />
             <LinkRow label="TP-Link 雲端" hint={`${bound ? `${bound} 個插座綁著 TP-Link 帳號` : "已和 TP-Link 帳號解除綁定"}・家庭中控和 Google Home 都不需要它`} onClick={() => setSheet("cloud")} />
             <SRow label="找新插座" hint="每分鐘會自動找一次；剛插上的插座可以按這裡馬上找">

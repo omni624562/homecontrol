@@ -18,6 +18,8 @@ PUT  /api/away              離家模式 {"enabled", "start", "end", "plugs"}
 GET/PUT /api/floorplan      訊號地圖（房間、裝置位置、Wi-Fi 基地台）；POST/GET/DELETE /api/floorplan/image 底圖
 GET/PUT /api/sensing        Wi-Fi 感測（實驗）：訊號擾動、各房間動靜；{"enabled": false} 停止記錄
 GET /api/sensing/replay     動靜回放：最近 24 小時每 5 分鐘一格
+GET /api/sensing/week       一週動靜：每間房「星期幾 × 幾點」有動靜的比例
+GET /api/net/events         斷線紀錄：外網、基地台卡住、Wi-Fi、插座、停電恢復
 GET/PUT /api/motion-rules   動靜自動化：{"rules": [{"room","plug","start","end","off_min","need_home","enabled"}]}
 GET /api/locate/{id}         人在哪個房間（實驗）：每個房間教了幾筆、現在的判斷；POST …/train {"room"} 教 2 分鐘、DELETE …/train 停止、DELETE /api/locate/{id}?room= 清掉
 GET  /api/energy             用電（插座自己記錄的開機時間 × 瓦數）
@@ -754,6 +756,17 @@ async def sensing_replay(hours: int = 24) -> dict[str, Any]:
     return hub.sensing_replay(max(1, min(48, hours)))
 
 
+@app.get("/api/sensing/week")
+async def sensing_week(days: int = 28) -> dict[str, Any]:
+    """一週動靜：最近 days 天（7～30），每間房每個「星期幾 × 幾點」有動靜的比例。"""
+    return hub.sensing_week(max(7, min(30, days)))
+
+
+@app.get("/api/net/events")
+async def net_events(days: int = 30) -> dict[str, Any]:
+    return hub.net_events_report(max(1, min(90, days)))
+
+
 @app.put("/api/sensing")
 async def set_sensing(body: dict = Body(...)) -> dict[str, Any]:
     store.data["settings"]["sensing"] = bool(body.get("enabled"))
@@ -937,6 +950,8 @@ async def set_settings(body: dict = Body(...)) -> dict[str, Any]:
         settings["ntfy_topic"] = str(body["ntfy_topic"]).strip()
     if "new_device_alert" in body:
         settings["new_device_alert"] = bool(body["new_device_alert"])
+    if "power_restore" in body:
+        settings["power_restore"] = bool(body["power_restore"])
     if isinstance(body.get("remind"), dict):  # 主動提醒：開太久、早上會下雨、明天停水停電
         rem = settings.setdefault("remind", {})
         for key in ("long_on", "rain", "outage_eve", "dayoff", "warn", "quake", "power", "air", "anomaly"):
