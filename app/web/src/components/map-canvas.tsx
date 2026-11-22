@@ -174,6 +174,22 @@ export function MapCanvas({
     addEventListener("pointercancel", end);
   };
 
+  // 在轉角按兩下：切掉這個角（三分之一見方），變成 L 形；再拖新的轉角調整缺口
+  const cutCorner = (id: string, i: number) => {
+    const f = fpRef.current;
+    const r = f.rooms!.find((x) => x.id === id);
+    if (!r) return;
+    const P = roomPts(r);
+    if (P.length >= 22) return;
+    const n = P.length, a = P[(i + n - 1) % n], b = P[i], c = P[(i + 1) % n];
+    const p1: Pt = [Math.round(b[0] + (a[0] - b[0]) / 3), Math.round(b[1] + (a[1] - b[1]) / 3)];
+    const p3: Pt = [Math.round(b[0] + (c[0] - b[0]) / 3), Math.round(b[1] + (c[1] - b[1]) / 3)];
+    const p2: Pt = [p1[0] + p3[0] - b[0], p1[1] + p3[1] - b[1]];
+    const Q = [...P.slice(0, i), p1, p2, p3, ...P.slice(i + 1)];
+    onChange({ ...f, rooms: f.rooms!.map((x) => (x.id === id ? withPts(x, tidyPts(Q)) : x)) });
+    onDragEnd();
+  };
+
   // 在牆的中點按兩下：這道牆多兩個轉角，中間那段就能拉出凹口、凸出去（做成 L 形、凹字形）
   const splitEdge = (id: string, i: number) => {
     const f = fpRef.current;
@@ -358,8 +374,8 @@ export function MapCanvas({
             })}
             {P.map(([x, y], i) => (
               <circle key={`c${i}`} cx={x} cy={y} r={7 * k} className="cursor-move fill-primary stroke-card" strokeWidth={2.5 * k}
-                onPointerDown={(e) => startDrag(e, { kind: "corner", id: r.id, i })}>
-                <title>拖轉角改形狀、大小</title>
+                onPointerDown={(e) => startDrag(e, { kind: "corner", id: r.id, i })} onDoubleClick={() => cutCorner(r.id, i)}>
+                <title>拖轉角改形狀、大小；按兩下切掉這個角（變 L 形）</title>
               </circle>
             ))}
           </g>

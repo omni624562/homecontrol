@@ -281,7 +281,7 @@ export function MapPage() {
               onOk={() => { update({ ...fp, rooms: fp.rooms!.filter((x) => x.id !== r.id) }); setSel(null); }}
             />
           </div>
-          <Note>拖<b>圓點</b>（轉角）改大小、形狀；拖<b>牆中間的短條</b>把整道牆推進、拉出。L 形、凹字形：在短條上<b>按兩下</b>，那道牆會多兩個轉角，再把中間那段拉進去或拉出來。推平的轉角會自動消失。</Note>
+          <Note>拖<b>圓點</b>（轉角）改大小、形狀；拖<b>牆中間的短條</b>把整道牆推進、拉出。<br />L 形：在要缺一塊的那個<b>圓點上按兩下</b>，角會切掉一塊，再拖新的圓點調整大小。<br />凹字形：在<b>短條上按兩下</b>，那道牆多兩個轉角，再把中間那段推進去或拉出來。<br />推平的轉角會自動消失。</Note>
           {r.pts && (
             <Button variant="outline" className="h-10 self-start" onClick={() => update({ ...fp, rooms: fp.rooms!.map((x) => (x.id === r.id ? { ...x, pts: null } : x)) })}>
               <Square />改回長方形
