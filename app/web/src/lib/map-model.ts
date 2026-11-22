@@ -1,7 +1,66 @@
 // 訊號地圖：資料結構和計算（不含畫面）
 import type { Plug, Room } from "@/lib/types";
 
-export interface FpRoom { id: string; name: string; x: number; y: number; w: number; h: number }
+// pts：不是長方形的區域（L 形、凹字形…），每個轉角一個點、牆都是水平或垂直；x、y、w、h 是外框
+export type Pt = [number, number];
+export interface FpRoom { id: string; name: string; x: number; y: number; w: number; h: number; pts?: Pt[] | null }
+
+// 區域的轉角（長方形就是四個角，順時針）
+export const roomPts = (r: FpRoom): Pt[] => (r.pts && r.pts.length >= 4 ? r.pts : [[r.x, r.y], [r.x + r.w, r.y], [r.x + r.w, r.y + r.h], [r.x, r.y + r.h]]);
+
+// 拿掉重複的點、和一直線上中間的點（推平的凹口會自動消失）
+export function tidyPts(pts: Pt[]): Pt[] {
+  let p = pts.map(([x, y]) => [Math.round(x), Math.round(y)] as Pt);
+  for (let changed = true; changed && p.length > 4; ) {
+    changed = false;
+    for (let i = 0; i < p.length; i++) {
+      const a = p[(i + p.length - 1) % p.length], b = p[i], c = p[(i + 1) % p.length];
+      if ((a[0] === b[0] && b[0] === c[0]) || (a[1] === b[1] && b[1] === c[1]) || (b[0] === c[0] && b[1] === c[1])) {
+        p = p.filter((_, j) => j !== i);
+        changed = true;
+        break;
+      }
+    }
+  }
+  return p;
+}
+
+// 依轉角更新外框；剛好是長方形就不存 pts
+export function withPts(r: FpRoom, pts: Pt[]): FpRoom {
+  const xs = pts.map((q) => q[0]), ys = pts.map((q) => q[1]);
+  const x = Math.min(...xs), y = Math.min(...ys);
+  const box = { ...r, x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y };
+  return { ...box, pts: pts.length === 4 ? null : pts };
+}
+
+// 轉角稍微圓一點的外框路徑（凹進去的角也適用）
+export function roomPath(r: FpRoom, rad = 10): string {
+  const p = roomPts(r);
+  const n = p.length;
+  let d = "";
+  for (let i = 0; i < n; i++) {
+    const a = p[(i + n - 1) % n], b = p[i], c = p[(i + 1) % n];
+    const l1 = Math.hypot(b[0] - a[0], b[1] - a[1]), l2 = Math.hypot(c[0] - b[0], c[1] - b[1]);
+    const t = Math.min(rad, l1 / 2, l2 / 2);
+    const s0: Pt = [b[0] + ((a[0] - b[0]) / (l1 || 1)) * t, b[1] + ((a[1] - b[1]) / (l1 || 1)) * t];
+    const s1: Pt = [b[0] + ((c[0] - b[0]) / (l2 || 1)) * t, b[1] + ((c[1] - b[1]) / (l2 || 1)) * t];
+    d += `${i ? "L" : "M"}${s0[0]},${s0[1]} Q${b[0]},${b[1]} ${s1[0]},${s1[1]} `;
+  }
+  return d + "Z";
+}
+
+// 最上面那道牆（放名稱、人的名牌）：左端、右端
+export function topEdge(r: FpRoom): { y: number; left: number; right: number } {
+  const p = roomPts(r);
+  let best = { y: Infinity, left: 0, right: 0 };
+  for (let i = 0; i < p.length; i++) {
+    const a = p[i], b = p[(i + 1) % p.length];
+    if (a[1] !== b[1]) continue;
+    const left = Math.min(a[0], b[0]), right = Math.max(a[0], b[0]);
+    if (a[1] < best.y || (a[1] === best.y && right - left > best.right - best.left)) best = { y: a[1], left, right };
+  }
+  return best.y === Infinity ? { y: r.y, left: r.x, right: r.x + r.w } : best;
+}
 export interface FpAp { id: string; name: string; ssid?: string | null; node?: string | null; z?: number | null }
 export interface FpItem { x: number; y: number; z?: number | null }
 export interface Floorplan {
@@ -175,7 +234,7 @@ export function fpPayload(fp: Floorplan) {
     w: fp.w,
     h: fp.h,
     meters: fp.meters || 12,
-    rooms: (fp.rooms || []).map((r) => ({ ...r, x: R(r.x), y: R(r.y), w: R(r.w), h: R(r.h) })),
+    rooms: (fp.rooms || []).map((r) => ({ ...r, x: R(r.x), y: R(r.y), w: R(r.w), h: R(r.h), pts: r.pts ? r.pts.map(([x, y]) => [R(x), R(y)]) : null })),
     items: Object.fromEntries(Object.entries(fp.items).map(([k, v]) => [k, { x: R(v.x), y: R(v.y), z: v.z ?? null }])),
     aps: fp.aps,
     auto_nodes: fp.auto_nodes || [],
