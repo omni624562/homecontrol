@@ -504,7 +504,7 @@ export function MapCanvas({
             onMouseLeave={() => onTip(null)}
           >
             <title>{tip}</title>
-            {hot && <circle r={20 + Math.min(m!, 3) * 12} fill={WARN} fillOpacity={Math.min(1, m! / 3) * 0.45 + 0.1} />}
+            {hot && <circle r={19 + Math.min(m!, 3) * 5} fill={WARN} fillOpacity={Math.min(1, m! / 3) * 0.3 + 0.12} />}
             <circle
               r={15}
               className="fill-card"
