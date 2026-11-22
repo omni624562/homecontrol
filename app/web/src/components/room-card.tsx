@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Loader2, Power } from "lucide-react";
+import { GripVertical, Loader2, Power } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -14,7 +14,10 @@ export interface Group extends Room {
   plugs: Plug[];
 }
 
-export function RoomCard({ g, onOpen, onToggle }: { g: Group; onOpen: (p: Plug) => void; onToggle: (p: Plug) => void }) {
+// handle：首頁拖拉排列時，標題列當握把（dnd-kit 的 ref、屬性、事件）
+export interface DragHandle { ref: (el: HTMLElement | null) => void; props: React.HTMLAttributes<HTMLElement> }
+
+export function RoomCard({ g, onOpen, onToggle, handle, className }: { g: Group; onOpen: (p: Plug) => void; onToggle: (p: Plug) => void; handle?: DragHandle; className?: string }) {
   const { isOn } = useHub();
   const [busy, setBusy] = useState(false);
   const Icon = mdiIcon(g.icon);
@@ -35,8 +38,10 @@ export function RoomCard({ g, onOpen, onToggle }: { g: Group; onOpen: (p: Plug) 
   };
 
   return (
-    <Card className="mb-4 gap-0 overflow-hidden py-0 break-inside-avoid">
-      <div className="flex items-center gap-3 border-b bg-muted/60 px-4 py-3 dark:bg-muted/40">
+    <Card className={cn("mb-4 gap-0 overflow-hidden py-0 break-inside-avoid", className)}>
+      <div ref={handle?.ref} {...handle?.props}
+        className={cn("group/head relative flex items-center gap-3 border-b bg-muted/60 px-4 py-3 dark:bg-muted/40", handle && "cursor-grab touch-none select-none active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring")}>
+        {handle && <GripVertical aria-hidden className="absolute top-1/2 left-0.5 size-4 -translate-y-1/2 text-muted-foreground opacity-0 transition-opacity group-hover/head:opacity-100" />}
         <div className="flex size-9 items-center justify-center rounded-lg border bg-background text-foreground/70">
           <Icon className="size-5" />
         </div>
@@ -45,7 +50,8 @@ export function RoomCard({ g, onOpen, onToggle }: { g: Group; onOpen: (p: Plug) 
           {on.length}／{g.plugs.length} 開著
         </span>
         {g.id && (canOff || canOn) && (
-          <Button variant="outline" size="sm" className="ml-auto bg-background" disabled={busy} onClick={() => all(!canOff)}>
+          <Button variant="outline" size="sm" className="ml-auto bg-background" disabled={busy} onClick={() => all(!canOff)}
+            onPointerDown={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
             {busy ? <Loader2 className="animate-spin" /> : <Power />}
             {canOff ? "全關" : "全開"}
           </Button>

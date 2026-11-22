@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { ArrowRight, CalendarClock, ChartColumn, Sparkles, Timer } from "lucide-react";
+import { ArrowRight, CalendarClock, ChartColumn, MapPin, Sparkles, Timer, Users } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { useAsk } from "@/components/ask-sheet";
-import { fmt, fmtLeft } from "@/lib/format";
+import { fmt, fmtDur, fmtLeft } from "@/lib/format";
 import { useHub } from "@/lib/hub";
 import type { HubState } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -147,6 +147,47 @@ export function NextPanel({ state, now, className }: { state: HubState; now: num
       ) : (
         <p className="p-4 text-sm text-muted-foreground">24 小時內沒有排程要執行</p>
       )}
+    </Card>
+  );
+}
+
+// 誰在家：每個人在不在家、多久了；教過房間的再加上在哪個房間
+export function PeoplePanel({ state, now, className }: { state: HubState; now: number; className?: string }) {
+  const people = [...(state.people || [])].sort((a, b) => Number(!!b.home) - Number(!!a.home));
+  if (!people.length) return null;
+  const home = people.filter((x) => x.home).length;
+  return (
+    <Card className={cn("gap-0 overflow-hidden py-0", className)}>
+      <Head icon={Users} title="誰在家" right={<a href="#map" className="hover:text-foreground">{home ? `${home}／${people.length} 人在家` : "都出門了"} ›</a>} />
+      <ul className="divide-y px-4">
+        {people.map((x) => {
+          const w = x.home ? x.where : null;
+          const room = w ? (w.room ? w.name : w.top[0] ? `可能在${w.top[0].name}` : null) : null;
+          const ago = x.since ? fmtDur(now - x.since) : null;
+          return (
+            <li key={x.id} className="flex items-center gap-3 py-2.5">
+              <span className={cn("flex size-8 shrink-0 items-center justify-center rounded-full text-sm font-semibold",
+                x.home ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300" : "bg-muted text-muted-foreground")}>
+                {x.name.trim().slice(0, 1).toUpperCase() || "?"}
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className={cn("truncate text-sm font-medium", !x.home && "text-muted-foreground")}>{x.name}</div>
+                {room && (
+                  <div className="flex items-center gap-1 truncate text-xs text-muted-foreground">
+                    <MapPin className="size-3 shrink-0" />{room}
+                  </div>
+                )}
+              </div>
+              <div className="shrink-0 text-right">
+                <div className={cn("text-[13px] font-medium", x.home ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground")}>
+                  {x.home ? "在家" : x.home === false ? "出門" : "不確定"}
+                </div>
+                {ago && x.home !== null && <div className="text-[11px] text-muted-foreground tabular-nums">{ago}</div>}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
     </Card>
   );
 }

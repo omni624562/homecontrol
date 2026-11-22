@@ -103,3 +103,19 @@ def test_arp_lookup(app_module, tmp_path, monkeypatch):
     monkeypatch.setattr("builtins.open", lambda p, *a, **k: real_open(arp if p == "/proc/net/arp" else p, *a, **k))
     assert app_module._arp_mac("10.0.2.50") == "AA:BB:CC:DD:EE:FF"
     assert app_module._arp_mac("10.0.2.51") is None
+
+
+def test_home_layout(app_module, client):
+    token, _ = app_module.auth.pair(app_module.auth.new_code())
+    client.cookies.set("plughub_token", token)
+    app_module.store.data["rooms"] = [{"id": "a", "name": "A"}, {"id": "b", "name": "B"}]
+    put = lambda lay: client.put("/api/settings", json={"home_layout": lay})  # noqa: E731
+    # 不認得的區域、重複的、超過欄數的都丟掉
+    assert put({"3": [["b", "x", "b"], ["_none"], [], ["a"]], "1": [["a"]], "99": [["a"]]}).status_code == 200
+    assert app_module.store.data["settings"]["home_layout"] == {"3": [["b"], ["_none"], []]}
+    put({"4": [["a"], ["b"], [], []]})
+    assert set(app_module.store.data["settings"]["home_layout"]) == {"3", "4"}
+    put({"3": None})  # 這個欄數恢復自動排列
+    assert set(app_module.store.data["settings"]["home_layout"]) == {"4"}
+    put(None)
+    assert "home_layout" not in app_module.store.data["settings"]
