@@ -595,6 +595,9 @@ def _fp_room(r: dict, w: float, h: float) -> dict[str, Any]:
         room["pts"] = [[_num(p[0], 0, w), _num(p[1], 0, h)] for p in pts]
         xs, ys = [p[0] for p in room["pts"]], [p[1] for p in room["pts"]]
         room.update(x=min(xs), y=min(ys), w=max(20, max(xs) - min(xs)), h=max(20, max(ys) - min(ys)))
+    lb = r.get("label")  # 自己拖過的名稱位置：離區域外框左上角多遠
+    if isinstance(lb, (list, tuple)) and len(lb) == 2:
+        room["label"] = [_num(lb[0], 0, room["w"]), _num(lb[1], 0, room["h"])]
     return room
 
 

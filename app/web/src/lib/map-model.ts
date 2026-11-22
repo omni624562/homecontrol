@@ -3,7 +3,8 @@ import type { Plug, Room } from "@/lib/types";
 
 // pts：不是長方形的區域（L 形、凹字形…），每個轉角一個點、牆都是水平或垂直；x、y、w、h 是外框
 export type Pt = [number, number];
-export interface FpRoom { id: string; name: string; x: number; y: number; w: number; h: number; pts?: Pt[] | null }
+// label：自己拖過的名稱位置（離外框左上角多遠），沒有就自動找空位
+export interface FpRoom { id: string; name: string; x: number; y: number; w: number; h: number; pts?: Pt[] | null; label?: Pt | null }
 
 // 區域的轉角（長方形就是四個角，順時針）
 export const roomPts = (r: FpRoom): Pt[] => (r.pts && r.pts.length >= 4 ? r.pts : [[r.x, r.y], [r.x + r.w, r.y], [r.x + r.w, r.y + r.h], [r.x, r.y + r.h]]);
@@ -251,7 +252,7 @@ export function fpPayload(fp: Floorplan) {
     w: fp.w,
     h: fp.h,
     meters: fp.meters || 12,
-    rooms: (fp.rooms || []).map((r) => ({ ...r, x: R(r.x), y: R(r.y), w: R(r.w), h: R(r.h), pts: r.pts ? r.pts.map(([x, y]) => [R(x), R(y)]) : null })),
+    rooms: (fp.rooms || []).map((r) => ({ ...r, x: R(r.x), y: R(r.y), w: R(r.w), h: R(r.h), pts: r.pts ? r.pts.map(([x, y]) => [R(x), R(y)]) : null, label: r.label ? [R(r.label[0]), R(r.label[1])] : null })),
     items: Object.fromEntries(Object.entries(fp.items).map(([k, v]) => [k, { x: R(v.x), y: R(v.y), z: v.z ?? null }])),
     walls: (fp.walls || []).map((x) => ({ ...x, x1: R(x.x1), y1: R(x.y1), x2: R(x.x2), y2: R(x.y2) })),
     doors: (fp.doors || []).map((x) => ({ ...x, kind: x.kind || undefined, t: Math.round(x.t * 1000) / 1000, w: R(x.w), flip: x.flip || 0 })),
