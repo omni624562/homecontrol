@@ -10,7 +10,8 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/app-shell";
-import { MapCanvas, ROOM_ACTIVE, ROOM_STRONG, type MapPerson, type MapSel, type MapTool } from "@/components/map-canvas";
+import { MapCanvas, ROOM_ACTIVE, ROOM_STRONG, type MapGhost, type MapLayer, type MapPerson, type MapSel, type MapTool } from "@/components/map-canvas";
+import { COV_TEXT, bestApSpot, covQ, coverage, fitModel, gapSpots, type ApSuggest } from "@/lib/coverage";
 import { Segmented } from "@/components/schedule-bits";
 import { api } from "@/lib/api";
 import { fmt } from "@/lib/format";
@@ -99,7 +100,9 @@ export function MapPage() {
   const [failed, setFailed] = useState(false);
   const [sense, setSense] = useState<MapSense | null>(null);
   const [edit, setEdit] = useState(false);
-  const [layer, setLayer] = useState<"signal" | "motion">("signal");
+  const [layer, setLayer] = useState<MapLayer>("signal");
+  const [apSug, setApSug] = useState<ApSuggest[] | null>(null);
+  const [showGaps, setShowGaps] = useState(false);
   const [sel, setSel] = useState<MapSel>(null);
   const [tool, setTool] = useState<MapTool>("select");
   const [tip, setTip] = useState<string | null>(null);
@@ -129,6 +132,12 @@ export function MapPage() {
   }, [setFp, save]);
 
   const devs = useMemo(() => mapDevices(state?.plugs || [], sense), [state?.plugs, sense]);
+  // 連線、訊號模型、預估覆蓋（地圖或裝置變了才重算）
+  const links = useMemo(() => (fp?.rooms ? mapLinks(fp, devs) : []), [fp, devs]);
+  const model = useMemo(() => (fp?.rooms ? fitModel(fp, links) : null), [fp, links]);
+  const covStep = fp ? fp.w / 50 : 20;
+  const cover = useMemo(() => (fp?.rooms && model && layer === "coverage" ? coverage(fp, model, covStep) : null), [fp, model, layer, covStep]);
+  useEffect(() => setApSug(null), [fp, model]);
   const devsRef = useRef(devs);
   devsRef.current = devs;
 
@@ -268,7 +277,6 @@ export function MapPage() {
     ? Object.fromEntries(Object.entries(replay!.rooms).map(([k, v]) => [k, v[past]]))
     : Object.fromEntries(Object.entries(sense?.rooms || {}).map(([k, v]) => [k, v.score]));
   const roomCover = sense?.rooms || {};
-  const links = mapLinks(fp, devs);
   // 家人在哪個房間（在家、教過房間、地圖上有那個區域才標）
   const fpRooms = new Set(fp.rooms.map((r) => r.id));
   const people: MapPerson[] = (state?.people || []).flatMap((p) => {
@@ -498,7 +506,16 @@ export function MapPage() {
   const off = devs.filter((d) => !d.online);
   const good = links.filter((l) => l.q === "good");
   const hot = links.filter((l) => (motion[l.dev.key] ?? 0) > 0.15).sort((a, b) => motion[b.dev.key]! - motion[a.dev.key]!);
-  const dflt = layer === "signal" ? "滑過裝置看訊號強度" : sense?.enabled === false ? "Wi-Fi 感測已暫停（設定 → Wi-Fi 感測）" : "橘色光圈越大，那附近越可能有人在走動・每 10 秒更新";
+  const gaps = model && layer === "motion" ? gapSpots(fp, model, roomCover) : [];
+  const apName = (id: string) => fp.aps.find((a) => a.id === id)?.name || "基地台";
+  const ghosts: MapGhost[] = layer === "coverage"
+    ? (apSug || []).filter((g) => g.then - g.now >= 3 && g.now < -60).map((g) => ({ id: `ap-${g.ap}`, kind: "ap", x: g.x, y: g.y, label: `${apName(g.ap)} 放這裡`, to: fp.items[`ap:${g.ap}`] }))
+    : layer === "motion" && showGaps ? gaps.map((g) => ({ id: `gap-${g.room}`, kind: "plug", x: g.x, y: g.y, label: "插座放這裡", to: fp.items[`ap:${g.ap}`] })) : [];
+  const roomCov = cover ? (fp.rooms || []).map((r) => {
+    const v = cover.filter((c) => c.room === r.id).map((c) => c.v);
+    return { r, min: v.length ? Math.min(...v) : null, avg: v.length ? v.reduce((a, b) => a + b, 0) / v.length : null };
+  }).filter((x) => x.min != null).sort((a, b) => a.min! - b.min!) : [];
+  const dflt = layer === "coverage" ? "預估每個角落收到的 Wi-Fi：藍色強、淡藍好、黃色普通、橘色弱（用插座實際量到的訊號校正）" : layer === "signal" ? "滑過裝置看訊號強度" : sense?.enabled === false ? "Wi-Fi 感測已暫停（設定 → Wi-Fi 感測）" : "橘色光圈越大，那附近越可能有人在走動・每 10 秒更新";
 
   return (
     <>
@@ -546,9 +563,13 @@ export function MapPage() {
             </div>
           ) : (
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-              <div className="w-56"><Segmented label="圖層" value={layer} onChange={setLayer} options={[["signal", "訊號強度"], ["motion", "動靜"]]} /></div>
+              <div className="w-80 max-w-full"><Segmented label="圖層" value={layer} onChange={setLayer} options={[["signal", "訊號強度"], ["coverage", "預估覆蓋"], ["motion", "動靜"]]} /></div>
               <div className="ml-auto flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground" aria-hidden>
-                {layer === "signal" ? (
+                {layer === "coverage" ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    {["bg-primary/60", "bg-primary/25", "bg-amber-400/70", "bg-orange-500/80"].map((c, i) => <span key={c} className="inline-flex items-center gap-1"><b className={cn("size-3 rounded-sm", c)} />{COV_TEXT[i]}</span>)}
+                  </span>
+                ) : layer === "signal" ? (
                   <span className="inline-flex items-center gap-1.5">
                     <b className="size-3 rounded-full border-[2.5px] border-primary" />強
                     <b className="size-3 rounded-full border-[2.5px]" style={{ borderColor: "color-mix(in srgb, var(--primary) 45%, var(--card))" }} />普通
@@ -574,7 +595,7 @@ export function MapPage() {
           {/* 手機：地圖放大到 600px 寬，可以左右滑 */}
           <div className="-mx-4 overflow-x-auto px-4 pb-1 sm:mx-0 sm:overflow-visible sm:px-0 sm:pb-0">
             <MapCanvas
-              fp={fp} devs={devs} links={links} layer={layer} edit={edit} sel={sel} motion={motion} roomHeat={roomHeat} people={past != null ? [] : people} tool={tool}
+              fp={fp} devs={devs} links={links} layer={layer} edit={edit} sel={sel} motion={motion} roomHeat={roomHeat} cover={cover ? { cells: cover, step: covStep } : null} ghosts={ghosts} people={past != null ? [] : people} tool={tool}
               onChange={setFp} onDragEnd={save} onPick={pick} onTip={setTip}
             />
           </div>
@@ -624,6 +645,19 @@ export function MapPage() {
                   <Note icon={CheckCircle2} tone="ok">所有裝置的訊號都在 -70 dBm 以上。</Note>
                 )}
                 {off.length > 0 && <Note icon={WifiOff} tone="warn">{off.length} 台離線：{off.map((d) => d.name).join("、")}</Note>}
+                {layer === "coverage" && model && (
+                  <CoveragePanel model={model} rooms={roomCov} aps={fp.aps.filter((a) => fp.items[`ap:${a.id}`])} sug={apSug}
+                    onFind={() => setApSug(fp.aps.filter((a) => fp.items[`ap:${a.id}`]).map((a) => bestApSpot(fp, model, a.id)).filter((x): x is ApSuggest => !!x))} />
+                )}
+                {layer === "motion" && gaps.length > 0 && (
+                  <div className="space-y-1.5">
+                    <Note icon={AlertCircle} tone="warn">
+                      <b className="text-foreground">偵測死角</b>：{gaps.map((g) => g.roomName).join("、")} 幾乎沒有訊號線經過，在那裡走動抓不到。
+                      在每間{showGaps ? "地圖上的綠色 + 號" : "建議的位置"}插一個 Kasa 插座（連到虛線那台基地台），就能偵測那一間。
+                    </Note>
+                    <Button type="button" variant="outline" className="h-9" onClick={() => setShowGaps((v) => !v)}><Plus />{showGaps ? "收起建議位置" : "在地圖上標出建議位置"}</Button>
+                  </div>
+                )}
                 {layer === "motion" && (
                   <RoomMotionList rooms={fp.rooms} heat={roomHeat} covered={past != null ? replay!.rooms : roomCover} past={past != null} />
                 )}
@@ -697,6 +731,50 @@ function ReplayBar({ replay, frame, playing, onFrame, onPlay }: { replay: MapRep
         onClick={() => onFrame(null)} title="回到現在">
         {frame == null ? <span className="inline-flex items-center gap-1"><Radio className="size-3.5 text-emerald-500" />現在</span> : label}
       </button>
+    </div>
+  );
+}
+
+// 預估覆蓋：模型怎麼來的、每間最弱的地方、基地台建議位置
+function CoveragePanel({ model, rooms, aps, sug, onFind }: {
+  model: NonNullable<ReturnType<typeof fitModel>>; rooms: { r: FpRoom; min: number | null; avg: number | null }[]; aps: { id: string; name: string }[]; sug: ApSuggest[] | null; onFind: () => void;
+}) {
+  const name = (id: string) => aps.find((a) => a.id === id)?.name || "基地台";
+  return (
+    <div className="space-y-3">
+      <Note>
+        {model.fitted
+          ? <>用 {model.samples} 台裝置實際量到的訊號校正：每道牆大約吃掉 {model.wall} dB，預估和實際平均差 {fmt(model.rmse!, 1)} dB。</>
+          : <>連著基地台、有訊號讀數的裝置不到 3 台，先用一般的數值估（每道牆 5 dB），可能不準。</>}
+        {" "}沒有算高度和家具，當作大概的參考。
+      </Note>
+      <div className="space-y-1.5">
+        <Q>各房間最弱的地方</Q>
+        <ul className="divide-y rounded-lg border text-sm">
+          {rooms.map(({ r, min }) => (
+            <li key={r.id} className="flex items-center gap-2 px-3 py-1.5">
+              <span className="flex-1">{r.name}</span>
+              <span className={cn(covQ(min!) >= 3 ? "font-medium text-orange-600 dark:text-orange-400" : covQ(min!) === 2 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground")}>{COV_TEXT[covQ(min!)]}</span>
+              <span className="w-12 text-right text-xs tabular-nums text-muted-foreground">{Math.round(min!)}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+      <div className="space-y-2">
+        <Q sub="試遍家裡每個位置，看哪裡能讓最弱的地方變最強">基地台放哪最好</Q>
+        {sug == null ? (
+          <Button type="button" variant="outline" className="h-9" onClick={onFind}><Wifi />幫我找</Button>
+        ) : sug.length && sug.every((g) => g.now >= -60) ? (
+          <Note icon={CheckCircle2} tone="ok">家裡最弱的地方也有 {Math.round(Math.min(...sug.map((g) => g.now)))} dBm 左右，訊號已經夠強，基地台不需要移。</Note>
+        ) : sug.map((g) => g.then - g.now >= 3 ? (
+          <Note key={g.ap} icon={Wifi}>
+            <b className="text-foreground">{name(g.ap)}</b> 移到{g.room}（地圖上的虛線位置，大約 {fmt(g.moveM, 1)} 公尺外），家裡最弱的 10% 地方從 {Math.round(g.now)} 改善到 {Math.round(g.then)} dBm。
+          </Note>
+        ) : (
+          <Note key={g.ap} icon={CheckCircle2} tone="ok"><b className="text-foreground">{name(g.ap)}</b> 現在的位置已經差不多是最好的（再怎麼移，改善不到 3 dB）。</Note>
+        ))}
+        {sug != null && <p className="text-xs text-muted-foreground">一次只移一台、另一台不動的估計。真的搬了之後，地圖上的基地台也要拖到新位置，預估才會跟著更新。</p>}
+      </div>
     </div>
   );
 }

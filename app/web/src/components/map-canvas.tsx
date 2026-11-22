@@ -2,10 +2,16 @@ import { useEffect, useRef, useState } from "react";
 import { fmt } from "@/lib/format";
 import { doorGeom, nearSeg, roomPath, roomPts, sigQ, shortName, tidyPts, topEdge, withPts, type Floorplan, type FpRoom, type FpWall, type MapDev, type MapLink, type Pt } from "@/lib/map-model";
 import { cn } from "@/lib/utils";
+import { covQ, type CoverCell } from "@/lib/coverage";
 
 export type MapSel = { kind: "room" | "ap" | "dev" | "wall" | "door"; id: string } | null;
 // 編輯工具：選取／畫牆／放門
 export type MapTool = "select" | "wall" | "door" | "window";
+export type MapLayer = "signal" | "coverage" | "motion";
+// 建議的位置（虛線）：基地台搬到這裡、或在這裡加一個插座；to：連到哪裡（畫虛線）
+export interface MapGhost { id: string; kind: "ap" | "plug"; x: number; y: number; label: string; to?: { x: number; y: number } }
+const COV_FILL = ["var(--primary)", "var(--primary)", "#fbbf24", "var(--color-orange-500, #f97316)"];
+const COV_OP = [0.42, 0.2, 0.38, 0.5];
 // 地圖上的人：猜到在哪個區域（sure=false 是把握不夠，只是最可能的那間）
 export type MapPerson = { id: string; name: string; room: string; roomName: string; sure: boolean; p: number };
 // corner／edge：拖區域的第 i 個轉角、第 i 道牆（轉角 i 到 i+1）
@@ -18,16 +24,18 @@ export const ROOM_STRONG = 1.0;
 
 // 地圖本體：區域、訊號光暈、連線、基地台、裝置；編輯時可以拖曳
 export function MapCanvas({
-  fp, devs, links, layer, edit, sel, motion, roomHeat = {}, people = [], tool = "select", onChange, onDragEnd, onPick, onTip,
+  fp, devs, links, layer, edit, sel, motion, roomHeat = {}, cover, ghosts = [], people = [], tool = "select", onChange, onDragEnd, onPick, onTip,
 }: {
   fp: Floorplan;
   devs: MapDev[];
   links: MapLink[];
-  layer: "signal" | "motion";
+  layer: MapLayer;
   edit: boolean;
   sel: MapSel;
   motion: Record<string, number | null>;
   roomHeat?: Record<string, number | null>;
+  cover?: { cells: CoverCell[]; step: number } | null;
+  ghosts?: MapGhost[];
   people?: MapPerson[];
   tool?: MapTool;
   onChange: (fp: Floorplan) => void;
@@ -315,6 +323,7 @@ export function MapCanvas({
       onClick={(e) => e.target === e.currentTarget && !edit && onPick(null)}
     >
       <defs>
+        <filter id="map-cov-blur" x="-5%" y="-5%" width="110%" height="110%"><feGaussianBlur stdDeviation={(cover?.step || 20) * 0.45} /></filter>
         <clipPath id="map-rooms">{rooms.map((r) => <path key={r.id} d={roomPath(r)} />)}</clipPath>
         {(["good", "mid", "weak"] as const).map((q) => (
           <radialGradient key={q} id={`map-g-${q}`}>
@@ -330,6 +339,14 @@ export function MapCanvas({
           {placed.filter((d) => d.online && d.rssi != null).map((d) => (
             <circle key={d.key} cx={fp.items[d.key].x} cy={fp.items[d.key].y} r={glowR.toFixed(0)} fill={`url(#map-g-${sigQ(d.rssi!)})`} />
           ))}
+        </g>
+      )}
+      {layer === "coverage" && !edit && cover && (
+        <g clipPath="url(#map-rooms)" filter="url(#map-cov-blur)" className="pointer-events-none">
+          {cover.cells.map((c, i) => {
+            const q = covQ(c.v);
+            return <rect key={i} x={c.x - cover.step / 2 - 0.5} y={c.y - cover.step / 2 - 0.5} width={cover.step + 1} height={cover.step + 1} fill={COV_FILL[q]} fillOpacity={COV_OP[q]} />;
+          })}
         </g>
       )}
       {layer === "motion" && !edit && rooms.map((r) => {
@@ -476,6 +493,21 @@ export function MapCanvas({
           })}
         </g>
       )}
+      {!edit && ghosts.map((g) => (
+        <g key={g.id} className="pointer-events-none">
+          {g.to && <line x1={g.to.x} y1={g.to.y} x2={g.x} y2={g.y} className={g.kind === "ap" ? "stroke-primary" : "stroke-emerald-600"} strokeWidth={2 * k} strokeDasharray={`${6 * k} ${5 * k}`} opacity={0.8} />}
+          <g transform={`translate(${g.x} ${g.y}) scale(${k.toFixed(2)})`}>
+            <circle r={g.kind === "ap" ? 18 : 15} className={cn("fill-card", g.kind === "ap" ? "stroke-primary" : "stroke-emerald-600")} strokeWidth={2.5} strokeDasharray="5 4" fillOpacity={0.85} />
+            {g.kind === "ap" ? (
+              <path d="M-9,-1 Q0,-10 9,-1 M-5,3 Q0,-2 5,3" fill="none" className="stroke-primary" strokeWidth={2.2} strokeLinecap="round" />
+            ) : (
+              <path d="M-6,0 H6 M0,-6 V6" className="stroke-emerald-600" strokeWidth={2.5} strokeLinecap="round" />
+            )}
+            <text y={g.kind === "ap" ? 34 : 30} textAnchor="middle" className={cn("font-semibold", g.kind === "ap" ? "fill-primary" : "fill-emerald-700 dark:fill-emerald-400")}
+              style={{ fontSize: 11.5, paintOrder: "stroke", stroke: "var(--card)", strokeWidth: 3, strokeLinejoin: "round" }}>{g.label}</text>
+          </g>
+        </g>
+      ))}
       {fp.aps.filter((a) => fp.items[`ap:${a.id}`]).map((a) => {
         const it = fp.items[`ap:${a.id}`];
         const isSel = sel?.kind === "ap" && sel.id === a.id;
