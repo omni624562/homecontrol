@@ -220,6 +220,15 @@ export function EditPage() {
       <div className="mx-auto max-w-[112rem] space-y-4 px-4 py-4 sm:px-6 lg:px-8">
         <p className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm leading-relaxed">
           按住右邊的 <GripVertical className="inline size-4 align-text-bottom" /> 拖拉排順序，也可以把裝置拖到別的區域；用鍵盤的話，在把手上按空白鍵拿起、↑↓ 移動、再按空白鍵放下。點名稱修改設定。
+          <span className="mt-1 block text-muted-foreground">
+            首頁的卡片也可以直接抓標題列拖拉換位置。
+            {(state.settings.home_layout || state.settings.home_side) ? (
+              <button className="ml-1 font-medium text-primary underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none"
+                onClick={() => api("PUT", "/api/settings", { home_layout: null, home_side: null }).then(() => toast.success("首頁已恢復預設排列"), (err) => toast.error("沒有成功", { description: (err as Error).message }))}>
+                首頁恢復預設排列
+              </button>
+            ) : null}
+          </span>
         </p>
 
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={onStart} onDragEnd={onEnd} onDragCancel={() => setActive(null)}>
