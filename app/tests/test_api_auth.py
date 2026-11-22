@@ -119,3 +119,12 @@ def test_home_layout(app_module, client):
     assert set(app_module.store.data["settings"]["home_layout"]) == {"4"}
     put(None)
     assert "home_layout" not in app_module.store.data["settings"]
+
+
+def test_home_side(app_module, client):
+    token, _ = app_module.auth.pair(app_module.auth.new_code())
+    client.cookies.set("plughub_token", token)
+    assert client.put("/api/settings", json={"home_side": ["next", "x", "people", "next"]}).status_code == 200
+    assert app_module.store.data["settings"]["home_side"] == ["next", "people", "ask", "energy"]
+    client.put("/api/settings", json={"home_side": None})
+    assert "home_side" not in app_module.store.data["settings"]

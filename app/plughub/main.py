@@ -938,6 +938,14 @@ async def set_settings(body: dict = Body(...)) -> dict[str, Any]:
             settings["home_layout"] = cur
         else:
             settings.pop("home_layout", None)
+    if "home_side" in body:  # 首頁右邊那一欄卡片的順序；null 恢復預設
+        side = body["home_side"]
+        cards = ("ask", "people", "energy", "next")
+        if isinstance(side, list):
+            order = [c for c in dict.fromkeys(x for x in side if isinstance(x, str)) if c in cards]
+            settings["home_side"] = order + [c for c in cards if c not in order]
+        else:
+            settings.pop("home_side", None)
     if "weekly" in body:  # 每週日晚上的摘要推播
         settings["weekly"] = bool(body["weekly"])
     if "matter_scenes" in body:  # 情境也放到 Google Home（打開 = 執行）

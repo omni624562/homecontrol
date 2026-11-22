@@ -19,7 +19,7 @@ import { AskPanel, EnergyPanel, NextPanel, PeoplePanel } from "@/components/home
 import { LeaveSheet, MorningCard } from "@/components/leave-check";
 import { alertItems } from "@/components/alerts";
 import { LifeSheet, type LifeTopic } from "@/components/life-sheet";
-import { RoomCard, type Group } from "@/components/room-card";
+import { RoomCard, type DragHandle, type Group } from "@/components/room-card";
 import { WeatherSheet } from "@/components/weather-sheet";
 import { api } from "@/lib/api";
 import { busEta, busIdle, dayLabel, dayPart, fmt, nextPickup, pad2 } from "@/lib/format";
@@ -70,6 +70,20 @@ function SortRoom({ g, onOpen, onToggle }: { g: Group; onOpen: (p: Plug) => void
     <div ref={setNodeRef} style={{ transform: CSS.Translate.toString(transform), transition }} className={cn(isDragging && "relative z-10")}>
       <RoomCard g={g} onOpen={onOpen} onToggle={onToggle} className={cn(isDragging && "opacity-90 shadow-xl ring-2 ring-primary")}
         handle={{ ref: setActivatorNodeRef, props: { ...attributes, ...listeners, title: "拖拉標題可以換位置", "aria-label": `拖拉移動「${g.name}」（或按空白鍵後用方向鍵）` } }} />
+    </div>
+  );
+}
+
+// 右邊那一欄：抓標題列上下換順序
+type SideId = "ask" | "people" | "energy" | "next";
+const SIDE_DEFAULT: SideId[] = ["ask", "people", "energy", "next"];
+const SIDE_NAMES: Record<SideId, string> = { ask: "問家裡", people: "誰在家", energy: "今天用電", next: "接下來" };
+
+function SortSide({ id, children }: { id: SideId; children: (handle: DragHandle, dragging: boolean) => React.ReactNode }) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id });
+  return (
+    <div ref={setNodeRef} style={{ transform: CSS.Translate.toString(transform), transition }} className={cn(isDragging && "relative z-10")}>
+      {children({ ref: setActivatorNodeRef, props: { ...attributes, ...listeners, title: "拖拉標題可以換位置", "aria-label": `拖拉移動「${SIDE_NAMES[id]}」（或按空白鍵後用方向鍵）` } }, isDragging)}
     </div>
   );
 }
@@ -222,12 +236,25 @@ export function HomePage() {
     }
     return cs;
   }, [groups, nCols, custom]);
+  const putLayout = (body: Record<string, unknown>) =>
+    api("PUT", "/api/settings", body).catch((err) => toast.error("排列沒有存起來", { description: (err as Error).message }));
   const saveLayout = (n: number, next: string[][] | null) => {
     const lay = { ...(layout || {}) };
     if (next) lay[String(n)] = next;
     else delete lay[String(n)];
     setLocal({ base: serverKey, lay });
-    api("PUT", "/api/settings", { home_layout: { [String(n)]: next } }).catch((err) => toast.error("排列沒有存起來", { description: (err as Error).message }));
+    putLayout({ home_layout: { [String(n)]: next } });
+  };
+
+  // 右邊那一欄的順序
+  const serverSide = state?.settings.home_side as SideId[] | undefined;
+  const sideKey = JSON.stringify(serverSide || null);
+  const [localSide, setLocalSide] = useState<{ base: string; order: SideId[] | null } | null>(null);
+  const sideOrder = (localSide && localSide.base === sideKey ? localSide.order : serverSide) || SIDE_DEFAULT;
+  const customSide = JSON.stringify(sideOrder) !== JSON.stringify(SIDE_DEFAULT);
+  const saveSide = (order: SideId[] | null) => {
+    setLocalSide({ base: sideKey, order });
+    putLayout({ home_side: order });
   };
 
   // 拖拉：有滑鼠、而且不只一欄才能拖（手機、平板照常捲動）
@@ -247,6 +274,11 @@ export function HomePage() {
     const at = String(over.id).startsWith("col-") ? c[to].length : Math.max(0, c[to].indexOf(String(over.id)));
     c[to].splice(at, 0, String(active.id));
     setDragCols(c);
+  };
+  const onSideEnd = ({ active, over }: DragEndEvent) => {
+    if (!over || active.id === over.id) return;
+    const a = sideOrder.indexOf(active.id as SideId), b = sideOrder.indexOf(over.id as SideId);
+    if (a >= 0 && b >= 0) saveSide(arrayMove(sideOrder, a, b));
   };
   const onDragEnd = ({ active, over }: DragEndEvent) => {
     let c = curCols.map((x) => [...x]);
@@ -521,22 +553,45 @@ export function HomePage() {
                 ))
               )}
             </div>
-            {canDrag && custom && !dragCols && (
-              <div className="-mt-1 mb-4 flex justify-end">
-                <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => saveLayout(nCols, null)} title="不用自己排的位置，照插座數自動分欄">
-                  <RotateCcw />恢復自動排列
+            {canDrag && (custom || (side && customSide)) && !dragCols && (
+              <div className="-mt-1 mb-4 flex items-center justify-end gap-2 text-xs text-muted-foreground">
+                <span>卡片的位置是你自己拖的</span>
+                <Button variant="outline" size="sm" className="bg-background text-muted-foreground"
+                  onClick={() => {
+                    setLocal({ base: serverKey, lay: Object.fromEntries(Object.entries(layout || {}).filter(([k]) => k !== String(nCols))) });
+                    setLocalSide({ base: sideKey, order: null });
+                    putLayout({ home_layout: { [String(nCols)]: null }, home_side: null });
+                  }}
+                  title="房間照插座數自動分欄、右邊回到原本的順序">
+                  <RotateCcw />恢復預設排列
                 </Button>
               </div>
             )}
           </div>
-          {look === "tech" && (
-            <div className={cn("grid gap-4", side ? "" : "sm:grid-cols-2")}>
-              {side && <AskPanel />}
-              <PeoplePanel state={state} now={now()} />
-              <EnergyPanel state={state} />
-              <NextPanel state={state} now={now()} />
-            </div>
-          )}
+          {look === "tech" && (() => {
+            const panel = (id: SideId, handle?: DragHandle, dragging?: boolean) => {
+              const cls = cn(dragging && "shadow-xl ring-2 ring-primary");
+              return id === "ask" ? <AskPanel handle={handle} className={cls} />
+                : id === "people" ? <PeoplePanel state={state} now={now()} handle={handle} className={cls} />
+                : id === "energy" ? <EnergyPanel state={state} handle={handle} className={cls} />
+                : <NextPanel state={state} now={now()} handle={handle} className={cls} />;
+            };
+            // 沒設定 AI 的話沒有「問家裡」；沒設定家人沒有「誰在家」；不夠寬（沒有右邊那一欄）也不放「問家裡」
+            const ids = sideOrder.filter((id) => (id !== "ask" || (side && state.assistant)) && (id !== "people" || people.length > 0));
+            return side && mouse ? (
+              <DndContext sensors={sensors} collisionDetection={closestCorners} onDragEnd={onSideEnd}>
+                <SortableContext items={ids} strategy={verticalListSortingStrategy}>
+                  <div className="grid gap-4">
+                    {ids.map((id) => <SortSide key={id} id={id}>{(h, d) => panel(id, h, d)}</SortSide>)}
+                  </div>
+                </SortableContext>
+              </DndContext>
+            ) : (
+              <div className={cn("grid gap-4", side ? "" : "sm:grid-cols-2")}>
+                {ids.map((id) => <div key={id} className="min-w-0">{panel(id)}</div>)}
+              </div>
+            );
+          })()}
         </div>
       </div>
 

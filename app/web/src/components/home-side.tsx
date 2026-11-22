@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { ArrowRight, CalendarClock, ChartColumn, MapPin, Sparkles, Timer, Users } from "lucide-react";
+import { ArrowRight, CalendarClock, ChartColumn, GripVertical, MapPin, Sparkles, Timer, Users } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { useAsk } from "@/components/ask-sheet";
+import type { DragHandle } from "@/components/room-card";
 import { fmt, fmtDur, fmtLeft } from "@/lib/format";
 import { useHub } from "@/lib/hub";
 import type { HubState } from "@/lib/types";
@@ -9,18 +10,21 @@ import { cn } from "@/lib/utils";
 
 const ASKS = ["現在誰開著？", "出門前幫我檢查", "今天比昨天多用在哪"];
 
-function Head({ icon: I, title, right, accent }: { icon: React.ElementType; title: string; right?: React.ReactNode; accent?: boolean }) {
+// handle：首頁拖拉排列時，標題列當握把
+function Head({ icon: I, title, right, accent, handle }: { icon: React.ElementType; title: string; right?: React.ReactNode; accent?: boolean; handle?: DragHandle }) {
   return (
-    <div className="flex items-center gap-2 border-b px-4 py-3">
+    <div ref={handle?.ref} {...handle?.props}
+      className={cn("group/head relative flex items-center gap-2 border-b px-4 py-3", handle && "cursor-grab touch-none select-none active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring")}>
+      {handle && <GripVertical aria-hidden className="absolute top-1/2 left-0.5 size-4 -translate-y-1/2 text-muted-foreground opacity-0 transition-opacity group-hover/head:opacity-100" />}
       <I className={cn("size-4.5", accent ? "text-primary" : "text-muted-foreground")} />
       <h2 className={cn("font-semibold", accent && "text-primary")}>{title}</h2>
-      <span className="ml-auto text-xs text-muted-foreground">{right}</span>
+      <span className="ml-auto text-xs text-muted-foreground" onPointerDown={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>{right}</span>
     </div>
   );
 }
 
 // 「問家裡」：直接在首頁打字，送出後開對話面板
-export function AskPanel({ className }: { className?: string }) {
+export function AskPanel({ className, handle }: { className?: string; handle?: DragHandle }) {
   const { state } = useHub();
   const ask = useAsk();
   const [q, setQ] = useState("");
@@ -28,7 +32,7 @@ export function AskPanel({ className }: { className?: string }) {
   if (!st) return null;
   return (
     <Card className={cn("gap-0 overflow-hidden border-primary/50 py-0", className)}>
-      <Head icon={Sparkles} title="問家裡" right="AI 助理" accent />
+      <Head icon={Sparkles} title="問家裡" right="AI 助理" accent handle={handle} />
       {st.configured ? (
         <div className="space-y-2.5 p-3.5">
           <form
@@ -64,14 +68,14 @@ export function AskPanel({ className }: { className?: string }) {
 }
 
 // 今天用電：今天的度數、金額，和最近兩週每天的長條
-export function EnergyPanel({ state, className }: { state: HubState; className?: string }) {
+export function EnergyPanel({ state, className, handle }: { state: HubState; className?: string; handle?: DragHandle }) {
   const s = state.summary as HubState["summary"] & { history?: { day: string; kwh: number }[]; energy_month?: number };
   const hist = (s.history || []).slice(-14);
   const max = Math.max(0.1, ...hist.map((h) => h.kwh));
   const prev = hist.length >= 2 ? hist[hist.length - 2].kwh : 0;
   return (
     <Card className={cn("gap-0 overflow-hidden py-0", className)}>
-      <Head icon={ChartColumn} title="今天用電" right={<a href="#energy" className="hover:text-foreground">看明細 ›</a>} />
+      <Head icon={ChartColumn} title="今天用電" handle={handle} right={<a href="#energy" className="hover:text-foreground">看明細 ›</a>} />
       <div className="p-4">
         <div className="flex items-end justify-between gap-3">
           <div className="text-[28px] leading-none font-semibold tabular-nums">
@@ -102,7 +106,7 @@ export function EnergyPanel({ state, className }: { state: HubState; className?:
 }
 
 // 接下來：定時關閉中的插座，和今天、明天還會執行的排程
-export function NextPanel({ state, now, className }: { state: HubState; now: number; className?: string }) {
+export function NextPanel({ state, now, className, handle }: { state: HubState; now: number; className?: string; handle?: DragHandle }) {
   const d = new Date(now * 1000);
   const today = (d.getDay() + 6) % 7;
   const hms = d.toTimeString().slice(0, 8);
@@ -131,7 +135,7 @@ export function NextPanel({ state, now, className }: { state: HubState; now: num
   items.sort((a, b) => a.at - b.at);
   return (
     <Card className={cn("gap-0 overflow-hidden py-0", className)}>
-      <Head icon={CalendarClock} title="接下來" right={<a href="#schedule" className="hover:text-foreground">排程 ›</a>} />
+      <Head icon={CalendarClock} title="接下來" handle={handle} right={<a href="#schedule" className="hover:text-foreground">排程 ›</a>} />
       {items.length ? (
         <ul className="divide-y px-4">
           {items.slice(0, 5).map((x) => (
@@ -152,13 +156,13 @@ export function NextPanel({ state, now, className }: { state: HubState; now: num
 }
 
 // 誰在家：每個人在不在家、多久了；教過房間的再加上在哪個房間
-export function PeoplePanel({ state, now, className }: { state: HubState; now: number; className?: string }) {
+export function PeoplePanel({ state, now, className, handle }: { state: HubState; now: number; className?: string; handle?: DragHandle }) {
   const people = [...(state.people || [])].sort((a, b) => Number(!!b.home) - Number(!!a.home));
   if (!people.length) return null;
   const home = people.filter((x) => x.home).length;
   return (
     <Card className={cn("gap-0 overflow-hidden py-0", className)}>
-      <Head icon={Users} title="誰在家" right={<a href="#map" className="hover:text-foreground">{home ? `${home}／${people.length} 人在家` : "都出門了"} ›</a>} />
+      <Head icon={Users} title="誰在家" handle={handle} right={<a href="#map" className="hover:text-foreground">{home ? `${home}／${people.length} 人在家` : "都出門了"} ›</a>} />
       <ul className="divide-y px-4">
         {people.map((x) => {
           const w = x.home ? x.where : null;
