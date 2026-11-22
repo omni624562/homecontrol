@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 
 export type MapSel = { kind: "room" | "ap" | "dev" | "wall" | "door"; id: string } | null;
 // 編輯工具：選取／畫牆／放門
-export type MapTool = "select" | "wall" | "door";
+export type MapTool = "select" | "wall" | "door" | "window";
 // 地圖上的人：猜到在哪個區域（sure=false 是把握不夠，只是最可能的那間）
 export type MapPerson = { id: string; name: string; room: string; roomName: string; sure: boolean; p: number };
 // corner／edge：拖區域的第 i 個轉角、第 i 道牆（轉角 i 到 i+1）
@@ -226,16 +226,18 @@ export function MapCanvas({
     e.stopPropagation();
     const f0 = fpRef.current;
     const p0 = point(e);
-    if (tool === "door") {
-      // 放門：點在牆上（或牆附近）
+    if (tool === "door" || tool === "window") {
+      // 放門窗：點在牆上（或牆附近）
       let best: { w: FpWall; t: number; d: number } | null = null;
       for (const w of f0.walls || []) {
         const n = nearSeg(p0.x, p0.y, w);
         if (n.d < 16 * k && (!best || n.d < best.d)) best = { w, t: n.t, d: n.d };
       }
-      if (!best) return onTip("門要放在牆上：點一道牆");
+      const win = tool === "window";
+      if (!best) return onTip(win ? "窗要放在牆上：點一道牆" : "門要放在牆上：點一道牆");
       const id = `d${Date.now().toString(36)}`;
-      onChange({ ...f0, doors: [...(f0.doors || []), { id, wall: best.w.id, t: best.t, w: Math.round(0.9 * meterU), flip: 0 }] });
+      const nd = win ? { id, wall: best.w.id, t: best.t, w: Math.round(1.2 * meterU), flip: 0, kind: "win" as const } : { id, wall: best.w.id, t: best.t, w: Math.round(0.9 * meterU), flip: 0 };
+      onChange({ ...f0, doors: [...(f0.doors || []), nd] });
       onPick({ kind: "door", id });
       onDragEnd();
       return;
@@ -392,6 +394,35 @@ export function MapCanvas({
             {doors.map(({ dr, w }) => {
               const g = doorGeom(w!, dr);
               const isSel = edit && sel?.kind === "door" && sel.id === dr.id;
+              if (dr.kind) {
+                // 窗：牆上的細框＋中間一條玻璃；落地窗再加兩片錯開的拉門
+                const L = Math.hypot(g.b[0] - g.a[0], g.b[1] - g.a[1]) || 1;
+                const nx = -(g.b[1] - g.a[1]) / L, ny = (g.b[0] - g.a[0]) / L;
+                const o = thick / 2;
+                const ln = (s0: number, s1: number, off: number, sw: number, key: string) => (
+                  <line key={key} x1={g.a[0] + (g.b[0] - g.a[0]) * s0 + nx * off} y1={g.a[1] + (g.b[1] - g.a[1]) * s0 + ny * off}
+                    x2={g.a[0] + (g.b[0] - g.a[0]) * s1 + nx * off} y2={g.a[1] + (g.b[1] - g.a[1]) * s1 + ny * off} strokeWidth={sw} />
+                );
+                const thin = Math.max(1.2, 0.7 * k);
+                return (
+                  <g key={dr.id} fill="none" strokeLinecap="butt">
+                    <g className={isSel ? "stroke-primary" : "stroke-foreground/70"}>
+                      {ln(0, 1, o, thin, "o1")}
+                      {ln(0, 1, -o, thin, "o2")}
+                      <line x1={g.a[0] + nx * o} y1={g.a[1] + ny * o} x2={g.a[0] - nx * o} y2={g.a[1] - ny * o} strokeWidth={thin} />
+                      <line x1={g.b[0] + nx * o} y1={g.b[1] + ny * o} x2={g.b[0] - nx * o} y2={g.b[1] - ny * o} strokeWidth={thin} />
+                    </g>
+                    <g className={isSel ? "stroke-primary" : "stroke-sky-500"}>
+                      {dr.kind === "fwin" ? (
+                        <>
+                          {ln(0, 0.55, o * 0.35, Math.max(2, 1.2 * k), "p1")}
+                          {ln(0.45, 1, -o * 0.35, Math.max(2, 1.2 * k), "p2")}
+                        </>
+                      ) : ln(0, 1, 0, Math.max(1.5, 0.9 * k), "g")}
+                    </g>
+                  </g>
+                );
+              }
               return (
                 <g key={dr.id} className={isSel ? "stroke-primary" : "stroke-foreground/60"} fill="none">
                   <line x1={g.hinge[0]} y1={g.hinge[1]} x2={g.open[0]} y2={g.open[1]} strokeWidth={Math.max(2.5, 1.4 * k)} strokeLinecap="round" />
@@ -408,7 +439,7 @@ export function MapCanvas({
               return (
                 <circle key={`hit-${dr.id}`} cx={(g.a[0] + g.b[0]) / 2} cy={(g.a[1] + g.b[1]) / 2} r={Math.max(g.w / 2, 12 * k)} fill="transparent"
                   className={Math.abs(w!.x1 - w!.x2) > Math.abs(w!.y1 - w!.y2) ? "cursor-ew-resize" : "cursor-ns-resize"}
-                  onPointerDown={(e) => startDrag(e, { kind: "door", id: dr.id })}><title>門：沿著牆拖曳</title></circle>
+                  onPointerDown={(e) => startDrag(e, { kind: "door", id: dr.id })}><title>{dr.kind ? "窗" : "門"}：沿著牆拖曳</title></circle>
               );
             })}
           </g>
