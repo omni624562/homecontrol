@@ -3,7 +3,8 @@
 // n、W 用試的（找誤差最小的一組），P0 是每台基地台自己的平均。高度不算。
 import { inRoom, wallsCrossed, type Floorplan, type FpRoom, type MapLink } from "@/lib/map-model";
 
-export interface SigModel { p0: Record<string, number>; n: number; wall: number; rmse: number | null; samples: number; fitted: boolean }
+// res：每台裝置實際量到的比模型預估好（正）或差（負）多少 dB，用來修正它附近的預估
+export interface SigModel { p0: Record<string, number>; n: number; wall: number; rmse: number | null; samples: number; fitted: boolean; res: { x: number; y: number; r: number }[] }
 export interface CoverCell { x: number; y: number; v: number; ap: string; room: string }
 
 const DEF = { n: 2.5, wall: 5, p0: -32 };
@@ -16,8 +17,8 @@ export function fitModel(fp: Floorplan, links: MapLink[]): SigModel | null {
   if (!aps.length) return null;
   const pts = links
     .filter((l) => l.dev.online && l.dev.rssi != null && l.dev.rssi < 0)
-    .map((l) => ({ ap: l.ap.id, d: l.L, walls: wallsCrossed(fp, l.x1, l.y1, l.x2, l.y2), rssi: l.dev.rssi! }));
-  if (pts.length < 3) return { p0: Object.fromEntries(aps.map((a) => [a.id, DEF.p0])), n: DEF.n, wall: DEF.wall, rmse: null, samples: pts.length, fitted: false };
+    .map((l) => ({ ap: l.ap.id, d: l.L, walls: wallsCrossed(fp, l.x1, l.y1, l.x2, l.y2), rssi: l.dev.rssi!, x: l.x1, y: l.y1 }));
+  if (pts.length < 3) return { p0: Object.fromEntries(aps.map((a) => [a.id, DEF.p0])), n: DEF.n, wall: DEF.wall, rmse: null, samples: pts.length, fitted: false, res: [] };
   let best: SigModel | null = null;
   let bestErr = Infinity;
   // 範圍限制在室內常見的物理值：資料少、又都很近的時候，才不會算出「牆不擋訊號」這種往外推會太樂觀的結果
@@ -37,7 +38,7 @@ export function fitModel(fp: Floorplan, links: MapLink[]): SigModel | null {
       const score = err + pts.length * 0.15 * ((n - 2.5) ** 2 * 4 + ((wall - 5) / 5) ** 2);
       if (score < bestErr) {
         bestErr = score;
-        best = { p0, n: Math.round(n * 10) / 10, wall, rmse: Math.sqrt(err / pts.length), samples: pts.length, fitted: true };
+        best = { p0, n: Math.round(n * 10) / 10, wall, rmse: Math.sqrt(err / pts.length), samples: pts.length, fitted: true, res: [] };
       }
     }
   }
@@ -45,7 +46,32 @@ export function fitModel(fp: Floorplan, links: MapLink[]): SigModel | null {
   const vals = Object.values(best!.p0);
   const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
   for (const a of aps) if (best!.p0[a.id] == null) best!.p0[a.id] = avg;
-  return best;
+  const b = best!;
+  b.res = pts.map((p) => ({ x: p.x, y: p.y, r: p.rssi - (b.p0[p.ap] - pathLoss(b.n, p.d) - b.wall * p.walls) }));
+  return b;
+}
+
+// 實測修正：附近（約 1.5 公尺內）裝置的實測差距，越近影響越大；隔一道牆影響剩三成多，離裝置遠的地方回到模型
+const corrCache = new WeakMap<SigModel, Map<string, number>>();
+function correction(fp: Floorplan, m: SigModel, x: number, y: number): number {
+  if (!m.res.length) return 0;
+  let cache = corrCache.get(m);
+  if (!cache) corrCache.set(m, (cache = new Map()));
+  const key = `${Math.round(x)},${Math.round(y)}`;
+  const hit = cache.get(key);
+  if (hit != null) return hit;
+  const mpp = mOf(fp);
+  let num = 0, den = 0.4;
+  for (const p of m.res) {
+    const d = Math.hypot(p.x - x, p.y - y) * mpp;
+    if (d > 4) continue;
+    const w = Math.exp(-((d / 1.5) ** 2)) * 0.35 ** wallsCrossed(fp, x, y, p.x, p.y);
+    num += w * p.r;
+    den += w;
+  }
+  const v = num / den;
+  cache.set(key, v);
+  return v;
 }
 
 export function predictAt(fp: Floorplan, m: SigModel, apId: string, x: number, y: number, at?: { x: number; y: number }): number {
@@ -76,7 +102,7 @@ export function coverage(fp: Floorplan, m: SigModel, step: number, override?: { 
       const s = predictAt(fp, m, a.id, x, y, at);
       if (s > v) { v = s; ap = a.id; }
     }
-    return { x, y, v, ap, room: room.id };
+    return { x, y, v: v + correction(fp, m, x, y), ap, room: room.id };
   });
 }
 
@@ -145,3 +171,21 @@ export function gapSpots(fp: Floorplan, m: SigModel, covered: Record<string, { c
 
 export const covQ = (v: number) => (v >= -55 ? 0 : v >= -65 ? 1 : v >= -72 ? 2 : 3);
 export const COV_TEXT = ["很強", "好", "普通", "弱"];
+
+// 連續的顏色：深藍（很強）→ 淡藍 → 黃 → 橘（弱）；回傳 [r, g, b, 透明度]
+const STOPS: [number, number, number, number, number][] = [
+  [-45, 37, 99, 235, 0.5], [-56, 96, 165, 250, 0.28], [-63, 191, 219, 254, 0.18], [-68, 251, 191, 36, 0.38], [-76, 249, 115, 22, 0.6],
+];
+export function covColor(v: number): string {
+  if (v >= STOPS[0][0]) return `rgba(${STOPS[0].slice(1, 4).join(",")},${STOPS[0][4]})`;
+  for (let i = 1; i < STOPS.length; i++) {
+    const [v1, ...a] = STOPS[i - 1], [v2, ...b] = STOPS[i];
+    if (v >= v2) {
+      const t = (v1 - v) / (v1 - v2);
+      const c = a.map((x, j) => x + (b[j] - x) * t);
+      return `rgba(${Math.round(c[0])},${Math.round(c[1])},${Math.round(c[2])},${c[3].toFixed(2)})`;
+    }
+  }
+  const z = STOPS[STOPS.length - 1];
+  return `rgba(${z.slice(1, 4).join(",")},${z[4]})`;
+}

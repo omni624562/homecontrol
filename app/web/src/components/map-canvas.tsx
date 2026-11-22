@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { fmt } from "@/lib/format";
 import { doorGeom, inRoom, nearSeg, roomPath, roomPts, sigQ, shortName, tidyPts, topEdge, withPts, type Floorplan, type FpRoom, type FpWall, type MapDev, type MapLink, type Pt } from "@/lib/map-model";
 import { cn } from "@/lib/utils";
-import { covQ, type CoverCell } from "@/lib/coverage";
+import { covColor, type CoverCell } from "@/lib/coverage";
 
 export type MapSel = { kind: "room" | "ap" | "dev" | "wall" | "door"; id: string } | null;
 // 編輯工具：選取／畫牆／放門
@@ -10,8 +10,6 @@ export type MapTool = "select" | "wall" | "door" | "window";
 export type MapLayer = "signal" | "coverage" | "motion";
 // 建議的位置（虛線）：基地台搬到這裡、或在這裡加一個插座；to：連到哪裡（畫虛線）
 export interface MapGhost { id: string; kind: "ap" | "plug"; x: number; y: number; label: string; to?: { x: number; y: number } }
-const COV_FILL = ["var(--primary)", "var(--primary)", "#fbbf24", "var(--color-orange-500, #f97316)"];
-const COV_OP = [0.42, 0.2, 0.38, 0.5];
 // 地圖上的人：猜到在哪個區域（sure=false 是把握不夠，只是最可能的那間）
 export type MapPerson = { id: string; name: string; room: string; roomName: string; sure: boolean; p: number; motion?: boolean };
 // corner／edge：拖區域的第 i 個轉角、第 i 道牆（轉角 i 到 i+1）
@@ -405,7 +403,7 @@ export function MapCanvas({
       onClick={(e) => e.target === e.currentTarget && !edit && onPick(null)}
     >
       <defs>
-        <filter id="map-cov-blur" x="-5%" y="-5%" width="110%" height="110%"><feGaussianBlur stdDeviation={(cover?.step || 20) * 0.45} /></filter>
+        <filter id="map-cov-blur" x="-5%" y="-5%" width="110%" height="110%"><feGaussianBlur stdDeviation={(cover?.step || 20) * 0.6} /></filter>
         <clipPath id="map-rooms">{rooms.map((r) => <path key={r.id} d={roomPath(r)} />)}</clipPath>
         {(["good", "mid", "weak"] as const).map((q) => (
           <radialGradient key={q} id={`map-g-${q}`}>
@@ -426,8 +424,7 @@ export function MapCanvas({
       {layer === "coverage" && !edit && cover && (
         <g clipPath="url(#map-rooms)" filter="url(#map-cov-blur)" className="pointer-events-none">
           {cover.cells.map((c, i) => {
-            const q = covQ(c.v);
-            return <rect key={i} x={c.x - cover.step / 2 - 0.5} y={c.y - cover.step / 2 - 0.5} width={cover.step + 1} height={cover.step + 1} fill={COV_FILL[q]} fillOpacity={COV_OP[q]} />;
+            return <rect key={i} x={c.x - cover.step / 2 - 0.5} y={c.y - cover.step / 2 - 0.5} width={cover.step + 1} height={cover.step + 1} fill={covColor(c.v)} />;
           })}
         </g>
       )}
