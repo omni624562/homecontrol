@@ -363,6 +363,12 @@ export function MapPage() {
               <Square />改回長方形
             </Button>
           )}
+          <Note>區域名稱會自動找不被圓點、基地台蓋住的位置；想自己決定的話，直接<b>拖名稱</b>。</Note>
+          {r.label && (
+            <Button variant="outline" className="h-10 self-start" onClick={() => update({ ...fp, rooms: fp.rooms!.map((x) => (x.id === r.id ? { ...x, label: null } : x)) })}>
+              名稱改回自動擺放
+            </Button>
+          )}
         </>
       );
   } else if (sel?.kind === "wall" && edit) {

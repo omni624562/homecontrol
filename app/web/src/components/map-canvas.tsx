@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { fmt } from "@/lib/format";
-import { doorGeom, nearSeg, roomPath, roomPts, sigQ, shortName, tidyPts, topEdge, withPts, type Floorplan, type FpRoom, type FpWall, type MapDev, type MapLink, type Pt } from "@/lib/map-model";
+import { doorGeom, inRoom, nearSeg, roomPath, roomPts, sigQ, shortName, tidyPts, topEdge, withPts, type Floorplan, type FpRoom, type FpWall, type MapDev, type MapLink, type Pt } from "@/lib/map-model";
 import { cn } from "@/lib/utils";
 import { covQ, type CoverCell } from "@/lib/coverage";
 
@@ -15,7 +15,7 @@ const COV_OP = [0.42, 0.2, 0.38, 0.5];
 // 地圖上的人：猜到在哪個區域（sure=false 是把握不夠，只是最可能的那間）
 export type MapPerson = { id: string; name: string; room: string; roomName: string; sure: boolean; p: number; motion?: boolean };
 // corner／edge：拖區域的第 i 個轉角、第 i 道牆（轉角 i 到 i+1）
-type Drag = { kind: "item" | "room" | "corner" | "edge" | "wall" | "wallEnd" | "door"; id: string; i?: number };
+type Drag = { kind: "item" | "room" | "corner" | "edge" | "wall" | "wallEnd" | "door" | "label"; id: string; i?: number };
 
 const STROKE: Record<string, string> = { good: "var(--primary)", mid: "color-mix(in srgb, var(--primary) 45%, var(--card))", weak: "var(--color-orange-500, #f97316)" };
 const WARN = "var(--color-orange-500, #f97316)";
@@ -106,6 +106,83 @@ export function MapCanvas({
   }
   const glowR = Math.max(60, Math.min(220, 2.2 / ((fp.meters || 12) / W)));
 
+  // ---- 字的位置：房間名稱、家人名牌、裝置名稱都先試幾個地方，挑不會蓋到圓點、基地台或別的字的 ----
+  type Box = { x0: number; y0: number; x1: number; y1: number };
+  const overlap = (a: Box, b: Box) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
+  const textW = (t: string, size: number) => [...t].reduce((a, c) => a + (c.charCodeAt(0) < 256 ? 0.6 : 1.02), 0) * size;
+  const taken: Box[] = [];
+  const disc = (x: number, y: number, r: number): Box => ({ x0: x - r, y0: y - r, x1: x + r, y1: y + r });
+  for (const d of placed) taken.push(disc(pos[d.key].x, pos[d.key].y, 17 * k));
+  for (const a of fp.aps) {
+    const it = fp.items[`ap:${a.id}`];
+    if (!it) continue;
+    taken.push(disc(it.x, it.y, 21 * k));
+    if (showNames) {
+      const w = textW(shortName(a.name, 9), 11.5 * k);
+      taken.push({ x0: it.x - w / 2, y0: it.y + 22 * k, x1: it.x + w / 2, y1: it.y + 38 * k });
+    }
+  }
+  const free = (b: Box) => !taken.some((t) => overlap(t, b));
+  const inside = (r: FpRoom, b: Box) => inRoom(r, b.x0, b.y0) && inRoom(r, b.x1, b.y0) && inRoom(r, b.x0, b.y1) && inRoom(r, b.x1, b.y1);
+  // 先找區域裡的空位；沒有就試區域外面的備案；都不行才疊在區域裡第一個位置
+  const pickBox = (r: FpRoom, cands: Box[], outside: Box[] = []) =>
+    cands.find((b) => inside(r, b) && free(b)) ?? outside.find((b) => free(b) && b.x0 >= 0 && b.y0 >= 0 && b.x1 <= W && b.y1 <= H) ?? cands.find((b) => inside(r, b)) ?? cands[0];
+
+  const roomLabel: Record<string, { x: number; y: number }> = {};
+  for (const r of rooms) {
+    const w = textW(r.name, 15 * k), hh = 19 * k;
+    const extra = layer === "motion" && !edit && (roomHeat[r.id] ?? 0) >= ROOM_ACTIVE ? 18 * k : 0;
+    const top = topEdge(r), m = 12 * k;
+    const at = (x: number, y: number): Box => ({ x0: x - 2 * k, y0: y, x1: x + w + 2 * k, y1: y + hh + extra });
+    const b = r.label
+      ? at(r.x + r.label[0], r.y + r.label[1])
+      : pickBox(r, [
+          at(top.left + m, top.y + 8 * k), at(top.right - m - w, top.y + 8 * k),
+          at(r.x + m, r.y + r.h - m - hh - extra), at(r.x + r.w - m - w, r.y + r.h - m - hh - extra),
+          at(r.x + r.w / 2 - w / 2, r.y + r.h / 2 - hh / 2),
+        ]);
+    roomLabel[r.id] = { x: b.x0 + 2 * k, y: b.y0 };
+    taken.push(b);
+  }
+
+  const badgeAt: Record<string, { x: number; y: number }> = {};
+  if (!edit) {
+    for (const r of rooms) {
+      const here = people.filter((p) => p.room === r.id);
+      if (!here.length) continue;
+      const ws = here.map((p) => textW(p.sure ? p.name : `${p.name}?`, 12 * k) + 24 * k);
+      const total = ws.reduce((a, b) => a + b, 0) + 6 * k * (ws.length - 1), hh = 22 * k, m = 8 * k, top = topEdge(r);
+      const at = (x: number, y: number): Box => ({ x0: x, y0: y, x1: x + total, y1: y + hh });
+      const b = pickBox(
+        r,
+        [at(top.right - m - total, top.y + m), at(top.left + m, top.y + m), at(r.x + r.w - m - total, r.y + r.h - m - hh), at(r.x + m, r.y + r.h - m - hh), at(r.x + r.w / 2 - total / 2, r.y + r.h / 2 - hh / 2)],
+        [at(top.right - total, top.y - hh - 4 * k), at(top.left, top.y - hh - 4 * k), at(r.x + r.w / 2 - total / 2, r.y + r.h + 4 * k)],
+      );
+      taken.push(b);
+      let x = b.x0;
+      here.forEach((p, i) => {
+        badgeAt[p.id] = { x, y: b.y0 };
+        x += ws[i] + 6 * k;
+      });
+    }
+  }
+
+  type DevLabel = { dx: number; dy: number; anchor: "middle" | "start" | "end" };
+  const devLabel: Record<string, DevLabel> = {};
+  for (const d of placed) {
+    const c = pos[d.key];
+    const w = textW(shortName(d.name, 6), 11.5 * k), h = 15 * k;
+    const opts: (DevLabel & { b: Box })[] = [
+      { dx: 0, dy: 31, anchor: "middle", b: { x0: c.x - w / 2, y0: c.y + 20 * k, x1: c.x + w / 2, y1: c.y + 20 * k + h } },
+      { dx: 0, dy: -23, anchor: "middle", b: { x0: c.x - w / 2, y0: c.y - 35 * k, x1: c.x + w / 2, y1: c.y - 35 * k + h } },
+      { dx: 21, dy: 4, anchor: "start", b: { x0: c.x + 20 * k, y0: c.y - 7 * k, x1: c.x + 20 * k + w, y1: c.y + 8 * k } },
+      { dx: -21, dy: 4, anchor: "end", b: { x0: c.x - 20 * k - w, y0: c.y - 7 * k, x1: c.x - 20 * k, y1: c.y + 8 * k } },
+    ];
+    const o = showNames && !edit ? opts.find((x) => free(x.b) && x.b.x0 >= 0 && x.b.x1 <= W && x.b.y1 <= H) ?? opts[0] : opts[0];
+    if (showNames) taken.push(o.b);
+    devLabel[d.key] = o;
+  }
+
   const point = (e: { clientX: number; clientY: number }) => {
     const el = svg.current!;
     const pt = el.createSVGPoint();
@@ -151,6 +228,11 @@ export function MapCanvas({
         return;
       }
       const o = origRoom!;
+      if (d.kind === "label") {
+        const base = o.label || [roomLabel[o.id].x - o.x, roomLabel[o.id].y - o.y];
+        setRoom(f, (r) => ({ ...r, label: [clamp(base[0] + dx, 0, r.w), clamp(base[1] + dy, 0, r.h)] }));
+        return;
+      }
       if (d.kind === "room") {
         const mx = clamp(dx, -o.x, f.w - o.x - o.w), my = clamp(dy, -o.y, f.h - o.y - o.h);
         setRoom(f, (r) => ({ ...r, x: o.x + mx, y: o.y + my, w: o.w, h: o.h, pts: o.pts ? o.pts.map(([x, y]) => [x + mx, y + my] as Pt) : null }));
@@ -356,8 +438,8 @@ export function MapCanvas({
       })}
       {rooms.map((r) => {
         const isSel = edit && sel?.kind === "room" && sel.id === r.id;
-        const top = topEdge(r);
         const h = layer === "motion" && !edit ? roomHeat[r.id] : null;
+        const lb = roomLabel[r.id];
         return (
           <g key={r.id}>
             <path
@@ -367,25 +449,22 @@ export function MapCanvas({
               strokeWidth={isSel ? 3 : 1.5}
               onPointerDown={(e) => startDrag(e, { kind: "room", id: r.id })}
             />
-            <text x={top.left + 12 * k} y={top.y + 24 * k} className="pointer-events-none fill-muted-foreground font-semibold" style={{ fontSize: 15 * k }}>{r.name}</text>
+            <text x={lb.x} y={lb.y + 16 * k} className={cn("fill-muted-foreground font-semibold select-none", edit ? "cursor-move" : "pointer-events-none")} style={{ fontSize: 15 * k }}
+              onPointerDown={(e) => startDrag(e, { kind: "label", id: r.id })}>{edit && <title>拖曳可以移動名稱</title>}{r.name}</text>
             {h != null && h >= ROOM_ACTIVE && (
-              <text x={top.left + 12 * k} y={top.y + 42 * k} className="pointer-events-none font-semibold" fill={WARN} style={{ fontSize: 12 * k }}>{h >= ROOM_STRONG ? "有人走動" : "有動靜"}</text>
+              <text x={lb.x} y={lb.y + 34 * k} className="pointer-events-none font-semibold" fill={WARN} style={{ fontSize: 12 * k }}>{h >= ROOM_STRONG ? "有人走動" : "有動靜"}</text>
             )}
           </g>
         );
       })}
       {!edit && rooms.map((r) => {
-        // 人：區域右上角的名牌，同一間有好幾個人就往左排
+        // 人：名牌放在上面算好的空位（預設區域右上角），同一間有好幾個人就排成一列
         const here = people.filter((p) => p.room === r.id);
-        const top = topEdge(r);
-        let right = top.right - 8 * k;
         return here.map((p) => {
           const label = p.sure ? p.name : `${p.name}?`;
-          const tw = [...label].reduce((a, c) => a + (c.charCodeAt(0) < 256 ? 7.2 : 12.5), 0);
-          const w = (tw + 24) * k, h = 22 * k;
-          right -= w;
-          const x = right;
-          right -= 6 * k;
+          const w = textW(label, 12 * k) + 24 * k, h = 22 * k;
+          const { x, y: by } = badgeAt[p.id];
+          const top = { y: by - 8 * k };
           const tip = (p.sure ? `${p.name} 大概在${p.roomName}（${Math.round(p.p * 100)}% 把握）` : `${p.name} 可能在${p.roomName}（${Math.round(p.p * 100)}%，不確定）`) + (p.motion ? "・那間剛有動靜" : "");
           return (
             <g key={p.id} opacity={p.sure ? 1 : 0.6} onMouseEnter={() => onTip(tip)} onMouseLeave={() => onTip(null)}>
@@ -561,7 +640,7 @@ export function MapCanvas({
               {layer === "motion" ? (m == null ? "·" : fmt(m, 1)) : d.rssi ?? "—"}
             </text>
             {(showNames || isSel) && (
-              <text y={31} textAnchor="middle" className="fill-muted-foreground font-medium" style={{ fontSize: 11.5, paintOrder: "stroke", stroke: "var(--card)", strokeWidth: 3, strokeLinejoin: "round" }}>{shortName(d.name, 6)}</text>
+              <text x={devLabel[d.key].dx} y={devLabel[d.key].dy} textAnchor={devLabel[d.key].anchor} className="fill-muted-foreground font-medium" style={{ fontSize: 11.5, paintOrder: "stroke", stroke: "var(--card)", strokeWidth: 3, strokeLinejoin: "round" }}>{shortName(d.name, 6)}</text>
             )}
           </g>
         );

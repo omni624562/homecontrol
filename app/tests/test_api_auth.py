@@ -228,3 +228,12 @@ def test_motion_rules_engine(app_module, monkeypatch):
     finally:
         del hub.plugs["p-eng"]
         app_module.store.data["motion_rules"] = []
+
+
+def test_floorplan_room_label(app_module, client):
+    token, _ = app_module.auth.pair(app_module.auth.new_code())
+    client.cookies.set("plughub_token", token)
+    r = client.put("/api/floorplan", json={"rooms": [{"id": "a", "name": "客廳", "x": 0, "y": 0, "w": 200, "h": 100, "label": [50, 999]},
+                                                     {"id": "b", "name": "廚房", "x": 0, "y": 0, "w": 200, "h": 100, "label": "壞的"}]})
+    rooms = r.json()["rooms"]
+    assert rooms[0]["label"] == [50, 100] and "label" not in rooms[1]
