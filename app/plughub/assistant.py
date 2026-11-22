@@ -21,6 +21,8 @@ from typing import TYPE_CHECKING, Any
 import anthropic
 from anthropic import beta_async_tool
 
+from . import geom
+
 if TYPE_CHECKING:
     from .hub import Hub
 
@@ -497,16 +499,14 @@ class Assistant:
             nodes = {n["mac"]: n for n in net["nodes"]}
 
             def room_at(x: float, y: float) -> str | None:
-                for r in fp.get("rooms") or []:
-                    if r["x"] <= x <= r["x"] + r["w"] and r["y"] <= y <= r["y"] + r["h"]:
-                        return r["name"]
-                return None
+                r = geom.room_at(fp, x, y)
+                return r["name"] if r else None
 
             aps = []
             for a in fp.get("aps", []):
                 it = fp["items"].get(f"ap:{a['id']}")
                 if it:
-                    aps.append({"name": a["name"], "node": a.get("node"), "x_m": round(it["x"] * mpp, 1), "y_m": round(it["y"] * mpp, 1),
+                    aps.append({"name": a["name"], "node": a.get("node"), "_xy": (it["x"], it["y"]), "x_m": round(it["x"] * mpp, 1), "y_m": round(it["y"] * mpp, 1),
                                 "height_m": a.get("z") or 1.0, "room": room_at(it["x"], it["y"])})
             hist = hub.sensing_history("24h")
             motion = {d["key"]: [c["motion"] for c in d["cols"] if c["motion"] is not None] for d in hist["devices"]}
@@ -526,14 +526,19 @@ class Assistant:
                     "x_m": round(x, 1), "y_m": round(y, 1), "height_m": it.get("z") or 0.3,
                     "rssi_dbm": rssi, "connected_to": node["model"] if node else None,
                     "distance_to_ap_m": round(((ap["x_m"] - x) ** 2 + (ap["y_m"] - y) ** 2) ** 0.5, 1) if ap else None,
+                    "walls_to_ap": geom.walls_crossed(fp, it["x"], it["y"], *ap["_xy"]) if ap else None,
+                    "link_passes_rooms": geom.rooms_along(fp, it["x"], it["y"], *ap["_xy"]) if ap else None,
                     "motion_24h_max": max(mot) if mot else None,
                     "motion_24h_busy_slots": sum(1 for m in mot if m > 1) if mot else None,
                 })
             return json.dumps({
                 "map_width_m": fp.get("meters"), "rooms": [{"name": r["name"], "x_m": round(r["x"] * mpp, 1), "y_m": round(r["y"] * mpp, 1),
                                                            "w_m": round(r["w"] * mpp, 1), "h_m": round(r["h"] * mpp, 1)} for r in fp.get("rooms") or []],
-                "access_points": aps, "devices": devs,
-                "notes": "rssi：-55 以上很好、-70 以下容易斷線；動靜是 Wi-Fi 感測（實驗），每格 30 分鐘，擾動 > 1 算有明顯動靜",
+                "access_points": [{k: v for k, v in a.items() if k != "_xy"} for a in aps], "devices": devs,
+                "walls_drawn": len(fp.get("walls") or []),
+                "notes": "rssi：-55 以上很好、-70 以下容易斷線；動靜是 Wi-Fi 感測（實驗），每格 30 分鐘，擾動 > 1 算有明顯動靜。"
+                         "walls_to_ap：裝置到它連的基地台中間隔了幾道實牆（門口不算），每道牆大約讓訊號弱 3～6 dB；"
+                         "link_passes_rooms：這條訊號線經過的區域，某裝置有動靜時，人應該在這些區域之一",
             }, ensure_ascii=False)
 
         return [get_home, set_power, set_timer, run_scene, turn_off_all, get_weather, get_energy, query_usage, get_history,
