@@ -408,7 +408,7 @@ export function MapPage() {
     const l = links.find((x) => x.dev.key === sel.id);
     if (d && fp.items[d.key]) {
       const linkTxt = l ? (
-        <>連到「{l.ap.name}」{l.guess ? "（同名的 Wi-Fi 有好幾台，先猜最近的）" : ""}，相距約 {fmt(l.L, 1)} 公尺，其中約 {fmt(l.band, 1)} 公尺經過人的腰到胸的高度：<b className="text-foreground">{qText[l.q]}</b></>
+        <>連到「{l.ap.name}」{l.guess ? "（同名的 Wi-Fi 有好幾台，先猜最近的）" : ""}，相距約 {fmt(l.L, 1)} 公尺，其中約 {fmt(l.band, 1)} 公尺經過人的腰到胸的高度{l.walls ? `，中間隔了 ${l.walls} 道牆（門口不算）` : (fp.walls || []).length ? "，中間沒有隔牆" : ""}：<b className="text-foreground">{qText[l.q]}</b>{l.walls >= 2 ? "（牆會吃掉訊號，人走過去的跳動比較小）" : ""}{l.rooms.length > 0 && <>。這條線有動靜時，人可能在{l.rooms.join("、")}</>}</>
       ) : d.node ? (
         `連在 ${nodes.find((n) => n.mac === d.node)?.model || ""}，在地圖上加一台 Wi-Fi 基地台、選這一台，就會畫出連線`
       ) : d.ssid ? (
@@ -434,6 +434,7 @@ export function MapPage() {
   const weakDevs = devs.filter((d) => d.online && d.rssi != null && d.rssi < -70);
   const off = devs.filter((d) => !d.online);
   const good = links.filter((l) => l.q === "good");
+  const hot = links.filter((l) => (motion[l.dev.key] ?? 0) > 0.15).sort((a, b) => motion[b.dev.key]! - motion[a.dev.key]!);
   const dflt = layer === "signal" ? "滑過裝置看訊號強度" : sense?.enabled === false ? "Wi-Fi 感測已暫停（設定 → Wi-Fi 感測）" : "橘色光圈越大，那附近越可能有人在走動・每 10 秒更新";
 
   return (
@@ -557,7 +558,12 @@ export function MapPage() {
                 {off.length > 0 && <Note icon={WifiOff} tone="warn">{off.length} 台離線：{off.map((d) => d.name).join("、")}</Note>}
                 {layer === "motion" ? (
                   links.length ? (
-                    <Note><b className="text-foreground">{good.length} 條線適合偵測走動</b>{good.length ? `：${good.map((l) => l.dev.name).join("、")}` : ""}。實線穿過人的腰到胸的高度，有人走過去訊號會明顯跳動；虛線大多貼著地面或太短。</Note>
+                    <>
+                      {hot.length > 0 && (
+                        <Note tone="warn"><b className="text-foreground">現在有動靜</b>：{hot.map((l) => `${l.dev.name}${l.rooms.length ? `（${l.rooms.join("、")}）` : ""}`).join("；")}</Note>
+                      )}
+                      <Note><b className="text-foreground">{good.length} 條線適合偵測走動</b>{good.length ? `：${good.map((l) => l.dev.name).join("、")}` : ""}。實線穿過人的腰到胸的高度，有人走過去訊號會明顯跳動；虛線大多貼著地面、太短，或隔了兩道以上的牆{(fp.walls || []).length ? "" : "（畫上實牆會算得更準）"}。</Note>
+                    </>
                   ) : (
                     <Note>在「編輯」裡加上 Wi-Fi 基地台、選它是哪一台和放的高度，就會畫出每台裝置到基地台的訊號線，看得出哪幾條適合偵測走動。電視、電腦也能當感測器：到「設定 → 網路裝置」點它、打開「放到訊號地圖」。</Note>
                   )

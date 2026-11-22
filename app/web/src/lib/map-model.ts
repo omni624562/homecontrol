@@ -100,7 +100,8 @@ export interface MapDev {
   router?: boolean;
 }
 
-export interface MapLink { dev: MapDev; ap: FpAp; x1: number; y1: number; x2: number; y2: number; L: number; band: number; q: "good" | "ok" | "poor"; guess: boolean }
+// walls：中間隔了幾道實牆（從門口穿過去的不算）；rooms：線經過的區域名稱（照順序）
+export interface MapLink { dev: MapDev; ap: FpAp; x1: number; y1: number; x2: number; y2: number; L: number; band: number; walls: number; rooms: string[]; q: "good" | "ok" | "poor"; guess: boolean }
 
 // 高度（公尺）
 export const DEV_Z = 0.3;
@@ -227,7 +228,13 @@ export function mapLinks(fp: Floorplan, devs: MapDev[]): MapLink[] {
       f = Math.max(0, Math.min(1, Math.max(t1, t2)) - Math.max(0, Math.min(t1, t2)));
     }
     const band = f * L;
-    links.push({ dev: d, ap, x1: it.x, y1: it.y, x2: at.x, y2: at.y, L, band, q: band >= 2 ? "good" : band >= 0.8 ? "ok" : "poor", guess: cands.length > 1 });
+    const walls = wallsCrossed(fp, it.x, it.y, at.x, at.y);
+    // 每穿過兩道牆降一級：訊號被牆吃掉，人走過去的跳動比較不明顯，而且分不出是哪一間
+    const lv = Math.max(0, (band >= 2 ? 2 : band >= 0.8 ? 1 : 0) - Math.floor(walls / 2));
+    links.push({
+      dev: d, ap, x1: it.x, y1: it.y, x2: at.x, y2: at.y, L, band, walls, rooms: roomsAlong(fp, it.x, it.y, at.x, at.y),
+      q: (["poor", "ok", "good"] as const)[lv], guess: cands.length > 1,
+    });
   }
   return links;
 }
@@ -271,4 +278,56 @@ export function nearSeg(x: number, y: number, w: FpWall) {
   const L2 = dx * dx + dy * dy || 1;
   const t = Math.max(0, Math.min(1, ((x - w.x1) * dx + (y - w.y1) * dy) / L2));
   return { t, d: Math.hypot(x - (w.x1 + dx * t), y - (w.y1 + dy * t)) };
+}
+
+// 線段 p1-p2 和 p3-p4 交叉的話，回傳交點在兩條線上的位置（0～1）
+function segHit(x1: number, y1: number, x2: number, y2: number, x3: number, y3: number, x4: number, y4: number) {
+  const d = (x2 - x1) * (y4 - y3) - (y2 - y1) * (x4 - x3);
+  if (Math.abs(d) < 1e-9) return null;
+  const s = ((x3 - x1) * (y4 - y3) - (y3 - y1) * (x4 - x3)) / d;
+  const u = ((x3 - x1) * (y2 - y1) - (y3 - y1) * (x2 - x1)) / d;
+  return s > 0 && s < 1 && u >= 0 && u <= 1 ? { s, u } : null;
+}
+
+// 兩點之間隔了幾道實牆；剛好從門口穿過去的不算
+export function wallsCrossed(fp: Floorplan, x1: number, y1: number, x2: number, y2: number): number {
+  let n = 0;
+  for (const w of fp.walls || []) {
+    const hit = segHit(x1, y1, x2, y2, w.x1, w.y1, w.x2, w.y2);
+    if (!hit) continue;
+    const L = Math.hypot(w.x2 - w.x1, w.y2 - w.y1) || 1;
+    const at = hit.u * L;
+    const open = (fp.doors || []).some((dr) => {
+      if (dr.wall !== w.id) return false;
+      const half = Math.min(dr.w, L) / 2;
+      const c = Math.max(half, Math.min(L - half, dr.t * L));
+      return at >= c - half && at <= c + half;
+    });
+    if (!open) n++;
+  }
+  return n;
+}
+
+// 點在不在區域裡（區域可以是 L 形）
+export function inRoom(r: FpRoom, x: number, y: number): boolean {
+  if (x < r.x || x > r.x + r.w || y < r.y || y > r.y + r.h) return false;
+  const p = roomPts(r);
+  let inside = false;
+  for (let i = 0, j = p.length - 1; i < p.length; j = i++) {
+    const [xi, yi] = p[i], [xj, yj] = p[j];
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+// 線經過哪些區域（從起點到終點的順序）
+export function roomsAlong(fp: Floorplan, x1: number, y1: number, x2: number, y2: number): string[] {
+  const out: string[] = [];
+  const steps = Math.max(2, Math.ceil(Math.hypot(x2 - x1, y2 - y1) / 8));
+  for (let i = 0; i <= steps; i++) {
+    const x = x1 + ((x2 - x1) * i) / steps, y = y1 + ((y2 - y1) * i) / steps;
+    const r = (fp.rooms || []).find((q) => inRoom(q, x, y));
+    if (r && !out.includes(r.name)) out.push(r.name);
+  }
+  return out;
 }
