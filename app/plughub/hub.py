@@ -21,7 +21,7 @@ from typing import Any, Callable
 
 from kasa import Device, Discover, Module
 
-from . import anomaly, arpprobe, habits, locate, native, netprobe, sun, tariff
+from . import anomaly, arpprobe, habits, locate, native, netprobe, roommotion, sun, tariff
 from .sensing import INTERVAL as SENSE_INTERVAL, SAVE_EVERY as SENSE_SAVE_EVERY, Sensing
 from .notify import Notifier
 from .daysoff import DaysOff
@@ -1181,6 +1181,31 @@ class Hub:
         return {**rep, "range": rng, "bucket": bucket, "start": start, "minutes": n, "devices": devices,
                 "since": first, "names": names}
 
+    def _room_links(self) -> list[dict[str, Any]]:
+        node_of = {m: c.get("node") for m, c in self.router.clients.items() if self.router.online(m)}
+        return roommotion.links(self.store.data.get("floorplan") or {}, node_of)
+
+    def room_motion(self) -> dict[str, dict[str, Any]]:
+        """現在每個房間的動靜（地圖上有線經過的房間才有）。"""
+        now = time.time()
+        motion = {k: (b[-1][1] if b and now - b[-1][0] < 10 else None) for k, b in self.sensing.motion.items()}
+        return roommotion.scores(self._room_links(), motion)
+
+    def sensing_replay(self, hours: int = 24, bucket: int = 300) -> dict[str, Any]:
+        """動靜回放：最近幾小時，每 bucket 秒一格，每台裝置的最大擾動和每個房間的分數。"""
+        now = time.time()
+        start = int((now // bucket + 1) * bucket - hours * 3600)
+        n = hours * 3600 // bucket
+        data = self.store.energy.sense_buckets(start, bucket)
+        devices = {k: [per[i][1] if i in per else None for i in range(n)] for k, per in data.items()}
+        lks = self._room_links()
+        rooms: dict[str, list[float | None]] = {}
+        for i in range(n):
+            sc = roommotion.scores(lks, {k: v[i] for k, v in devices.items()})
+            for r, v in sc.items():
+                rooms.setdefault(r, [None] * n)[i] = v["score"]
+        return {"start": start, "bucket": bucket, "n": n, "devices": devices, "rooms": rooms}
+
     def sensing_report(self, minutes: int = 60) -> dict[str, Any]:
         """每台插座（排插算一台）一列：用它的孔的名稱表示。"""
         names = {k: "、".join(self.name(self.plugs[p]) for p in e.plugs) for k, e in self.devices.items()}
@@ -1191,6 +1216,7 @@ class Hub:
         rep["devices"] = [d for d in rep["devices"] if d["key"] in names]
         rep["net"] = self.net_report()
         rep["enabled"] = bool(self.store.data["settings"].get("sensing", True))
+        rep["rooms"] = self.room_motion()
         return rep
 
     # ---- 路由器：連線裝置、新裝置通知、誰在家 ----

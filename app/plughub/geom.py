@@ -74,3 +74,17 @@ def rooms_along(fp: dict[str, Any], x1: float, y1: float, x2: float, y2: float) 
         if r and r["name"] not in out:
             out.append(r["name"])
     return out
+
+
+def room_lengths(fp: dict[str, Any], x1: float, y1: float, x2: float, y2: float) -> dict[str, float]:
+    """線在每個區域裡走了多長（地圖單位）：區域代碼 → 長度。"""
+    out: dict[str, float] = {}
+    length = math.hypot(x2 - x1, y2 - y1)
+    steps = max(2, math.ceil(length / 8))
+    seg = length / steps
+    for i in range(steps):
+        t = (i + 0.5) / steps
+        r = room_at(fp, x1 + (x2 - x1) * t, y1 + (y2 - y1) * t)
+        if r:
+            out[r["id"]] = out.get(r["id"], 0.0) + seg
+    return out

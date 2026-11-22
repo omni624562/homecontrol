@@ -86,7 +86,11 @@ export interface MapSense {
   enabled?: boolean;
   devices?: { key: string; name: string; now: number | null }[];
   net?: { nodes?: NetNode[]; clients?: NetClient[] } | null;
+  rooms?: Record<string, { score: number; cover: number; hot: string[] }>;
 }
+
+// 動靜回放：每 bucket 秒一格
+export interface MapReplay { start: number; bucket: number; n: number; devices: Record<string, (number | null)[]>; rooms: Record<string, (number | null)[]> }
 
 export interface MapDev {
   key: string;
