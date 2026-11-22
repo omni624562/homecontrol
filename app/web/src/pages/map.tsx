@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlertCircle, Check, CheckCircle2, ImagePlus, LayoutGrid, Pencil, Plus, Trash2, Wifi, WifiOff, X } from "lucide-react";
+import { AlertCircle, Check, CheckCircle2, ImagePlus, LayoutGrid, Pencil, Plus, Square, Trash2, Wifi, WifiOff, X } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -237,7 +237,7 @@ export function MapPage() {
         ...f,
         w: 1000,
         h: nh,
-        rooms: f.rooms!.map((r) => ({ ...r, y: r.y * sy, h: r.h * sy })),
+        rooms: f.rooms!.map((r) => ({ ...r, y: r.y * sy, h: r.h * sy, pts: r.pts ? r.pts.map(([x, y]) => [x, y * sy] as [number, number]) : null })),
         items: Object.fromEntries(Object.entries(f.items).map(([key, it]) => [key, { ...it, y: it.y * sy }])),
       };
       clearTimeout(saveT.current);
@@ -254,7 +254,7 @@ export function MapPage() {
   if (edit && !sel)
     picked = (
       <>
-        <Note>點區域、裝置或 Wi-Fi 基地台可以選取；拖曳移動，區域拉右下角的小方塊改大小。</Note>
+        <Note>點區域、裝置或 Wi-Fi 基地台可以選取、拖曳移動。選了區域可以拖轉角、拖牆改形狀。</Note>
         <Q sub="用來算距離">地圖的實際寬度</Q>
         <div className="flex items-center gap-2">
           <CommitInput
@@ -281,6 +281,12 @@ export function MapPage() {
               onOk={() => { update({ ...fp, rooms: fp.rooms!.filter((x) => x.id !== r.id) }); setSel(null); }}
             />
           </div>
+          <Note>拖<b>圓點</b>（轉角）改大小、形狀；拖<b>牆中間的短條</b>把整道牆推進、拉出。L 形、凹字形：在短條上<b>按兩下</b>，那道牆會多兩個轉角，再把中間那段拉進去或拉出來。推平的轉角會自動消失。</Note>
+          {r.pts && (
+            <Button variant="outline" className="h-10 self-start" onClick={() => update({ ...fp, rooms: fp.rooms!.map((x) => (x.id === r.id ? { ...x, pts: null } : x)) })}>
+              <Square />改回長方形
+            </Button>
+          )}
         </>
       );
   } else if (sel?.kind === "ap") {

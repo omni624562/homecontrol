@@ -584,6 +584,18 @@ async def get_floorplan() -> dict[str, Any]:
     return store.data["floorplan"]
 
 
+def _fp_room(r: dict, w: float, h: float) -> dict[str, Any]:
+    """地圖上的區域；pts = 不是長方形時的轉角（4～24 個點），外框照轉角算。"""
+    room: dict[str, Any] = {"id": str(r.get("id"))[:20], "name": str(r.get("name", ""))[:20],
+                            "x": _num(r.get("x"), 0, w), "y": _num(r.get("y"), 0, h), "w": _num(r.get("w"), 20, w), "h": _num(r.get("h"), 20, h)}
+    pts = r.get("pts")
+    if isinstance(pts, list) and 4 < len(pts) <= 24 and all(isinstance(p, (list, tuple)) and len(p) == 2 for p in pts):
+        room["pts"] = [[_num(p[0], 0, w), _num(p[1], 0, h)] for p in pts]
+        xs, ys = [p[0] for p in room["pts"]], [p[1] for p in room["pts"]]
+        room.update(x=min(xs), y=min(ys), w=max(20, max(xs) - min(xs)), h=max(20, max(ys) - min(ys)))
+    return room
+
+
 @app.put("/api/floorplan")
 async def put_floorplan(body: dict = Body(...)) -> dict[str, Any]:
     """{"w","h","meters","rooms":[{id,name,x,y,w,h}],"items":{key:{x,y,z}},"aps":[{id,name,ssid,z}]}
@@ -594,11 +606,7 @@ async def put_floorplan(body: dict = Body(...)) -> dict[str, Any]:
     w = _num(body.get("w", fp["w"]), 200, 4000)
     h = _num(body.get("h", fp["h"]), 200, 4000)
     if "rooms" in body:
-        fp["rooms"] = [
-            {"id": str(r.get("id"))[:20], "name": str(r.get("name", ""))[:20],
-             "x": _num(r.get("x"), 0, w), "y": _num(r.get("y"), 0, h), "w": _num(r.get("w"), 20, w), "h": _num(r.get("h"), 20, h)}
-            for r in body["rooms"][:40]
-        ] if body["rooms"] is not None else None
+        fp["rooms"] = [_fp_room(r, w, h) for r in body["rooms"][:40]] if body["rooms"] is not None else None
     z = lambda v: None if v is None else _num(v, 0, 5)  # noqa: E731
     if "items" in body:
         fp["items"] = {str(k)[:80]: {"x": _num(v.get("x"), 0, w), "y": _num(v.get("y"), 0, h), "z": z(v.get("z"))}

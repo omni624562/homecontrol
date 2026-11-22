@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { fmt } from "@/lib/format";
-import { sigQ, shortName, type Floorplan, type MapDev, type MapLink } from "@/lib/map-model";
+import { roomPath, roomPts, sigQ, shortName, tidyPts, topEdge, withPts, type Floorplan, type FpRoom, type MapDev, type MapLink, type Pt } from "@/lib/map-model";
 import { cn } from "@/lib/utils";
 
 export type MapSel = { kind: "room" | "ap" | "dev"; id: string } | null;
 // 地圖上的人：猜到在哪個區域（sure=false 是把握不夠，只是最可能的那間）
 export type MapPerson = { id: string; name: string; room: string; roomName: string; sure: boolean; p: number };
-type Drag = { kind: "item" | "room" | "resize"; id: string };
+// corner／edge：拖區域的第 i 個轉角、第 i 道牆（轉角 i 到 i+1）
+type Drag = { kind: "item" | "room" | "corner" | "edge"; id: string; i?: number };
 
 const STROKE: Record<string, string> = { good: "var(--primary)", mid: "color-mix(in srgb, var(--primary) 45%, var(--card))", weak: "var(--color-orange-500, #f97316)" };
 const WARN = "var(--color-orange-500, #f97316)";
@@ -99,44 +100,92 @@ export function MapCanvas({
     return pt.matrixTransform(el.getScreenCTM()!.inverse());
   };
 
+  // 對齊：靠近別的轉角的 x／y 就吸過去（牆才對得齊），不然取 5 的倍數
+  const snapper = (f: Floorplan, skip: string) => {
+    const xs: number[] = [], ys: number[] = [];
+    for (const r of f.rooms || []) if (r.id !== skip) for (const [x, y] of roomPts(r)) { xs.push(x); ys.push(y); }
+    const near = (v: number, list: number[]) => {
+      let best = Math.round(v / 5) * 5, gap = 8 * k;
+      for (const c of list) if (Math.abs(c - v) < gap) { gap = Math.abs(c - v); best = c; }
+      return best;
+    };
+    return { x: (v: number) => near(v, xs), y: (v: number) => near(v, ys) };
+  };
+
   const startDrag = (e: React.PointerEvent, d: Drag) => {
     if (!edit) return;
     e.preventDefault();
     e.stopPropagation();
     const f0 = fpRef.current;
     const start = point(e);
-    const orig = d.kind === "item" ? { ...f0.items[d.id] } : { ...f0.rooms!.find((r) => r.id === d.id)! };
+    const origItem = d.kind === "item" ? { ...f0.items[d.id] } : null;
+    const origRoom = d.kind === "item" ? null : f0.rooms!.find((r) => r.id === d.id)!;
+    const P = origRoom ? roomPts(origRoom) : [];
+    const snap = snapper(f0, d.id);
     onPick(d.kind === "item" ? (d.id.startsWith("ap:") ? { kind: "ap", id: d.id.slice(3) } : { kind: "dev", id: d.id }) : { kind: "room", id: d.id });
     const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+    const setRoom = (f: Floorplan, fn: (r: FpRoom) => FpRoom) => onChange({ ...f, rooms: f.rooms!.map((r) => (r.id === d.id ? fn(r) : r)) });
     const move = (ev: PointerEvent) => {
       const pt = point(ev);
       const dx = pt.x - start.x;
       const dy = pt.y - start.y;
       const f = fpRef.current;
-      if (d.kind === "item") {
-        const o = orig as { x: number; y: number; z?: number | null };
-        onChange({ ...f, items: { ...f.items, [d.id]: { ...f.items[d.id], x: clamp(o.x + dx, 0, f.w), y: clamp(o.y + dy, 0, f.h) } } });
-      } else {
-        const o = orig as { x: number; y: number; w: number; h: number };
-        onChange({
-          ...f,
-          rooms: f.rooms!.map((r) =>
-            r.id !== d.id ? r : d.kind === "room"
-              ? { ...r, x: clamp(o.x + dx, 0, f.w - r.w), y: clamp(o.y + dy, 0, f.h - r.h) }
-              : { ...r, w: clamp(o.w + dx, 40, f.w - r.x), h: clamp(o.h + dy, 40, f.h - r.y) },
-          ),
-        });
+      if (origItem) {
+        onChange({ ...f, items: { ...f.items, [d.id]: { ...f.items[d.id], x: clamp(origItem.x + dx, 0, f.w), y: clamp(origItem.y + dy, 0, f.h) } } });
+        return;
       }
+      const o = origRoom!;
+      if (d.kind === "room") {
+        const mx = clamp(dx, -o.x, f.w - o.x - o.w), my = clamp(dy, -o.y, f.h - o.y - o.h);
+        setRoom(f, (r) => ({ ...r, x: o.x + mx, y: o.y + my, w: o.w, h: o.h, pts: o.pts ? o.pts.map(([x, y]) => [x + mx, y + my] as Pt) : null }));
+        return;
+      }
+      const n = P.length, i = d.i!;
+      const Q = P.map((q) => [...q] as Pt);
+      if (d.kind === "corner") {
+        // 拖轉角：相鄰的兩道牆跟著移，牆保持水平、垂直（長方形就是改大小）
+        const nx = clamp(snap.x(P[i][0] + dx), 0, f.w), ny = clamp(snap.y(P[i][1] + dy), 0, f.h);
+        for (const j of [(i + n - 1) % n, (i + 1) % n]) {
+          if (P[j][0] === P[i][0]) Q[j][0] = nx;
+          else if (P[j][1] === P[i][1]) Q[j][1] = ny;
+        }
+        Q[i] = [nx, ny];
+      } else {
+        // 拖牆：整道牆往垂直方向推、拉
+        const j = (i + 1) % n;
+        if (P[i][0] === P[j][0]) Q[i][0] = Q[j][0] = clamp(snap.x(P[i][0] + dx), 0, f.w);
+        else Q[i][1] = Q[j][1] = clamp(snap.y(P[i][1] + dy), 0, f.h);
+      }
+      setRoom(f, (r) => withPts(r, Q));
     };
     const end = () => {
       removeEventListener("pointermove", move);
       removeEventListener("pointerup", end);
       removeEventListener("pointercancel", end);
+      if (d.kind === "corner" || d.kind === "edge") {
+        const f = fpRef.current;
+        const r = f.rooms!.find((x) => x.id === d.id);
+        if (r) setRoom(f, (x) => withPts(x, tidyPts(roomPts(r))));
+      }
       onDragEnd();
     };
     addEventListener("pointermove", move);
     addEventListener("pointerup", end);
     addEventListener("pointercancel", end);
+  };
+
+  // 在牆的中點按兩下：這道牆多兩個轉角，中間那段就能拉出凹口、凸出去（做成 L 形、凹字形）
+  const splitEdge = (id: string, i: number) => {
+    const f = fpRef.current;
+    const r = f.rooms!.find((x) => x.id === id);
+    if (!r) return;
+    const P = roomPts(r);
+    if (P.length >= 24) return;
+    const a = P[i], b = P[(i + 1) % P.length];
+    const at = (t: number): Pt => [Math.round(a[0] + (b[0] - a[0]) * t), Math.round(a[1] + (b[1] - a[1]) * t)];
+    const Q = [...P.slice(0, i + 1), at(1 / 3), at(2 / 3), ...P.slice(i + 1)];
+    onChange({ ...f, rooms: f.rooms!.map((x) => (x.id === id ? { ...withPts(x, Q), pts: Q } : x)) });
+    onDragEnd();
   };
 
   const showLinks = edit || layer === "motion";
@@ -151,7 +200,7 @@ export function MapCanvas({
       onClick={(e) => e.target === e.currentTarget && !edit && onPick(null)}
     >
       <defs>
-        <clipPath id="map-rooms">{rooms.map((r) => <rect key={r.id} x={r.x} y={r.y} width={r.w} height={r.h} rx={10} />)}</clipPath>
+        <clipPath id="map-rooms">{rooms.map((r) => <path key={r.id} d={roomPath(r)} />)}</clipPath>
         {(["good", "mid", "weak"] as const).map((q) => (
           <radialGradient key={q} id={`map-g-${q}`}>
             <stop offset="0" stopColor={STROKE[q]} stopOpacity={0.22} />
@@ -160,7 +209,7 @@ export function MapCanvas({
         ))}
       </defs>
       {fp.image && <image href={`/api/floorplan/image?v=${encodeURIComponent(fp.image)}`} x={0} y={0} width={W} height={H} preserveAspectRatio="xMidYMid meet" opacity={0.55} />}
-      <g>{rooms.map((r) => <rect key={r.id} x={r.x} y={r.y} width={r.w} height={r.h} rx={10} className="fill-card" />)}</g>
+      <g>{rooms.map((r) => <path key={r.id} d={roomPath(r)} className="fill-card" />)}</g>
       {layer === "signal" && (
         <g clipPath="url(#map-rooms)">
           {placed.filter((d) => d.online && d.rssi != null).map((d) => (
@@ -170,32 +219,25 @@ export function MapCanvas({
       )}
       {rooms.map((r) => {
         const isSel = edit && sel?.kind === "room" && sel.id === r.id;
+        const top = topEdge(r);
         return (
           <g key={r.id}>
-            <rect
-              x={r.x} y={r.y} width={r.w} height={r.h} rx={10}
+            <path
+              d={roomPath(r)}
               fill="transparent"
               className={cn(isSel ? "stroke-primary" : "stroke-border", edit && "cursor-move")}
               strokeWidth={isSel ? 3 : 1.5}
               onPointerDown={(e) => startDrag(e, { kind: "room", id: r.id })}
             />
-            <text x={r.x + 12 * k} y={r.y + 24 * k} className="pointer-events-none fill-muted-foreground font-semibold" style={{ fontSize: 15 * k }}>{r.name}</text>
-            {edit && (
-              <rect
-                x={r.x + r.w - 20 * k} y={r.y + r.h - 20 * k} width={18 * k} height={18 * k} rx={4 * k}
-                className="cursor-nwse-resize fill-primary"
-                onPointerDown={(e) => startDrag(e, { kind: "resize", id: r.id })}
-              >
-                <title>拉這裡改大小</title>
-              </rect>
-            )}
+            <text x={top.left + 12 * k} y={top.y + 24 * k} className="pointer-events-none fill-muted-foreground font-semibold" style={{ fontSize: 15 * k }}>{r.name}</text>
           </g>
         );
       })}
       {!edit && rooms.map((r) => {
         // 人：區域右上角的名牌，同一間有好幾個人就往左排
         const here = people.filter((p) => p.room === r.id);
-        let right = r.x + r.w - 8 * k;
+        const top = topEdge(r);
+        let right = top.right - 8 * k;
         return here.map((p) => {
           const label = p.sure ? p.name : `${p.name}?`;
           const tw = [...label].reduce((a, c) => a + (c.charCodeAt(0) < 256 ? 7.2 : 12.5), 0);
@@ -207,10 +249,10 @@ export function MapCanvas({
           return (
             <g key={p.id} opacity={p.sure ? 1 : 0.6} onMouseEnter={() => onTip(tip)} onMouseLeave={() => onTip(null)}>
               <title>{tip}</title>
-              <rect x={x} y={r.y + 8 * k} width={w} height={h} rx={h / 2} className={p.sure ? "fill-foreground" : "fill-card stroke-foreground"}
+              <rect x={x} y={top.y + 8 * k} width={w} height={h} rx={h / 2} className={p.sure ? "fill-foreground" : "fill-card stroke-foreground"}
                 strokeWidth={1.5 * k} strokeDasharray={p.sure ? undefined : `${3 * k} ${3 * k}`} />
-              <circle cx={x + 11 * k} cy={r.y + 8 * k + h / 2} r={3.5 * k} className="fill-emerald-500" />
-              <text x={x + 18 * k} y={r.y + 8 * k + h / 2 + 4.3 * k} className={cn("font-semibold", p.sure ? "fill-background" : "fill-foreground")} style={{ fontSize: 12 * k }}>{label}</text>
+              <circle cx={x + 11 * k} cy={top.y + 8 * k + h / 2} r={3.5 * k} className="fill-emerald-500" />
+              <text x={x + 18 * k} y={top.y + 8 * k + h / 2 + 4.3 * k} className={cn("font-semibold", p.sure ? "fill-background" : "fill-foreground")} style={{ fontSize: 12 * k }}>{label}</text>
             </g>
           );
         });
@@ -292,6 +334,37 @@ export function MapCanvas({
           </g>
         );
       })}
+      {edit && sel?.kind === "room" && (() => {
+        // 選取的區域：轉角（圓點）和每道牆的中點（短條）可以拖
+        const r = rooms.find((x) => x.id === sel.id);
+        if (!r) return null;
+        const P = roomPts(r);
+        return (
+          <g>
+            {P.map((a, i) => {
+              const b = P[(i + 1) % P.length];
+              const vert = a[0] === b[0];
+              const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+              if (len < 24 * k) return null;
+              const mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;
+              const lw = 22 * k, th = 8 * k;
+              return (
+                <rect key={`e${i}`} x={mx - (vert ? th : lw) / 2} y={my - (vert ? lw : th) / 2} width={vert ? th : lw} height={vert ? lw : th} rx={th / 2}
+                  className={cn("fill-card stroke-primary", vert ? "cursor-ew-resize" : "cursor-ns-resize")} strokeWidth={2 * k}
+                  onPointerDown={(e) => startDrag(e, { kind: "edge", id: r.id, i })} onDoubleClick={() => splitEdge(r.id, i)}>
+                  <title>拖這道牆推、拉；按兩下多兩個轉角（做 L 形）</title>
+                </rect>
+              );
+            })}
+            {P.map(([x, y], i) => (
+              <circle key={`c${i}`} cx={x} cy={y} r={7 * k} className="cursor-move fill-primary stroke-card" strokeWidth={2.5 * k}
+                onPointerDown={(e) => startDrag(e, { kind: "corner", id: r.id, i })}>
+                <title>拖轉角改形狀、大小</title>
+              </circle>
+            ))}
+          </g>
+        );
+      })()}
     </svg>
   );
 }

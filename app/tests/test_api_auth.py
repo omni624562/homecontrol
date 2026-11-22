@@ -128,3 +128,17 @@ def test_home_side(app_module, client):
     assert app_module.store.data["settings"]["home_side"] == ["next", "people", "ask", "energy"]
     client.put("/api/settings", json={"home_side": None})
     assert "home_side" not in app_module.store.data["settings"]
+
+
+def test_floorplan_room_shape(app_module, client):
+    token, _ = app_module.auth.pair(app_module.auth.new_code())
+    client.cookies.set("plughub_token", token)
+    L = [[0, 0], [200, 0], [200, 100], [100, 100], [100, 200], [0, 200]]  # L 形
+    r = client.put("/api/floorplan", json={"w": 1000, "h": 600, "rooms": [
+        {"id": "a", "name": "A", "x": 5, "y": 5, "w": 50, "h": 50, "pts": L},
+        {"id": "b", "name": "B", "x": 300, "y": 0, "w": 100, "h": 100, "pts": [[0, 0], [1, 1], [2, 2], [3, 3]]},  # 四個點 = 長方形，不存
+    ]})
+    assert r.status_code == 200
+    a, b = r.json()["rooms"]
+    assert a["pts"] == L and (a["x"], a["y"], a["w"], a["h"]) == (0, 0, 200, 200)
+    assert "pts" not in b and b["w"] == 100
