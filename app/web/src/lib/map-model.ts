@@ -61,6 +61,9 @@ export function topEdge(r: FpRoom): { y: number; left: number; right: number } {
   }
   return best.y === Infinity ? { y: r.y, left: r.x, right: r.x + r.w } : best;
 }
+// 實牆：一條線段；門：開在某道牆上，t = 門的中心在牆的哪裡（0～1），w = 門寬（地圖單位），flip = 開的方向（0～3：哪一側、鉸鏈在哪頭）
+export interface FpWall { id: string; x1: number; y1: number; x2: number; y2: number }
+export interface FpDoor { id: string; wall: string; t: number; w: number; flip?: number }
 export interface FpAp { id: string; name: string; ssid?: string | null; node?: string | null; z?: number | null }
 export interface FpItem { x: number; y: number; z?: number | null }
 export interface Floorplan {
@@ -68,6 +71,8 @@ export interface Floorplan {
   h: number;
   meters?: number;
   rooms: FpRoom[] | null;
+  walls?: FpWall[];
+  doors?: FpDoor[];
   items: Record<string, FpItem>;
   aps: FpAp[];
   auto_nodes?: string[];
@@ -236,7 +241,34 @@ export function fpPayload(fp: Floorplan) {
     meters: fp.meters || 12,
     rooms: (fp.rooms || []).map((r) => ({ ...r, x: R(r.x), y: R(r.y), w: R(r.w), h: R(r.h), pts: r.pts ? r.pts.map(([x, y]) => [R(x), R(y)]) : null })),
     items: Object.fromEntries(Object.entries(fp.items).map(([k, v]) => [k, { x: R(v.x), y: R(v.y), z: v.z ?? null }])),
+    walls: (fp.walls || []).map((x) => ({ ...x, x1: R(x.x1), y1: R(x.y1), x2: R(x.x2), y2: R(x.y2) })),
+    doors: (fp.doors || []).map((x) => ({ ...x, t: Math.round(x.t * 1000) / 1000, w: R(x.w), flip: x.flip || 0 })),
     aps: fp.aps,
     auto_nodes: fp.auto_nodes || [],
   };
+}
+
+// 門在畫面上的位置：開口兩端、鉸鏈、門板打開的那一端（畫門板和弧線用）
+export function doorGeom(wall: FpWall, door: FpDoor) {
+  const L = Math.hypot(wall.x2 - wall.x1, wall.y2 - wall.y1) || 1;
+  const ux = (wall.x2 - wall.x1) / L, uy = (wall.y2 - wall.y1) / L;
+  const half = Math.min(door.w, L) / 2;
+  const c = Math.max(half, Math.min(L - half, door.t * L));
+  const a: Pt = [wall.x1 + ux * (c - half), wall.y1 + uy * (c - half)];
+  const b: Pt = [wall.x1 + ux * (c + half), wall.y1 + uy * (c + half)];
+  const f = door.flip || 0;
+  const side = f & 1 ? -1 : 1;
+  const [hinge, shut] = f & 2 ? [b, a] : [a, b];
+  const w = half * 2;
+  const open: Pt = [hinge[0] - uy * side * w, hinge[1] + ux * side * w];
+  const cross = (open[0] - hinge[0]) * (shut[1] - hinge[1]) - (open[1] - hinge[1]) * (shut[0] - hinge[0]);
+  return { a, b, hinge, open, shut, w, sweep: cross > 0 ? 1 : 0 };
+}
+
+// 點到線段最近的地方：t（0～1）和距離
+export function nearSeg(x: number, y: number, w: FpWall) {
+  const dx = w.x2 - w.x1, dy = w.y2 - w.y1;
+  const L2 = dx * dx + dy * dy || 1;
+  const t = Math.max(0, Math.min(1, ((x - w.x1) * dx + (y - w.y1) * dy) / L2));
+  return { t, d: Math.hypot(x - (w.x1 + dx * t), y - (w.y1 + dy * t)) };
 }

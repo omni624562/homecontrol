@@ -1,20 +1,22 @@
 import { useEffect, useRef, useState } from "react";
 import { fmt } from "@/lib/format";
-import { roomPath, roomPts, sigQ, shortName, tidyPts, topEdge, withPts, type Floorplan, type FpRoom, type MapDev, type MapLink, type Pt } from "@/lib/map-model";
+import { doorGeom, nearSeg, roomPath, roomPts, sigQ, shortName, tidyPts, topEdge, withPts, type Floorplan, type FpRoom, type FpWall, type MapDev, type MapLink, type Pt } from "@/lib/map-model";
 import { cn } from "@/lib/utils";
 
-export type MapSel = { kind: "room" | "ap" | "dev"; id: string } | null;
+export type MapSel = { kind: "room" | "ap" | "dev" | "wall" | "door"; id: string } | null;
+// 編輯工具：選取／畫牆／放門
+export type MapTool = "select" | "wall" | "door";
 // 地圖上的人：猜到在哪個區域（sure=false 是把握不夠，只是最可能的那間）
 export type MapPerson = { id: string; name: string; room: string; roomName: string; sure: boolean; p: number };
 // corner／edge：拖區域的第 i 個轉角、第 i 道牆（轉角 i 到 i+1）
-type Drag = { kind: "item" | "room" | "corner" | "edge"; id: string; i?: number };
+type Drag = { kind: "item" | "room" | "corner" | "edge" | "wall" | "wallEnd" | "door"; id: string; i?: number };
 
 const STROKE: Record<string, string> = { good: "var(--primary)", mid: "color-mix(in srgb, var(--primary) 45%, var(--card))", weak: "var(--color-orange-500, #f97316)" };
 const WARN = "var(--color-orange-500, #f97316)";
 
 // 地圖本體：區域、訊號光暈、連線、基地台、裝置；編輯時可以拖曳
 export function MapCanvas({
-  fp, devs, links, layer, edit, sel, motion, people = [], onChange, onDragEnd, onPick, onTip,
+  fp, devs, links, layer, edit, sel, motion, people = [], tool = "select", onChange, onDragEnd, onPick, onTip,
 }: {
   fp: Floorplan;
   devs: MapDev[];
@@ -24,6 +26,7 @@ export function MapCanvas({
   sel: MapSel;
   motion: Record<string, number | null>;
   people?: MapPerson[];
+  tool?: MapTool;
   onChange: (fp: Floorplan) => void;
   onDragEnd: () => void;
   onPick: (s: MapSel) => void;
@@ -104,6 +107,7 @@ export function MapCanvas({
   const snapper = (f: Floorplan, skip: string) => {
     const xs: number[] = [], ys: number[] = [];
     for (const r of f.rooms || []) if (r.id !== skip) for (const [x, y] of roomPts(r)) { xs.push(x); ys.push(y); }
+    for (const w of f.walls || []) if (w.id !== skip) { xs.push(w.x1, w.x2); ys.push(w.y1, w.y2); }
     const near = (v: number, list: number[]) => {
       let best = Math.round(v / 5) * 5, gap = 8 * k;
       for (const c of list) if (Math.abs(c - v) < gap) { gap = Math.abs(c - v); best = c; }
@@ -118,6 +122,7 @@ export function MapCanvas({
     e.stopPropagation();
     const f0 = fpRef.current;
     const start = point(e);
+    if (d.kind === "wall" || d.kind === "wallEnd" || d.kind === "door") return dragWall(d, f0, start);
     const origItem = d.kind === "item" ? { ...f0.items[d.id] } : null;
     const origRoom = d.kind === "item" ? null : f0.rooms!.find((r) => r.id === d.id)!;
     const P = origRoom ? roomPts(origRoom) : [];
@@ -167,6 +172,95 @@ export function MapCanvas({
         const r = f.rooms!.find((x) => x.id === d.id);
         if (r) setRoom(f, (x) => withPts(x, tidyPts(roomPts(r))));
       }
+      onDragEnd();
+    };
+    addEventListener("pointermove", move);
+    addEventListener("pointerup", end);
+    addEventListener("pointercancel", end);
+  };
+
+  // 拖牆（整道移動）、拖牆的端點、拖門（沿著牆滑）
+  const dragWall = (d: Drag, f0: Floorplan, start: { x: number; y: number }) => {
+    const snap = snapper(f0, d.id);
+    const door = d.kind === "door" ? (f0.doors || []).find((x) => x.id === d.id) : null;
+    const w0 = (f0.walls || []).find((x) => x.id === (door ? door.wall : d.id));
+    if (!w0) return;
+    onPick({ kind: door ? "door" : "wall", id: d.id });
+    const move = (ev: PointerEvent) => {
+      const pt = point(ev);
+      const f = fpRef.current;
+      if (door) {
+        const t = nearSeg(pt.x, pt.y, w0).t;
+        onChange({ ...f, doors: (f.doors || []).map((x) => (x.id === door.id ? { ...x, t } : x)) });
+        return;
+      }
+      let nw: FpWall;
+      if (d.kind === "wall") {
+        const dx = snap.x(w0.x1 + pt.x - start.x) - w0.x1, dy = snap.y(w0.y1 + pt.y - start.y) - w0.y1;
+        nw = { ...w0, x1: w0.x1 + dx, y1: w0.y1 + dy, x2: w0.x2 + dx, y2: w0.y2 + dy };
+      } else {
+        // 端點：另一端不動；接近水平、垂直就拉直（按住 Shift 可以斜的）
+        const [ox, oy] = d.i ? [w0.x1, w0.y1] : [w0.x2, w0.y2];
+        let x = snap.x(pt.x), y = snap.y(pt.y);
+        if (!ev.shiftKey) { if (Math.abs(x - ox) >= Math.abs(y - oy)) y = oy; else x = ox; }
+        nw = d.i ? { ...w0, x2: x, y2: y } : { ...w0, x1: x, y1: y };
+      }
+      onChange({ ...f, walls: (f.walls || []).map((x) => (x.id === w0.id ? nw : x)) });
+    };
+    const end = () => {
+      removeEventListener("pointermove", move);
+      removeEventListener("pointerup", end);
+      removeEventListener("pointercancel", end);
+      onDragEnd();
+    };
+    addEventListener("pointermove", move);
+    addEventListener("pointerup", end);
+    addEventListener("pointercancel", end);
+  };
+
+  // 畫牆：按下去拖到另一端放開（會對齊別的牆和轉角；水平、垂直，按住 Shift 可以斜的）
+  const [draft, setDraft] = useState<FpWall | null>(null);
+  const meterU = W / (fp.meters || 12); // 一公尺是幾個地圖單位
+  const toolDown = (e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const f0 = fpRef.current;
+    const p0 = point(e);
+    if (tool === "door") {
+      // 放門：點在牆上（或牆附近）
+      let best: { w: FpWall; t: number; d: number } | null = null;
+      for (const w of f0.walls || []) {
+        const n = nearSeg(p0.x, p0.y, w);
+        if (n.d < 16 * k && (!best || n.d < best.d)) best = { w, t: n.t, d: n.d };
+      }
+      if (!best) return onTip("門要放在牆上：點一道牆");
+      const id = `d${Date.now().toString(36)}`;
+      onChange({ ...f0, doors: [...(f0.doors || []), { id, wall: best.w.id, t: best.t, w: Math.round(0.9 * meterU), flip: 0 }] });
+      onPick({ kind: "door", id });
+      onDragEnd();
+      return;
+    }
+    const snap = snapper(f0, "");
+    const x1 = snap.x(p0.x), y1 = snap.y(p0.y);
+    const id = `w${Date.now().toString(36)}`;
+    let cur: FpWall = { id, x1, y1, x2: x1, y2: y1 };
+    setDraft(cur);
+    const move = (ev: PointerEvent) => {
+      const pt = point(ev);
+      let x = snap.x(pt.x), y = snap.y(pt.y);
+      if (!ev.shiftKey) { if (Math.abs(x - x1) >= Math.abs(y - y1)) y = y1; else x = x1; }
+      cur = { ...cur, x2: x, y2: y };
+      setDraft(cur);
+    };
+    const end = () => {
+      removeEventListener("pointermove", move);
+      removeEventListener("pointerup", end);
+      removeEventListener("pointercancel", end);
+      setDraft(null);
+      if (Math.hypot(cur.x2 - cur.x1, cur.y2 - cur.y1) < 10) return;
+      const f = fpRef.current;
+      onChange({ ...f, walls: [...(f.walls || []), cur] });
+      onPick({ kind: "wall", id: cur.id });
       onDragEnd();
     };
     addEventListener("pointermove", move);
@@ -273,6 +367,53 @@ export function MapCanvas({
           );
         });
       })}
+      {(() => {
+        // 實牆（門的地方挖空）和門
+        const walls = fp.walls || [];
+        const doors = (fp.doors || []).map((dr) => ({ dr, w: walls.find((x) => x.id === dr.wall) })).filter((x) => x.w);
+        const thick = Math.max(6, 3 * k);
+        const all = draft ? [...walls, draft] : walls;
+        if (!all.length) return null;
+        return (
+          <g>
+            <mask id="map-door-gaps" maskUnits="userSpaceOnUse" x={0} y={0} width={W} height={H}>
+              <rect x={0} y={0} width={W} height={H} fill="white" />
+              {doors.map(({ dr, w }) => { const g = doorGeom(w!, dr); return <line key={dr.id} x1={g.a[0]} y1={g.a[1]} x2={g.b[0]} y2={g.b[1]} stroke="black" strokeWidth={thick + 4} />; })}
+            </mask>
+            <g mask="url(#map-door-gaps)">
+              {all.map((w) => {
+                const isSel = edit && sel?.kind === "wall" && sel.id === w.id;
+                return (
+                  <line key={w.id} x1={w.x1} y1={w.y1} x2={w.x2} y2={w.y2} strokeLinecap="square" strokeWidth={thick}
+                    className={cn(isSel ? "stroke-primary" : "stroke-foreground/75", w === draft && "opacity-60")} />
+                );
+              })}
+            </g>
+            {doors.map(({ dr, w }) => {
+              const g = doorGeom(w!, dr);
+              const isSel = edit && sel?.kind === "door" && sel.id === dr.id;
+              return (
+                <g key={dr.id} className={isSel ? "stroke-primary" : "stroke-foreground/60"} fill="none">
+                  <line x1={g.hinge[0]} y1={g.hinge[1]} x2={g.open[0]} y2={g.open[1]} strokeWidth={Math.max(2.5, 1.4 * k)} strokeLinecap="round" />
+                  <path d={`M${g.open[0]},${g.open[1]} A${g.w},${g.w} 0 0 ${g.sweep} ${g.shut[0]},${g.shut[1]}`} strokeWidth={Math.max(1.2, 0.8 * k)} strokeDasharray={`${4 * k} ${3 * k}`} />
+                </g>
+              );
+            })}
+            {edit && tool === "select" && walls.map((w) => (
+              <line key={`hit-${w.id}`} x1={w.x1} y1={w.y1} x2={w.x2} y2={w.y2} stroke="transparent" strokeWidth={16 * k} className="cursor-move"
+                onPointerDown={(e) => startDrag(e, { kind: "wall", id: w.id })}><title>牆：拖曳移動</title></line>
+            ))}
+            {edit && tool === "select" && doors.map(({ dr, w }) => {
+              const g = doorGeom(w!, dr);
+              return (
+                <circle key={`hit-${dr.id}`} cx={(g.a[0] + g.b[0]) / 2} cy={(g.a[1] + g.b[1]) / 2} r={Math.max(g.w / 2, 12 * k)} fill="transparent"
+                  className={Math.abs(w!.x1 - w!.x2) > Math.abs(w!.y1 - w!.y2) ? "cursor-ew-resize" : "cursor-ns-resize"}
+                  onPointerDown={(e) => startDrag(e, { kind: "door", id: dr.id })}><title>門：沿著牆拖曳</title></circle>
+              );
+            })}
+          </g>
+        );
+      })()}
       {showLinks && (
         <g>
           {links.map((l) => {
@@ -381,6 +522,17 @@ export function MapCanvas({
           </g>
         );
       })()}
+      {edit && tool === "select" && sel?.kind === "wall" && (() => {
+        const w = (fp.walls || []).find((x) => x.id === sel.id);
+        if (!w) return null;
+        return [[w.x1, w.y1], [w.x2, w.y2]].map(([x, y], i) => (
+          <circle key={i} cx={x} cy={y} r={7 * k} className="cursor-move fill-primary stroke-card" strokeWidth={2.5 * k}
+            onPointerDown={(e) => startDrag(e, { kind: "wallEnd", id: w.id, i })}><title>拖端點改長度</title></circle>
+        ));
+      })()}
+      {edit && tool !== "select" && (
+        <rect x={0} y={0} width={W} height={H} fill="transparent" className="cursor-crosshair" onPointerDown={toolDown} />
+      )}
     </svg>
   );
 }
