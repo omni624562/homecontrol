@@ -144,6 +144,11 @@ class Hub:
         self._sense_path = store.dir / "sensing.json.gz"
         self.sensing.load(self._sense_path)
         self._sense_saved = time.monotonic()
+        self._room_active: dict[str, float] = {}  # 房間 → 最後一次有動靜的時間
+        self._room_cover: dict[str, float] = {}
+        self._room_watch = time.time()  # 從什麼時候開始看房間動靜（判斷「一直很安靜」要看夠久）
+        self._links_cache: tuple[Any, list[dict[str, Any]]] | None = None
+        self._mrule: dict[str, dict[str, Any]] = {}  # 動靜自動化的狀態：規則 → {own：是規則開的, last：最後有動靜}
         # 每台插座的 Wi-Fi、韌體（裝置 MAC → {...}）
         self.dev_info: dict[str, dict[str, Any]] = {}
         self._lease_busy = False
@@ -1139,6 +1144,13 @@ class Hub:
             return
         devs = {k: e.device for k, e in self.devices.items() if native.supported(e.device) and any(self.plugs[p].online for p in e.plugs)}
         await self.sensing.sample(devs)
+        now = time.time()
+        rm = self.room_motion()
+        for r, v in rm.items():
+            if v["score"] >= roommotion.ACTIVE:
+                self._room_active[r] = now
+        self._room_cover = {r: v["cover"] for r, v in rm.items()}
+        self._motion_rules(rm, now)
         # 每過一分鐘：把上一分鐘的摘要存進長期紀錄（30 天）
         minute = int(time.time() // 60) * 60
         last = getattr(self, "_sense_minute", minute)
@@ -1183,13 +1195,68 @@ class Hub:
 
     def _room_links(self) -> list[dict[str, Any]]:
         node_of = {m: c.get("node") for m, c in self.router.clients.items() if self.router.online(m)}
-        return roommotion.links(self.store.data.get("floorplan") or {}, node_of)
+        fp = self.store.data.get("floorplan") or {}
+        key = (json.dumps(fp, sort_keys=True, default=str), tuple(sorted((k, v or "") for k, v in node_of.items())))
+        if self._links_cache is None or self._links_cache[0] != key:
+            self._links_cache = (key, roommotion.links(fp, node_of))
+        return self._links_cache[1]
 
     def room_motion(self) -> dict[str, dict[str, Any]]:
         """現在每個房間的動靜（地圖上有線經過的房間才有）。"""
         now = time.time()
         motion = {k: (b[-1][1] if b and now - b[-1][0] < 10 else None) for k, b in self.sensing.motion.items()}
         return roommotion.scores(self._room_links(), motion)
+
+    # ---- 動靜自動化：房間有人走動就開某個插座，沒動靜幾分鐘後關掉 ----
+
+    def _motion_rules(self, rm: dict[str, dict[str, Any]], now: float) -> None:
+        rules = self.store.data.get("motion_rules") or []
+        if not rules:
+            return
+        anyone_home = any(self._presence.get(x["id"], {}).get("home") for x in self.store.data["people"]) if self.store.data["people"] else True
+        local = datetime.now()
+        hm = local.hour * 60 + local.minute
+        for r in rules:
+            st = self._mrule.setdefault(r["id"], {"own": False, "last": 0.0, "busy": False, "fired": None, "muted": False})
+            if not r.get("enabled", True) or st["busy"]:
+                continue
+            plug = self.plugs.get(r.get("plug") or "")
+            if not plug or not plug.online:
+                continue
+            hot = (rm.get(r["room"]) or {}).get("score", 0) >= roommotion.ACTIVE
+            if hot:
+                st["last"] = now
+            quiet_enough = now - st["last"] >= r.get("off_min", 5) * 60
+            if st["own"]:
+                if not plug.is_on:  # 有人自己關掉了：交還控制，而且要等這間安靜夠久才會再自動開（不然關了燈馬上又亮）
+                    st["own"], st["muted"] = False, True
+                elif quiet_enough:
+                    self._spawn(self._motion_switch(r, st, plug.id, False))
+                continue
+            if st["muted"]:
+                if not quiet_enough:
+                    continue
+                st["muted"] = False
+            if hot and not plug.is_on and _in_window(hm, r.get("start") or "", r.get("end") or "") and (anyone_home or not r.get("need_home", True)):
+                self._spawn(self._motion_switch(r, st, plug.id, True))
+
+    async def _motion_switch(self, rule: dict[str, Any], st: dict[str, Any], plug_id: str, on: bool) -> None:
+        st["busy"] = True
+        try:
+            SOURCE.set("motion")
+            await self.set_power(plug_id, on)
+            st["own"] = on
+            if on:
+                st["fired"] = time.time()
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("動靜自動化沒有%s「%s」：%s", "打開" if on else "關掉", rule.get("room"), err)
+            if not on:
+                st["own"] = False
+        finally:
+            st["busy"] = False
+
+    def motion_rules_state(self) -> dict[str, Any]:
+        return {rid: {"own": v["own"], "last": v["last"] or None, "fired": v["fired"]} for rid, v in self._mrule.items()}
 
     def sensing_replay(self, hours: int = 24, bucket: int = 300) -> dict[str, Any]:
         """動靜回放：最近幾小時，每 bucket 秒一格，每台裝置的最大擾動和每個房間的分數。"""
@@ -1284,6 +1351,14 @@ class Hub:
         est = self.locator.estimate_any(p["macs"])
         if not est:
             return None
+        dist = est.pop("dist", None)
+        if dist and self.store.data["settings"].get("sensing", True):
+            # 加上房間動靜：最近有人走動的房間加分，一直很安靜的房間扣一點
+            fused, boosted = roommotion.fuse(dist, self._room_active, self._room_cover, self._room_watch, time.time())
+            ranked = sorted(fused.items(), key=lambda x: -x[1])
+            best, pr = ranked[0]
+            est.update(room=best if pr >= locate.SURE else None, p=round(pr, 2),
+                       top=[{"room": r, "p": round(q, 2)} for r, q in ranked[:3]], motion=[r for r in boosted if r in fused])
         names = {r["id"]: r["name"] for r in self.locate_rooms()}
         return {**est, "name": names.get(est["room"]) if est["room"] else None,
                 "top": [{**t, "name": names.get(t["room"], "?")} for t in est["top"]]}
@@ -2314,3 +2389,12 @@ async def _quiet_disconnect(device: Device) -> None:
         await device.disconnect()
     except Exception:  # noqa: BLE001
         pass
+
+
+def _in_window(hm: int, start: str, end: str) -> bool:
+    """現在（一天裡的第幾分鐘）在不在 start～end 之間；可以跨午夜（23:00～06:00）；都空白 = 整天。"""
+    if not start or not end:
+        return True
+    a = int(start[:2]) * 60 + int(start[3:5])
+    b = int(end[:2]) * 60 + int(end[3:5])
+    return a <= hm < b if a <= b else hm >= a or hm < b

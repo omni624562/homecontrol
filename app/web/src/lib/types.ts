@@ -132,6 +132,7 @@ export interface Where {
   top: { room: string; name: string; p: number }[];
   samples: number;
   borrowed?: boolean; // 自己沒教夠，借用其他家人教的房間
+  motion?: string[]; // 最近有動靜、因此加分的房間
 }
 
 export interface Hourly {

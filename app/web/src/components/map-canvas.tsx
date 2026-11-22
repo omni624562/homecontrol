@@ -13,7 +13,7 @@ export interface MapGhost { id: string; kind: "ap" | "plug"; x: number; y: numbe
 const COV_FILL = ["var(--primary)", "var(--primary)", "#fbbf24", "var(--color-orange-500, #f97316)"];
 const COV_OP = [0.42, 0.2, 0.38, 0.5];
 // 地圖上的人：猜到在哪個區域（sure=false 是把握不夠，只是最可能的那間）
-export type MapPerson = { id: string; name: string; room: string; roomName: string; sure: boolean; p: number };
+export type MapPerson = { id: string; name: string; room: string; roomName: string; sure: boolean; p: number; motion?: boolean };
 // corner／edge：拖區域的第 i 個轉角、第 i 道牆（轉角 i 到 i+1）
 type Drag = { kind: "item" | "room" | "corner" | "edge" | "wall" | "wallEnd" | "door"; id: string; i?: number };
 
@@ -386,7 +386,7 @@ export function MapCanvas({
           right -= w;
           const x = right;
           right -= 6 * k;
-          const tip = p.sure ? `${p.name} 大概在${p.roomName}（${Math.round(p.p * 100)}% 把握）` : `${p.name} 可能在${p.roomName}（${Math.round(p.p * 100)}%，不確定）`;
+          const tip = (p.sure ? `${p.name} 大概在${p.roomName}（${Math.round(p.p * 100)}% 把握）` : `${p.name} 可能在${p.roomName}（${Math.round(p.p * 100)}%，不確定）`) + (p.motion ? "・那間剛有動靜" : "");
           return (
             <g key={p.id} opacity={p.sure ? 1 : 0.6} onMouseEnter={() => onTip(tip)} onMouseLeave={() => onTip(null)}>
               <title>{tip}</title>

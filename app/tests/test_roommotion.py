@@ -29,3 +29,23 @@ def test_scores_hot_quiet():
     assert abs(sum(lk["w"].get("R", 0) + lk["w"].get("L", 0) for lk in lks if lk["key"] == "k1") - 1) < 0.01  # 沒穿牆：份量合計 1
     s = roommotion.scores(lks, {"k1": None, "k2": None})
     assert s == {}
+
+
+def test_fuse_boost_and_quiet():
+    now = 10_000.0
+    dist = {"A": 0.5, "B": 0.5, "C": 0.0}
+    out, boosted = roommotion.fuse(dist, {"A": now - 30}, {"A": 1, "B": 1}, now - 3600, now)
+    assert boosted == ["A"] and out["A"] > 0.6 and abs(sum(out.values()) - 1) < 1e-9
+    # B 有線看得到、一直很安靜 → 扣一點；剛開始看（不到 10 分鐘）不扣
+    out, _ = roommotion.fuse({"A": 0.5, "B": 0.5}, {}, {"B": 1}, now - 3600, now)
+    assert out["A"] > out["B"]
+    out, _ = roommotion.fuse({"A": 0.5, "B": 0.5}, {}, {"B": 1}, now - 60, now)
+    assert out["A"] == out["B"]
+
+
+def test_in_window():
+    from plughub.hub import _in_window
+    assert _in_window(5, "", "")
+    assert _in_window(23 * 60 + 30, "23:00", "06:00") and _in_window(5 * 60, "23:00", "06:00")
+    assert not _in_window(12 * 60, "23:00", "06:00")
+    assert _in_window(12 * 60, "08:00", "18:00") and not _in_window(18 * 60, "08:00", "18:00")

@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/app-shell";
+import { MotionRules } from "@/components/motion-rules";
 import { MapCanvas, ROOM_ACTIVE, ROOM_STRONG, type MapGhost, type MapLayer, type MapPerson, type MapSel, type MapTool } from "@/components/map-canvas";
 import { COV_TEXT, bestApSpot, covQ, coverage, fitModel, gapSpots, type ApSuggest } from "@/lib/coverage";
 import { Segmented } from "@/components/schedule-bits";
@@ -285,7 +286,7 @@ export function MapPage() {
     if (!w || !room || !fpRooms.has(room)) return [];
     // 名字用家庭中控的區域名（地圖上的區域名可能是舊的，例如工作區寫成「臥室」）
     const roomName = (w.room ? w.name : w.top[0].name) || fp.rooms!.find((r) => r.id === room)?.name || "";
-    return [{ id: p.id, name: p.name, room, roomName, sure: !!w.room, p: w.room ? w.p : w.top[0].p }];
+    return [{ id: p.id, name: p.name, room, roomName, sure: !!w.room, p: w.room ? w.p : w.top[0].p, motion: !!w.motion?.includes(room) }];
   });
   const nodes = sense?.net?.nodes || [];
   const ssids = [...new Set(devs.map((d) => d.ssid).filter(Boolean))] as string[];
@@ -660,6 +661,9 @@ export function MapPage() {
                 )}
                 {layer === "motion" && (
                   <RoomMotionList rooms={fp.rooms} heat={roomHeat} covered={past != null ? replay!.rooms : roomCover} past={past != null} />
+                )}
+                {layer === "motion" && past == null && (
+                  <MotionRules rooms={fp.rooms.filter((r) => r.id in roomCover)} plugs={(state?.plugs || []).filter((p) => p.online)} />
                 )}
                 {layer === "motion" ? (
                   links.length ? (

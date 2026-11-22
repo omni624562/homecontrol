@@ -66,3 +66,27 @@ def scores(lks: list[dict[str, Any]], motion: dict[str, float | None]) -> dict[s
             if m >= ACTIVE:
                 hot.setdefault(r, []).append(lk["key"])
     return {r: {"score": round(num[r] / max(1.0, den[r]), 2), "cover": round(den[r], 2), "hot": hot.get(r, [])} for r in den if den[r] > 0}
+
+
+# ---- 跟「人在哪個房間」合併 ----
+BOOST = 1.8  # 2 分鐘內有動靜的房間，機率 × 1.8
+QUIET = 0.8  # 有線看得到、10 分鐘都沒動靜的房間 × 0.8（人坐著、睡著也不會動，所以只扣一點）
+RECENT_S = 120
+QUIET_S = 600
+QUIET_COVER = 0.5
+
+
+def fuse(dist: dict[str, float], last_active: dict[str, float], cover: dict[str, float], watching_since: float,
+         now: float) -> tuple[dict[str, float], list[str]]:
+    """dist：手機訊號猜的每間機率。回傳 (合併後的機率, 被動靜加分的房間)。"""
+    out: dict[str, float] = {}
+    boosted = []
+    for r, p in dist.items():
+        f = 1.0
+        if now - last_active.get(r, 0) <= RECENT_S:
+            f, _ = BOOST, boosted.append(r)
+        elif cover.get(r, 0) >= QUIET_COVER and now - max(last_active.get(r, 0), watching_since) >= QUIET_S:
+            f = QUIET
+        out[r] = p * f
+    z = sum(out.values()) or 1.0
+    return {r: v / z for r, v in out.items()}, boosted
