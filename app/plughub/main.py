@@ -918,6 +918,26 @@ async def set_settings(body: dict = Body(...)) -> dict[str, Any]:
             for c in sorted(cards - seen):  # 漏掉的補在最後一欄
                 cols[2].append(c)
             settings["life_layout"] = {"cols": cols, "hidden": sorted({c for c in lay.get("hidden") or [] if c in cards})}
+    if "home_layout" in body:  # 首頁房間卡片的排列：{欄數: [[區域 id…], …]}；某個欄數給 null 就恢復自動排列
+        lay = body["home_layout"]
+        cur = dict(settings.get("home_layout") or {})
+        if lay is None:
+            cur = {}
+        elif isinstance(lay, dict):
+            ids = {r["id"] for r in store.rooms} | {"_none"}
+            for n, cols in lay.items():
+                if not (isinstance(n, str) and n.isdigit() and 2 <= int(n) <= 8):
+                    continue
+                if not isinstance(cols, list):
+                    cur.pop(n, None)
+                    continue
+                seen: set[str] = set()
+                cur[n] = [[x for x in (c if isinstance(c, list) else []) if isinstance(x, str) and x in ids and not (x in seen or seen.add(x))]
+                          for c in cols[: int(n)]]
+        if cur:
+            settings["home_layout"] = cur
+        else:
+            settings.pop("home_layout", None)
     if "weekly" in body:  # 每週日晚上的摘要推播
         settings["weekly"] = bool(body["weekly"])
     if "matter_scenes" in body:  # 情境也放到 Google Home（打開 = 執行）

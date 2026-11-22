@@ -1,5 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Bike, Bus, Clock, DoorOpen, MessageSquareText, Droplets, Gauge, Home as HomeIcon, Loader2, Pencil, Power, Truck, Wifi, WifiOff, Zap } from "lucide-react";
+import { DndContext, KeyboardSensor, PointerSensor, closestCorners, useDroppable, useSensor, useSensors, type DragEndEvent, type DragOverEvent } from "@dnd-kit/core";
+import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { Bike, Bus, Clock, DoorOpen, MessageSquareText, Droplets, Gauge, Home as HomeIcon, Loader2, Pencil, Power, RotateCcw, Truck, Wifi, WifiOff, Zap } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -12,7 +15,7 @@ import { useAsk } from "@/components/ask-sheet";
 import { DeviceSheet, needsConfirm } from "@/components/device-sheet";
 import { WalkIn, playFx, useFun } from "@/components/fx";
 import { mdiIcon, weatherIcon } from "@/components/icons";
-import { AskPanel, EnergyPanel, NextPanel } from "@/components/home-side";
+import { AskPanel, EnergyPanel, NextPanel, PeoplePanel } from "@/components/home-side";
 import { LeaveSheet, MorningCard } from "@/components/leave-check";
 import { alertItems } from "@/components/alerts";
 import { LifeSheet, type LifeTopic } from "@/components/life-sheet";
@@ -51,6 +54,35 @@ function Chip({ onClick, icon: I, label, sub, tone, moving }: { onClick: () => v
       <span className="font-medium">{label}</span>
       {sub && <span className="text-muted-foreground">{sub}</span>}
     </button>
+  );
+}
+
+// 首頁房間卡片的排列（存在樹莓派上）：{欄數: [[區域 id…], …]}，沒分區域的那張是 "_none"
+type HomeLayout = Record<string, string[][]>;
+const NONE = "_none";
+const gid = (g: Group) => g.id || NONE;
+const hgt = (g: Group) => 1.4 + g.plugs.length;
+
+// 可以拖的房間卡片：抓標題列拖
+function SortRoom({ g, onOpen, onToggle }: { g: Group; onOpen: (p: Plug) => void; onToggle: (p: Plug) => void }) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id: gid(g) });
+  return (
+    <div ref={setNodeRef} style={{ transform: CSS.Translate.toString(transform), transition }} className={cn(isDragging && "relative z-10")}>
+      <RoomCard g={g} onOpen={onOpen} onToggle={onToggle} className={cn(isDragging && "opacity-90 shadow-xl ring-2 ring-primary")}
+        handle={{ ref: setActivatorNodeRef, props: { ...attributes, ...listeners, title: "拖拉標題可以換位置", "aria-label": `拖拉移動「${g.name}」（或按空白鍵後用方向鍵）` } }} />
+    </div>
+  );
+}
+
+function RoomColumn({ id, children, dragging, empty }: { id: string; children: React.ReactNode; dragging: boolean; empty: boolean }) {
+  const { setNodeRef, isOver } = useDroppable({ id });
+  return (
+    <div ref={setNodeRef} className={cn("min-w-0", dragging && "min-h-24")}>
+      {children}
+      {dragging && empty && (
+        <div className={cn("flex h-24 items-center justify-center rounded-xl border-2 border-dashed text-sm text-muted-foreground", isOver && "border-primary bg-primary/5")}>拖到這裡</div>
+      )}
+    </div>
   );
 }
 
@@ -161,17 +193,71 @@ export function HomePage() {
     return out;
   }, [state]);
 
-  // 照高度（插座數）分到最矮的那一欄
+  // 自己排過的照排好的位置放；沒排過的（或新的區域）照高度（插座數）分到最矮的那一欄
+  const serverLayout = state?.settings.home_layout as HomeLayout | undefined;
+  const serverKey = JSON.stringify(serverLayout || null);
+  // 剛拖完、伺服器還沒回來之前先用自己的（伺服器的排列一變就以伺服器為準）
+  const [local, setLocal] = useState<{ base: string; lay: HomeLayout } | null>(null);
+  const layout = local && local.base === serverKey ? local.lay : serverLayout;
+  const nCols = Math.min(cols, Math.max(1, groups.length));
+  const custom = nCols >= 2 ? layout?.[String(nCols)] : undefined;
   const columns = useMemo(() => {
-    const n = Math.min(cols, Math.max(1, groups.length));
-    const cs = Array.from({ length: n }, () => ({ h: 0, items: [] as Group[] }));
+    const cs = Array.from({ length: nCols }, () => ({ h: 0, items: [] as Group[] }));
+    const byId = new Map(groups.map((g) => [gid(g), g]));
+    const placed = new Set<string>();
+    custom?.slice(0, nCols).forEach((ids, i) => {
+      for (const id of ids) {
+        const g = byId.get(id);
+        if (!g || placed.has(id)) continue;
+        cs[i].items.push(g);
+        cs[i].h += hgt(g);
+        placed.add(id);
+      }
+    });
     for (const g of groups) {
+      if (placed.has(gid(g))) continue;
       const c = cs.reduce((a, b) => (b.h < a.h ? b : a));
       c.items.push(g);
-      c.h += 1.4 + g.plugs.length;
+      c.h += hgt(g);
     }
     return cs;
-  }, [groups, cols]);
+  }, [groups, nCols, custom]);
+  const saveLayout = (n: number, next: string[][] | null) => {
+    const lay = { ...(layout || {}) };
+    if (next) lay[String(n)] = next;
+    else delete lay[String(n)];
+    setLocal({ base: serverKey, lay });
+    api("PUT", "/api/settings", { home_layout: { [String(n)]: next } }).catch((err) => toast.error("排列沒有存起來", { description: (err as Error).message }));
+  };
+
+  // 拖拉：有滑鼠、而且不只一欄才能拖（手機、平板照常捲動）
+  const mouse = useMedia("(pointer: fine)");
+  const canDrag = mouse && nCols >= 2;
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
+  const [dragCols, setDragCols] = useState<string[][] | null>(null);
+  const idCols = columns.map((c) => c.items.map(gid));
+  const curCols = dragCols || idCols;
+  const colOf = (cs: string[][], id: string) => (id.startsWith("col-") ? Number(id.slice(4)) : cs.findIndex((c) => c.includes(id)));
+  const onDragOver = ({ active, over }: DragOverEvent) => {
+    if (!over) return;
+    const from = colOf(curCols, String(active.id)), to = colOf(curCols, String(over.id));
+    if (from < 0 || to < 0 || from === to) return;
+    const c = curCols.map((x) => [...x]);
+    c[from] = c[from].filter((x) => x !== active.id);
+    const at = String(over.id).startsWith("col-") ? c[to].length : Math.max(0, c[to].indexOf(String(over.id)));
+    c[to].splice(at, 0, String(active.id));
+    setDragCols(c);
+  };
+  const onDragEnd = ({ active, over }: DragEndEvent) => {
+    let c = curCols.map((x) => [...x]);
+    if (over && !String(over.id).startsWith("col-")) {
+      const ci = colOf(c, String(active.id));
+      const a = c[ci].indexOf(String(active.id)), b = c[ci].indexOf(String(over.id));
+      if (b >= 0 && a !== b) c = c.map((x, i) => (i === ci ? arrayMove(x, a, b) : x));
+    }
+    setDragCols(null);
+    if (JSON.stringify(c) !== JSON.stringify(idCols)) saveLayout(nCols, c);
+  };
 
   if (!state) {
     if (failed)
@@ -412,16 +498,41 @@ export function HomePage() {
         </div>}
 
         <div className={cn(side && "grid grid-cols-[minmax(0,1fr)_20rem] items-start gap-4")}>
-          <div ref={gridRef} className="grid items-start gap-4" style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))` }}>
-            {columns.map((c, i) => (
-              <div key={i}>
-                {c.items.map((grp) => <RoomCard key={grp.id || "none"} g={grp} onOpen={(p) => setDevice(p.id)} onToggle={toggle} />)}
+          <div className="min-w-0">
+            <div ref={gridRef} className="grid items-start gap-4" style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))` }}>
+              {canDrag ? (
+                <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={() => setDragCols(idCols)} onDragOver={onDragOver} onDragEnd={onDragEnd} onDragCancel={() => setDragCols(null)}>
+                  {curCols.map((ids, i) => (
+                    <SortableContext key={i} id={`col-${i}`} items={ids} strategy={verticalListSortingStrategy}>
+                      <RoomColumn id={`col-${i}`} dragging={!!dragCols} empty={!ids.length}>
+                        {ids.map((id) => {
+                          const grp = groups.find((x) => gid(x) === id);
+                          return grp ? <SortRoom key={id} g={grp} onOpen={(p) => setDevice(p.id)} onToggle={toggle} /> : null;
+                        })}
+                      </RoomColumn>
+                    </SortableContext>
+                  ))}
+                </DndContext>
+              ) : (
+                columns.map((c, i) => (
+                  <div key={i} className="min-w-0">
+                    {c.items.map((grp) => <RoomCard key={gid(grp)} g={grp} onOpen={(p) => setDevice(p.id)} onToggle={toggle} />)}
+                  </div>
+                ))
+              )}
+            </div>
+            {canDrag && custom && !dragCols && (
+              <div className="-mt-1 mb-4 flex justify-end">
+                <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => saveLayout(nCols, null)} title="不用自己排的位置，照插座數自動分欄">
+                  <RotateCcw />恢復自動排列
+                </Button>
               </div>
-            ))}
+            )}
           </div>
           {look === "tech" && (
             <div className={cn("grid gap-4", side ? "" : "sm:grid-cols-2")}>
               {side && <AskPanel />}
+              <PeoplePanel state={state} now={now()} />
               <EnergyPanel state={state} />
               <NextPanel state={state} now={now()} />
             </div>
