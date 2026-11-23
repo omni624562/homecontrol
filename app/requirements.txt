@@ -7,3 +7,5 @@ anthropic==2.10.0
 ai-edge-litert==2.4.0
 numpy==2.5.5
 pillow==13.0.0
+# 認臉（YuNet 找臉、SFace 認人）
+opencv-python-headless==5.1.0.95

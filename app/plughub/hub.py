@@ -21,7 +21,7 @@ from typing import Any, Callable
 
 from kasa import Device, Discover, Module
 
-from . import anomaly, arpprobe, camera, habits, locate, native, netlog, netprobe, roommotion, routine, sun, tariff
+from . import anomaly, arpprobe, camera, faces, habits, locate, native, netlog, netprobe, roommotion, routine, sun, tariff
 from .sensing import INTERVAL as SENSE_INTERVAL, SAVE_EVERY as SENSE_SAVE_EVERY, Sensing
 from .notify import Notifier
 from .daysoff import DaysOff
@@ -43,6 +43,10 @@ SOURCE: contextvars.ContextVar[str] = contextvars.ContextVar("source", default="
 NET_OUTAGE_SECONDS = 90  # 同一個 Wi-Fi 的插座全部斷線多久才算路由器出問題
 
 POLL_SECONDS = 5
+FACE_COOL = 600  # 秒：同一個人的回家動作、訪客通知，至少隔這麼久
+FACE_LEAVE_COOL = 1800  # 秒：「要出門了嗎」提醒至少隔這麼久
+FACE_LINGER = 30  # 秒：門口的陌生人要待這麼久才通知（路人經過不吵）
+FACE_LATE = (0, 6)  # 半夜：這段時間看到陌生人一律緊急通知、開門口燈
 CAMERA_SCORE = 1.5  # 攝影機看到人的房間，動靜分數至少這麼多（> 地圖上的「很明顯」）
 PROBE_EVERY = 60  # 路由器多久沒看到家人的手機，就由樹莓派直接問（ARP）
 PROBE_MAX_AGE = 24 * 3600  # 超過一天沒看到的就不問了
@@ -144,6 +148,16 @@ class Hub:
         self.cameras = camera.Cameras(self.store.dir)
         self._cam_alert: dict[str, float] = {}  # 攝影機 ID → 上次「沒人在家卻看到人」通知的時間
         self._cam_pending: dict[str, float] = {}  # 攝影機 ID → 沒人在家時看到人的時間（等家人的手機連上 Wi-Fi）
+        # 認臉
+        self.face_engine = faces.Engine()
+        self.gallery = faces.Gallery(self.store.dir)
+        self.face_log = faces.FaceLog(self.store.dir)
+        self.face_error: str | None = None
+        self._visits: dict[str, dict[str, Any]] = {}  # 攝影機 ID → 這次「有人」期間認到的臉
+        self._face_cool: dict[str, float] = {}  # 「誰:做什麼」→ 上次做的時間（同一件事不要一直做）
+        self._face_arrived_at = 0.0  # 上次認臉認出家人回家的時間（Wi-Fi 的「回家情境」就不用再跑一次）
+        self.enroll: dict[str, Any] | None = None  # 正在登記的臉：{"pid","name","kind","cam","until","cands"}
+        self.enroll_result: dict[str, Any] | None = None
         self.locator = locate.Locator(self.store.data.setdefault("locate", {}))
         self._sense_path = store.dir / "sensing.json.gz"
         self.sensing.load(self._sense_path)
@@ -1362,6 +1376,7 @@ class Hub:
         for c, ev in zip(cams, events):
             if ev == "on":
                 self._camera_seen(c, now)
+        await self._face_tick(cams, now)
         self._camera_pending(now)
         rm = self.room_motion()
         for r, v in rm.items():
@@ -1370,6 +1385,189 @@ class Hub:
         self._motion_rules(rm, now)
         if any(events):
             await self.changed()
+
+    # ---- 認臉：看到人時找臉，認出家人就做他的動作，不認得就通知 ----
+
+    async def _face_tick(self, cams: list[dict[str, Any]], now: float) -> None:
+        frames, self.cameras.frames = self.cameras.frames, {}
+        for c in cams:
+            jpeg = frames.get(c["id"])
+            enrolling = self.enroll is not None and self.enroll["cam"] == c["id"]
+            person = self.cameras.state.get(c["id"], {}).get("person")
+            if not jpeg or not (enrolling or (person and c.get("faces", True))):
+                continue
+            try:
+                found = await asyncio.to_thread(self.face_engine.analyze, jpeg)
+                self.face_error = None
+            except Exception as err:  # noqa: BLE001
+                if self.face_error != str(err):
+                    _LOGGER.warning("認臉失敗：%s", err)
+                self.face_error = str(err) or type(err).__name__
+                continue
+            if enrolling:
+                self._enroll_feed(found, now)
+            else:
+                self._face_visit(c, jpeg, found, now)
+        if self.enroll is not None and now >= self.enroll["until"]:
+            self._enroll_finish()
+        for cid in [k for k in self._visits if not self.cameras.state.get(k, {}).get("person")]:
+            del self._visits[cid]  # 人走了：這次結束
+
+    def _face_visit(self, cam: dict[str, Any], jpeg: bytes, found: list[dict[str, Any]], now: float) -> None:
+        v = self._visits.setdefault(cam["id"], {"start": now, "known": set(), "maybe": set(), "stranger": 0, "best": None, "alerted": False})
+        for f in found:
+            kind, pid, sim = faces.classify(f, self.gallery.match(f["feat"]))
+            if kind == "known":
+                self._face_known(cam, v, pid, sim, now)
+            elif kind == "stranger":
+                v["stranger"] += 1
+                if v["best"] is None or f["w"] > v["best"][1]["w"]:
+                    v["best"] = (jpeg, f)
+        if not v["alerted"] and v["stranger"] >= 2 and not v["known"] and (cam.get("role") != "entry" or now - v["start"] >= FACE_LINGER):
+            v["alerted"] = True
+            self._face_stranger(cam, v, now)
+
+    def _face_known(self, cam: dict[str, Any], v: dict[str, Any], pid: str, sim: float, now: float) -> None:
+        g = self.gallery.people.get(pid) or {}
+        name = g.get("name") or pid
+        if g.get("kind") == "guest":
+            if pid not in v["known"]:
+                v["known"].add(pid)
+                self.face_log.add({"camera": cam.get("name"), "kind": "guest", "name": name, "sim": round(sim, 2)})
+                if g.get("notify", True) and self._face_once(f"{pid}:guest", FACE_COOL, now):
+                    self.notifier.send(f"{name}（訪客）來了", f"{cam.get('name')} {datetime.now().strftime('%H:%M')} 認出是 {name}")
+            return
+        person = next((p for p in self.people_report() if p["id"] == pid), None)
+        if person is None:
+            return
+        # 兩種方式一起確認：不夠像、手機也不在家 → 先不當作是他（交給 Wi-Fi 判斷）
+        if sim < faces.STRONG and not person.get("home"):
+            if pid not in v["maybe"]:
+                v["maybe"].add(pid)
+                _LOGGER.info("攝影機 %s 看到的可能是 %s（相似度 %.2f），等手機確認", cam.get("name"), name, sim)
+            return
+        self._cam_pending.pop(cam["id"], None)  # 是家人：不用等 Wi-Fi、不通知
+        if pid in v["known"]:
+            return
+        v["known"].add(pid)
+        self.face_log.add({"camera": cam.get("name"), "kind": "family", "name": name, "sim": round(sim, 2)})
+        if cam.get("role") != "entry":
+            return
+        since = person.get("since") or 0
+        if not person.get("home") or now - since < 300:
+            self._face_arrive(pid, name, now)
+        elif now - since >= 600:
+            self._face_leave(pid, name, now)
+
+    def _face_once(self, key: str, gap: float, now: float) -> bool:
+        if now - self._face_cool.get(key, 0) < gap:
+            return False
+        self._face_cool[key] = now
+        return True
+
+    def face_slot(self, when: datetime | None = None) -> str:
+        """現在是哪個時段：late 半夜（0～6 點）、night 天黑、day 白天。"""
+        when = when or datetime.now()
+        if FACE_LATE[0] <= when.hour < FACE_LATE[1]:
+            return "late"
+        return "night" if self.is_dark() else "day"
+
+    def _face_arrive(self, pid: str, name: str, now: float) -> None:
+        """門口認出家人回來：執行他這個時段的回家動作；有開的話通知大家。"""
+        if not self._face_once(f"{pid}:arrive", FACE_COOL, now):
+            return
+        self._face_arrived_at = now
+        cfg = (self.store.data["settings"].get("face_actions") or {}).get(pid) or {}
+        scene = cfg.get(self.face_slot())
+        at = datetime.now().strftime("%H:%M")
+        if scene and self.store.scene(scene):
+            self._presence_scene(scene, f"認出{name}回家（{at}）")
+        elif cfg.get("notify"):
+            self.notifier.send(f"{name}回到家了", f"門口攝影機 {at} 認出 {name}")
+
+    def _face_leave(self, pid: str, name: str, now: float) -> None:
+        """門口認出家人、他的手機在家很久了、其他人都出門 → 多半是最後一個要出門：提醒還開著的電器。"""
+        others = [p for p in self.people_report() if p["id"] != pid]
+        if any(p.get("home") is not False for p in others):
+            return
+        away = self.store.scene((self.store.data["settings"].get("presence") or {}).get("away_scene") or "") or {}
+        keep = {k for k, a in (away.get("actions") or {}).items() if a == "keep"}
+        on = [p for p in self.ordered() if p.online and p.is_on and not self.store.meta(p.id).keep_on and p.id not in keep]
+        if not on or not self._face_once(f"{pid}:leave", FACE_LEAVE_COOL, now):
+            return
+        risky = [self.name(p) for p in on if self.store.meta(p.id).risky]
+        names = "、".join(self.name(p) for p in on[:8]) + (f" 等 {len(on)} 個" if len(on) > 8 else "")
+        self.notifier.send(f"{name}要出門了嗎？", f"家裡只剩你，還開著：{names}" + (f"（{'、'.join(risky)} 是高風險電器）" if risky else "")
+                           + "。要關的話打開家庭中控的「出門前檢查」", "high" if risky else "default")
+
+    def _face_stranger(self, cam: dict[str, Any], v: dict[str, Any], now: float) -> None:
+        """看清楚的臉、跟登記的家人和訪客都不像：記一筆（含小圖），依情況通知。"""
+        jpeg, f = v["best"]
+        try:
+            thumb = self.face_engine.thumb(jpeg, f["box"])
+        except Exception:  # noqa: BLE001
+            thumb = b""
+        self.face_log.add({"camera": cam.get("name"), "kind": "stranger", "sim": None}, thumb)
+        self._cam_pending.pop(cam["id"], None)  # 已經確定不是家人：不用再等 Wi-Fi
+        people = self.people_report()
+        away = bool(people) and all(p.get("home") is False for p in people)
+        late = self.face_slot() == "late"
+        if cam.get("role") != "entry" and not away and not late:
+            return  # 家裡有人、房間的攝影機看到不認得的人：多半是客人，只記紀錄
+        if not cam.get("alert", True) or now - self._cam_alert.get(cam["id"], 0) < camera.ALERT_GAP:
+            return
+        self._cam_alert[cam["id"]] = now
+        light = self.plugs.get(cam.get("light") or "")
+        lit = ""
+        if late and light and light.online:
+            async def go() -> None:
+                SOURCE.set("auto")
+                await self.set_power(light.id, True)
+                await self.set_timer(light.id, 300)
+                await self.changed()
+
+            self._spawn(go())
+            lit = f"已經打開「{self.name(light)}」5 分鐘。"
+        where = cam.get("name") or cam["host"]
+        title = "⚠️ 沒人在家，有不認得的人" if away else ("⚠️ 半夜有不認得的人" if late else "門口有不認得的人")
+        self.notifier.send(title, f"{where} {datetime.now().strftime('%H:%M')} 看到看得清楚、但不認得的臉"
+                           f"（跟登記的家人、訪客都不像）。{lit}照片在「設定 → 攝影機 → 認臉紀錄」，只有有權限的裝置看得到",
+                           "urgent" if away or late else "high")
+
+    # ---- 登記臉：站在攝影機前轉一下，挑幾張清楚、角度不同的 ----
+
+    def enroll_start(self, pid: str, name: str, kind: str, cam_id: str) -> None:
+        self.enroll = {"pid": pid, "name": name, "kind": kind, "cam": cam_id, "until": time.time() + faces.ENROLL_S, "cands": [], "start": time.time()}
+        self.enroll_result = None
+
+    def _enroll_feed(self, found: list[dict[str, Any]], now: float) -> None:
+        e = self.enroll
+        if e is None:
+            return
+        good = [f for f in found if f["w"] >= faces.CLEAR_W * 0.8 and f["score"] >= 0.8]
+        if len(found) == 1 and good:  # 畫面裡只有一張臉才收（不會收到別人）
+            e["cands"].append((good[0]["w"] * good[0]["score"], good[0]["feat"]))
+            if len(e["cands"]) >= faces.SAMPLES * 3:
+                self._enroll_finish()
+
+    def _enroll_finish(self) -> None:
+        e, self.enroll = self.enroll, None
+        if e is None:
+            return
+        picked = faces.pick_samples(e["cands"])
+        if len(picked) < faces.MIN_SAMPLES:
+            self.enroll_result = {"pid": e["pid"], "ok": False, "msg": f"只拍到 {len(picked)} 張清楚的臉，請站近一點、面向攝影機再試一次"}
+            return
+        extra = {"notify": (self.gallery.people.get(e["pid"]) or {}).get("notify", True)} if e["kind"] == "guest" else {}
+        self.gallery.set(e["pid"], e["name"], e["kind"], picked, **extra)
+        self.enroll_result = {"pid": e["pid"], "ok": True, "msg": f"登記好了：{e['name']}（{len(picked)} 個角度）"}
+
+    def enroll_status(self) -> dict[str, Any] | None:
+        e = self.enroll
+        if e is None:
+            return None
+        return {"pid": e["pid"], "name": e["name"], "cam": e["cam"], "count": len(e["cands"]), "need": faces.SAMPLES,
+                "left": max(0, round(e["until"] - time.time()))}
 
     def _camera_seen(self, cam: dict[str, Any], now: float) -> None:
         """攝影機剛看到人：大家都出門了（而且這台有開通知），先等等看是不是家人回來（手機連上 Wi-Fi）。"""
@@ -1786,7 +1984,9 @@ class Hub:
             self._presence_scene(cfg.get("away_scene"), "大家都出門了")
         elif after and not before and arrived:
             self._away_end(arrived)
-            if not cfg.get("home_dark_only") or self.is_dark():
+            if time.time() - self._face_arrived_at < FACE_COOL:
+                pass  # 門口攝影機剛認出家人、已經執行過他的回家動作
+            elif not cfg.get("home_dark_only") or self.is_dark():
                 self._presence_scene(cfg.get("home_scene"), f"{'、'.join(arrived)}回家了")
         return True
 
