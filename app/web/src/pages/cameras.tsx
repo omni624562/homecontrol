@@ -256,32 +256,51 @@ function CamDetail(p: DetailProps) {
   );
 }
 
-// 畫面：即時畫面上框門、框「不要看的地方」；基本設定
+// 畫面：在即時畫面上點出門、「不要看的地方」的形狀（任意多邊形，斜斜的門也框得剛好）；基本設定
+type P = number[];
+const near = (a: P, b: P) => Math.hypot(a[0] - b[0], (a[1] - b[1]) * 0.5625) < 0.03; // 0.5625 = 9/16：換成畫面上的距離
+
 function ViewTab({ cam, rooms, setCams, upd, onBack }: DetailProps & { upd: (b: object, ok?: string) => Promise<void> }) {
-  const [mode, setMode] = useState<"door" | "ignore" | null>(null);
-  const [drag, setDrag] = useState<number[] | null>(null);
+  const [mode, setMode] = useState<"door" | "ignore" | null>(null); // 正在畫哪一種
+  const [pts, setPts] = useState<P[]>([]); // 正在畫的頂點
+  const [adj, setAdj] = useState<{ kind: "door" | number; pts: P[] } | null>(null); // 正在調整哪一塊
+  const [hover, setHover] = useState<P | null>(null);
   const [t, setT] = useState(() => Date.now());
   const [busy, setBusy] = useState(false);
   const [name, setName] = useState(cam.name);
-  const box = useRef<HTMLDivElement>(null);
-  const start = useRef<number[] | null>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
+  const dragging = useRef<number | null>(null);
   useEffect(() => {
     const id = setInterval(() => setT(Date.now()), 2000);
     return () => clearInterval(id);
   }, []);
-  const pos = (e: React.PointerEvent) => {
-    const r = box.current!.getBoundingClientRect();
+  const pos = (e: { clientX: number; clientY: number }): P => {
+    const r = svgRef.current!.getBoundingClientRect();
     return [Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), Math.min(1, Math.max(0, (e.clientY - r.top) / r.height))];
   };
-  const done = async (d: number[]) => {
-    const rect = d.map((v) => Math.round(v * 1e4) / 1e4);
-    if (mode === "door") {
-      const r = await call<{ cameras: Cam[] }>("PUT", `/api/cameras/${cam.id}/door`, { rect }, "框好了；門關著時按「門關著，記住這個樣子」");
+  const r4 = (q: P[]) => q.map(([x, y]) => [Math.round(x * 1e4) / 1e4, Math.round(y * 1e4) / 1e4]);
+  const saveZone = async (kind: "door" | number, q: P[]) => {
+    if (kind === "door") {
+      const r = await call<{ cameras: Cam[] }>("PUT", `/api/cameras/${cam.id}/door`, { poly: r4(q) }, "門的形狀存好了；門關著時按「門關著，記住這個樣子」");
       if (r) setCams(r.cameras);
-    } else if (mode === "ignore") {
-      await upd({ ignore: [...(cam.ignore || []), rect] }, "這一塊之後不會看（路人、樹影不會被當成有人）");
+    } else {
+      const zones = [...(cam.ignore || [])];
+      if (kind >= zones.length) zones.push(r4(q)); else zones[kind] = r4(q);
+      await upd({ ignore: zones }, "存好了：這一塊之後不會看（路人、樹影不會被當成有人）");
     }
+  };
+  const finish = async () => {
+    if (pts.length < 3 || !mode) return;
+    await saveZone(mode === "door" ? "door" : (cam.ignore || []).length, pts);
     setMode(null);
+    setPts([]);
+  };
+  const start = (m: "door" | "ignore") => { setAdj(null); setPts([]); setMode(mode === m ? null : m); };
+  const onTap = (e: React.MouseEvent) => {
+    if (!mode) return;
+    const q = pos(e);
+    if (pts.length >= 3 && near(q, pts[0])) { finish(); return; } // 點回第一個點：完成
+    if (pts.length < 12) setPts([...pts, q]);
   };
   const remember = async () => {
     setBusy(true);
@@ -293,48 +312,91 @@ function ViewTab({ cam, rooms, setCams, upd, onBack }: DetailProps & { upd: (b: 
     }
   };
   const door = cam.door;
-  const rect = (r: number[]) => ({ left: `${r[0] * 100}%`, top: `${r[1] * 100}%`, width: `${r[2] * 100}%`, height: `${r[3] * 100}%` });
+  const doorPts = adj?.kind === "door" ? adj.pts : door?.poly || null;
+  const zones = (cam.ignore || []).map((z, i) => (adj?.kind === i ? adj.pts : z));
+  const path = (q: P[]) => q.map(([x, y]) => `${x},${y}`).join(" ");
+  const center = (q: P[]) => [q.reduce((s2, p) => s2 + p[0], 0) / q.length, q.reduce((s2, p) => s2 + p[1], 0) / q.length];
+  const label = (q: P[], text: string, fill: string) => {
+    const [x, y] = center(q);
+    return <text x={x} y={y} textAnchor="middle" dominantBaseline="middle" fill={fill} stroke="var(--card)" strokeWidth={0.006} paintOrder="stroke" style={{ fontSize: 0.045, fontWeight: 700 }}>{text}</text>;
+  };
   return (
     <>
       <Card className="gap-3 p-3">
-        <div ref={box} className={cn("relative aspect-video w-full select-none overflow-hidden rounded-lg bg-muted", mode && "touch-none cursor-crosshair")}
-          onPointerDown={(e) => { if (!mode) return; (e.target as HTMLElement).setPointerCapture(e.pointerId); start.current = pos(e); setDrag([...start.current, 0, 0]); }}
-          onPointerMove={(e) => { if (!start.current) return; const [x, y] = pos(e); const [sx, sy] = start.current; setDrag([Math.min(sx, x), Math.min(sy, y), Math.abs(x - sx), Math.abs(y - sy)]); }}
-          onPointerUp={() => { const d = drag; start.current = null; setDrag(null); if (d && d[2] > 0.03 && d[3] > 0.03) done(d); }}>
-          <img src={`/api/cameras/${cam.id}/snapshot.jpg?t=${t}`} alt={`${cam.name} 現在的畫面`} className="pointer-events-none size-full object-contain" draggable={false} />
-          {door?.rect && (
-            <div className={cn("pointer-events-none absolute border-2", door.open ? "border-orange-500 bg-orange-500/15" : "border-primary bg-primary/10")} style={rect(door.rect)}>
-              <span className={cn("absolute top-1 left-1 rounded px-1.5 text-xs font-bold", door.open ? "bg-orange-500 text-white" : "bg-primary text-primary-foreground")}>門{door.refs ? (door.open ? "・開著" : "・關著") : ""}</span>
-            </div>
-          )}
-          {(cam.ignore || []).map((r, i) => (
-            <div key={i} className="pointer-events-none absolute border-2 border-dashed border-amber-500 bg-[repeating-linear-gradient(45deg,rgb(245_158_11/.25)_0_6px,transparent_6px_12px)]" style={rect(r)}>
-              <span className="absolute top-1 left-1 rounded bg-amber-500 px-1.5 text-xs font-bold text-white">不要看</span>
-            </div>
-          ))}
-          {drag && <div className={cn("pointer-events-none absolute border-2", mode === "door" ? "border-primary bg-primary/10" : "border-dashed border-amber-500 bg-amber-500/15")} style={rect(drag)} />}
-          {mode && <div className="pointer-events-none absolute inset-x-0 top-0 bg-background/85 py-1.5 text-center text-sm font-medium">在畫面上拖一個框：{mode === "door" ? "框住門" : "框住不要看的地方（例如路邊）"}</div>}
+        <div className="relative aspect-video w-full select-none overflow-hidden rounded-lg bg-muted">
+          <img src={`/api/cameras/${cam.id}/snapshot.jpg?t=${t}`} alt={`${cam.name} 現在的畫面`} className="pointer-events-none size-full object-fill" draggable={false} />
+          <svg ref={svgRef} viewBox="0 0 1 1" preserveAspectRatio="none" className={cn("absolute inset-0 size-full", (mode || adj) && "touch-none", mode && "cursor-crosshair")}
+            onClick={onTap} onPointerMove={(e) => {
+              if (mode) setHover(pos(e));
+              if (adj && dragging.current != null) { const q = pos(e); setAdj({ ...adj, pts: adj.pts.map((p2, i) => (i === dragging.current ? q : p2)) }); }
+            }}
+            onPointerUp={() => { dragging.current = null; }} onPointerLeave={() => setHover(null)}>
+            {doorPts && (
+              <g>
+                <polygon points={path(doorPts)} fill={door?.open ? "rgb(249 115 22)" : "var(--primary)"} fillOpacity={0.18} stroke={door?.open ? "rgb(249 115 22)" : "var(--primary)"} strokeWidth={0.006} vectorEffect="non-scaling-stroke" style={{ strokeWidth: 2.5 }} />
+                {label(doorPts, `門${door?.refs ? (door.open ? "・開著" : "・關著") : ""}`, door?.open ? "rgb(234 88 12)" : "var(--primary)")}
+              </g>
+            )}
+            {zones.map((z, i) => (
+              <g key={i}>
+                <polygon points={path(z)} fill="rgb(245 158 11)" fillOpacity={0.22} stroke="rgb(245 158 11)" strokeDasharray="6 4" vectorEffect="non-scaling-stroke" style={{ strokeWidth: 2 }} />
+                {label(z, "不要看", "rgb(180 83 9)")}
+              </g>
+            ))}
+            {mode && pts.length > 0 && (
+              <g>
+                <polyline points={path(hover ? [...pts, hover] : pts)} fill={mode === "door" ? "var(--primary)" : "rgb(245 158 11)"} fillOpacity={0.14}
+                  stroke={mode === "door" ? "var(--primary)" : "rgb(245 158 11)"} vectorEffect="non-scaling-stroke" style={{ strokeWidth: 2 }} />
+                {pts.map((p2, i) => <ellipse key={i} cx={p2[0]} cy={p2[1]} rx={i === 0 && pts.length >= 3 ? 0.018 : 0.011} ry={(i === 0 && pts.length >= 3 ? 0.018 : 0.011) * 1.78}
+                  fill={i === 0 && pts.length >= 3 ? "var(--card)" : mode === "door" ? "var(--primary)" : "rgb(245 158 11)"} stroke={mode === "door" ? "var(--primary)" : "rgb(245 158 11)"} vectorEffect="non-scaling-stroke" style={{ strokeWidth: 2 }} />)}
+              </g>
+            )}
+            {adj && adj.pts.map((p2, i) => (
+              <ellipse key={i} cx={p2[0]} cy={p2[1]} rx={0.018} ry={0.032} fill="var(--card)" stroke={adj.kind === "door" ? "var(--primary)" : "rgb(245 158 11)"} vectorEffect="non-scaling-stroke"
+                style={{ strokeWidth: 2.5, cursor: "grab" }} onPointerDown={(e) => { e.stopPropagation(); (e.currentTarget.ownerSVGElement as SVGSVGElement).setPointerCapture(e.pointerId); dragging.current = i; }} />
+            ))}
+          </svg>
+          {mode && <div className="pointer-events-none absolute inset-x-0 top-0 bg-background/85 py-1.5 text-center text-sm font-medium">
+            {pts.length < 3 ? `一點一點點出${mode === "door" ? "門" : "不要看的地方"}的角（已點 ${pts.length} 個）` : "繼續點，或點回第一個點／按「完成」"}</div>}
+          {adj && <div className="pointer-events-none absolute inset-x-0 top-0 bg-background/85 py-1.5 text-center text-sm font-medium">拖圓點調整形狀，好了按「儲存」</div>}
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button variant={mode === "door" ? "default" : "outline"} size="sm" onClick={() => setMode(mode === "door" ? null : "door")}><DoorOpen />{door?.rect ? "重新框門" : "框門"}</Button>
-          <Button variant={mode === "ignore" ? "default" : "outline"} size="sm" onClick={() => setMode(mode === "ignore" ? null : "ignore")}><Plus />不要看的地方</Button>
-          {door?.rect && <Button size="sm" disabled={busy} onClick={remember}>{busy && <Loader2 className="animate-spin" />}門關著，記住這個樣子{door.refs ? `（已記 ${door.refs} 張）` : ""}</Button>}
-        </div>
-        {(door?.rect || (cam.ignore || []).length > 0) && (
+
+        {mode ? (
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" disabled={pts.length < 3} onClick={finish}>完成</Button>
+            <Button variant="outline" size="sm" disabled={!pts.length} onClick={() => setPts(pts.slice(0, -1))}>復原上一點</Button>
+            <Button variant="ghost" size="sm" onClick={() => { setMode(null); setPts([]); }}>取消</Button>
+          </div>
+        ) : adj ? (
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" onClick={async () => { await saveZone(adj.kind, adj.pts); setAdj(null); }}>儲存</Button>
+            <Button variant="ghost" size="sm" onClick={() => setAdj(null)}>取消</Button>
+            {adj.kind === "door" && <span className="self-center text-xs text-muted-foreground">改了形狀要重新記住門關著的樣子</span>}
+          </div>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" onClick={() => start("door")}><DoorOpen />{door?.rect ? "重畫門" : "畫出門"}</Button>
+            <Button variant="outline" size="sm" onClick={() => start("ignore")}><Plus />不要看的地方</Button>
+            {door?.rect && <Button size="sm" disabled={busy} onClick={remember}>{busy && <Loader2 className="animate-spin" />}門關著，記住這個樣子{door.refs ? `（已記 ${door.refs} 張）` : ""}</Button>}
+          </div>
+        )}
+        {!mode && !adj && (door?.rect || (cam.ignore || []).length > 0) && (
           <div className="flex flex-wrap gap-2 text-sm">
             {door?.rect && (
-              <span className="flex items-center gap-1 rounded-full border px-2.5 py-1">門{door.score != null && ` ・相似度 ${door.score}（低於 0.45 算開）`}
-                <button aria-label="移除門" className="ml-1 text-muted-foreground hover:text-destructive" onClick={async () => { const r = await call<{ cameras: Cam[] }>("DELETE", `/api/cameras/${cam.id}/door`, undefined, "已移除開門偵測"); if (r) setCams(r.cameras); }}><Trash2 className="size-3.5" /></button>
+              <span className="flex items-center gap-1.5 rounded-full border px-2.5 py-1">門{door.score != null && ` ・相似度 ${door.score}（低於 0.45 算開）`}
+                <button className="font-medium text-primary" onClick={() => door.poly && setAdj({ kind: "door", pts: door.poly.map((q) => [...q]) })}>調整</button>
+                <button aria-label="移除門" className="text-muted-foreground hover:text-destructive" onClick={async () => { const r = await call<{ cameras: Cam[] }>("DELETE", `/api/cameras/${cam.id}/door`, undefined, "已移除開門偵測"); if (r) setCams(r.cameras); }}><Trash2 className="size-3.5" /></button>
               </span>
             )}
-            {(cam.ignore || []).map((_, i) => (
-              <span key={i} className="flex items-center gap-1 rounded-full border border-amber-500/60 px-2.5 py-1">不要看的地方 {i + 1}
-                <button aria-label={`移除不要看的地方 ${i + 1}`} className="ml-1 text-muted-foreground hover:text-destructive" onClick={() => upd({ ignore: (cam.ignore || []).filter((_, j) => j !== i) }, "已移除")}><Trash2 className="size-3.5" /></button>
+            {(cam.ignore || []).map((z, i) => (
+              <span key={i} className="flex items-center gap-1.5 rounded-full border border-amber-500/60 px-2.5 py-1">不要看的地方 {i + 1}
+                <button className="font-medium text-primary" onClick={() => setAdj({ kind: i, pts: z.map((q) => [...q]) })}>調整</button>
+                <button aria-label={`移除不要看的地方 ${i + 1}`} className="text-muted-foreground hover:text-destructive" onClick={() => upd({ ignore: (cam.ignore || []).filter((_, j) => j !== i) }, "已移除")}><Trash2 className="size-3.5" /></button>
               </span>
             ))}
           </div>
         )}
-        <p className="text-xs text-muted-foreground">「不要看的地方」會在認人之前先塗掉，路人、樹影、電視畫面就不會被當成有人。這裡的畫面是原本的樣子。</p>
+        <p className="text-xs text-muted-foreground">門只比對畫出來的形狀裡面；「不要看的地方」會在認人之前先塗掉，路人、樹影、電視畫面就不會被當成有人。這裡看到的是原本的畫面。</p>
       </Card>
 
       <Card className="gap-0 divide-y py-0">

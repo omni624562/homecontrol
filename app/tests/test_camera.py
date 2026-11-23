@@ -222,4 +222,10 @@ def test_mask_and_role_defaults(app_module, monkeypatch):
     app_module.hub.cameras.list = [{"id": "g", "name": "大門口", "host": "x", "enabled": True, "fall": True}]
     got = c.put("/api/cameras/g", json={"role": "entry", "defaults": True, "ignore": [[0.6, 0.3, 0.4, 0.5], [0, 0, 0.01, 0.5]]}).json()["cameras"][0]
     assert got["role"] == "entry" and got["fall"] is False and got["faces"] is True
-    assert got["ignore"] == [[0.6, 0.3, 0.4, 0.5]]  # 太小的框不收
+    assert got["ignore"] == [[[0.6, 0.3], [1.0, 0.3], [1.0, 0.8], [0.6, 0.8]]]  # 方框換成 4 個角；太小的不收
+    tri = [[0.1, 0.1], [0.5, 0.2], [0.2, 0.7]]
+    got = c.put("/api/cameras/g", json={"ignore": [tri, [[0, 0], [0.01, 0.01]]]}).json()["cameras"][0]
+    assert got["ignore"] == [tri]
+    r = c.put("/api/cameras/g/door", json={"poly": [[0.1, 0.1], [0.3, 0.15], [0.3, 0.8], [0.1, 0.9]]}).json()["cameras"][0]["door"]
+    assert r["rect"] == [0.1, 0.1, 0.2, 0.8] and len(r["poly"]) == 4 and r["refs"] == 0
+    assert c.put("/api/cameras/g/door", json={"poly": [[0.1, 0.1], [0.2, 0.2]]}).status_code == 400

@@ -1428,7 +1428,7 @@ class Hub:
             refs = door.get("_refs")
             if refs is None:
                 refs = door["_refs"] = [vision.sig_decode(r) for r in door["refs"]]
-            sig = await asyncio.to_thread(vision.door_sig, jpeg, door["rect"])
+            sig = await asyncio.to_thread(vision.door_sig, jpeg, door["rect"], door.get("poly"))
         except Exception as err:  # noqa: BLE001
             _LOGGER.debug("門的判斷失敗：%s", err)
             return
@@ -1476,7 +1476,7 @@ class Hub:
     def door_reference(self, cam: dict[str, Any], jpeg: bytes) -> int:
         """記住「門關著」的樣子（最多 4 張：白天、晚上各記一下就好）。"""
         door = cam.get("door") or {}
-        sig = vision.door_sig(jpeg, door["rect"])
+        sig = vision.door_sig(jpeg, door["rect"], door.get("poly"))
         door["refs"] = ((door.get("refs") or []) + [vision.sig_encode(sig)])[-4:]
         door.pop("_refs", None)
         cam["door"] = door

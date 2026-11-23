@@ -134,15 +134,23 @@ def _cgi(cam: dict[str, Any], cmd: str) -> bytes:
         return r.read()
 
 
-def mask(jpeg: bytes, rects: list[list[float]]) -> bytes:
-    """把「不要看的地方」塗成灰色（認人、認臉、姿勢、門都不會看那裡）。rects 是 0～1 的 [x, y, w, h]。"""
+def zone_points(z: Any) -> list[list[float]]:
+    """一塊區域 → 多邊形頂點（舊的方框 [x, y, w, h] 換成 4 個角）。"""
+    if len(z) == 4 and all(isinstance(v, (int, float)) for v in z):
+        x, y, w, h = z
+        return [[x, y], [x + w, y], [x + w, y + h], [x, y + h]]
+    return [[float(p[0]), float(p[1])] for p in z]
+
+
+def mask(jpeg: bytes, zones: list[Any]) -> bytes:
+    """把「不要看的地方」塗成灰色（認人、認臉、姿勢、門都不會看那裡）。每塊是 0～1 的多邊形頂點（或舊的方框）。"""
     from PIL import Image, ImageDraw
 
     img = Image.open(io.BytesIO(jpeg)).convert("RGB")
     W, H = img.size
     draw = ImageDraw.Draw(img)
-    for x, y, w, h in rects:
-        draw.rectangle([x * W, y * H, (x + w) * W, (y + h) * H], fill=(128, 128, 128))
+    for z in zones:
+        draw.polygon([(px * W, py * H) for px, py in zone_points(z)], fill=(128, 128, 128))
     out = io.BytesIO()
     img.save(out, "JPEG", quality=85)
     return out.getvalue()
@@ -246,7 +254,7 @@ class Cameras:
             c.setdefault("light", None)  # 門口：半夜看到陌生人時打開的插座
             c.setdefault("pets", True)  # 認貓、狗
             c.setdefault("fall", c.get("role") != "entry")  # 跌倒偵測（實驗；預設只有房間的攝影機）
-            c.setdefault("ignore", [])  # 不要看的地方（例如路邊）：[[x, y, w, h], …]，0～1
+            c["ignore"] = [zone_points(z) for z in c.get("ignore") or []]  # 不要看的地方（例如路邊）：每塊是 0～1 的多邊形頂點
             c.setdefault("door", None)  # 開門：{"rect": [x,y,w,h], "refs": [樣子…], "notify": away/always/off, "scene": 天黑後開門執行的情境}
 
     def save(self) -> None:
@@ -266,7 +274,7 @@ class Cameras:
             st = self.state.get(c["id"], {})
             door = c.get("door") or {}
             out.append({k: c.get(k) for k in ("id", "name", "host", "port", "room", "enabled", "alert", "model", "faces", "role", "light", "pets", "fall", "pet_notify", "ignore")}
-                       | {"door": {"rect": door.get("rect"), "refs": len(door.get("refs") or []), "notify": door.get("notify", "away"), "scene": door.get("scene"),
+                       | {"door": {"rect": door.get("rect"), "poly": door.get("poly") or (zone_points(door["rect"]) if door.get("rect") else None), "refs": len(door.get("refs") or []), "notify": door.get("notify", "away"), "scene": door.get("scene"),
                                    "open": bool((st.get("door") or {}).get("open")), "score": (st.get("door") or {}).get("score")} if door.get("rect") else None,
                           "pets_here": [n for n, p in (st.get("pets") or {}).items() if p.get("here")]}
                        | {"person": bool(st.get("person")), "since": st.get("since"), "score": (st.get("recent") or [None])[-1],
