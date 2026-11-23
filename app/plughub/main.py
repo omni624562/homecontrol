@@ -40,16 +40,18 @@ GET  /api/matter/qr.svg     配對用的 QR code
 GET  /api/auth              這台裝置配對了沒；POST /api/auth/pair {"code","name"} 配對（拿到 cookie）
 POST /api/auth/send-code    配對碼送到手機通知；POST /api/auth/code 已配對的裝置產生配對碼
 GET/PATCH/DELETE /api/auth/devices[/{id}]  已配對的裝置
+GET  /api/tls               HTTPS 狀態；GET /api/tls/ca.crt 下載根憑證（不用配對）
 GET  /api/health            健康檢查（不用配對）：{"ok", "version"}；主程式卡住回 503
 POST /api/backup            立刻備份 data/
 
-除了 /api/auth*、/api/health，所有 /api/ 都要先配對（樹莓派本機除外）。
+除了 /api/auth*、/api/health、/api/tls/ca.crt，所有 /api/ 都要先配對（樹莓派本機除外）。
 GET  /matterbridge          拿通行證，轉到 Matterbridge 管理頁（:8283）
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import io
 import json
 import logging
@@ -64,6 +66,7 @@ from pathlib import Path
 from typing import Any
 
 import segno
+import uvicorn
 from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -72,6 +75,7 @@ from starlette.middleware.gzip import GZipMiddleware
 from . import auth as authmod
 from . import camera as camera_mod
 from . import vision as vision_mod
+from . import tls as tlsmod
 from .locate import MIN_SAMPLES as LOCATE_MIN, TRAIN_S as LOCATE_TRAIN_S
 from .assistant import MODELS as ASSISTANT_MODELS, Assistant
 from .hub import APP_VERSION, SOURCE, Hub, Locked
@@ -91,10 +95,57 @@ auth = authmod.Auth(DATA_DIR)
 _LOGGER = logging.getLogger(__name__)
 
 
+HTTPS_PORT = int(os.environ.get("PLUGHUB_HTTPS_PORT", "8443"))  # 0 = 不開 HTTPS
+
+
+class _QuietServer(uvicorn.Server):
+    """同一個程式裡多開一個 HTTPS 埠：訊號（Ctrl+C、Docker 停止）交給主要的那個處理。"""
+
+    def capture_signals(self):  # type: ignore[override]
+        return contextlib.nullcontext()
+
+
+async def _https(app_: FastAPI) -> tuple[uvicorn.Server, asyncio.Task] | None:
+    """開 HTTPS（8443）：憑證不在、快到期、IP 變了就先重簽。失敗只記一行，不影響原本的 HTTP。"""
+    try:
+        p = await asyncio.to_thread(tlsmod.ensure, DATA_DIR)
+        cfg = uvicorn.Config(app_, host="0.0.0.0", port=HTTPS_PORT, ssl_keyfile=str(p["key"]), ssl_certfile=str(p["crt"]),
+                             lifespan="off", proxy_headers=True, log_level="warning", timeout_graceful_shutdown=3)
+        srv = _QuietServer(cfg)
+        task = asyncio.create_task(srv.serve())
+        _LOGGER.info("HTTPS 開在 %s 埠", HTTPS_PORT)
+        return srv, task
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.warning("HTTPS 沒有開成：%s", err)
+        return None
+
+
+async def _tls_renew(srv: uvicorn.Server) -> None:
+    """每天檢查一次：IP 變了、快到期就重簽，直接換上（新的連線就用新的憑證，不用重開）。"""
+    while True:
+        await asyncio.sleep(86400)
+        try:
+            p = await asyncio.to_thread(tlsmod.ensure, DATA_DIR)
+            if srv.config.ssl is not None:
+                srv.config.ssl.load_cert_chain(str(p["crt"]), str(p["key"]))
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("檢查 HTTPS 憑證失敗：%s", err)
+
+
 @asynccontextmanager
-async def lifespan(_app: FastAPI):
+async def lifespan(app_: FastAPI):
     await hub.start()
+    https = await _https(app_) if HTTPS_PORT else None
+    renew = asyncio.create_task(_tls_renew(https[0])) if https else None
     yield
+    if renew:
+        renew.cancel()
+    if https:
+        https[0].should_exit = True
+        try:
+            await asyncio.wait_for(https[1], 5)
+        except Exception:  # noqa: BLE001
+            pass
     await hub.stop()
 
 
@@ -124,7 +175,7 @@ app.add_middleware(_Gzip)
 
 LOCAL = {"127.0.0.1", "::1", "localhost"}
 # 不用配對就能用的：配對本身、健康檢查
-OPEN_PATHS = {"/api/auth", "/api/auth/pair", "/api/auth/send-code", "/api/health"}
+OPEN_PATHS = {"/api/auth", "/api/auth/pair", "/api/auth/send-code", "/api/health", "/api/tls/ca.crt"}  # 根憑證是公開的，還沒配對的裝置也要能先裝
 
 
 def _is_local(request: Request) -> bool:
@@ -1268,6 +1319,29 @@ async def faces_thumb(item_id: str, request: Request) -> Response:
     if not path:
         raise HTTPException(404, "沒有這張圖（可能超過 7 天已經刪掉）")
     return Response(path.read_bytes(), media_type="image/jpeg", headers={"Cache-Control": "private, no-store"})
+
+
+# ---- 安全連線（HTTPS）----
+
+
+@app.get("/api/tls")
+def tls_info(request: Request) -> dict[str, Any]:
+    """HTTPS 的狀態：這次是不是用 HTTPS 連的、埠、根憑證的指紋、伺服器憑證的期限和包含的位址。"""
+    try:
+        data = tlsmod.info(DATA_DIR) if HTTPS_PORT else {"ready": False}
+    except Exception as err:  # noqa: BLE001
+        data = {"ready": False, "error": str(err)}
+    return {**data, "port": HTTPS_PORT, "secure": request.url.scheme == "https"}
+
+
+@app.get("/api/tls/ca.crt")
+def tls_ca() -> Response:
+    """下載家裡專用的根憑證（公開的；私鑰不會離開樹莓派）。"""
+    path = DATA_DIR / "tls" / "ca.crt"
+    if not path.exists():
+        raise HTTPException(404, "還沒有憑證")
+    return Response(path.read_bytes(), media_type="application/x-x509-ca-cert",
+                    headers={"Content-Disposition": 'attachment; filename="homecontrol-ca.crt"', "Cache-Control": "no-store"})
 
 
 @app.get("/api/net/plug-health")
