@@ -110,8 +110,10 @@ class Pose:
             kp = p[:51].reshape(17, 3).tolist()
             y0, x0, y1, x1 = (float(v) for v in p[51:55])
             bw, bh = max(1e-6, (x1 - x0) * w), max(1e-6, (y1 - y0) * h)  # 換回原圖的像素比例
+            ank = [k for k in (kp[15], kp[16]) if k[2] >= 0.2]  # 左右腳踝（y, x, 分數）
+            ft = (sum(k[1] for k in ank) / len(ank), sum(k[0] for k in ank) / len(ank)) if ank else ((x0 + x1) / 2, y1)
             people.append({"score": float(p[55]), "torso": torso_deg(kp), "aspect": bh / bw,
-                           "box": (int(x0 * w), int(y0 * h), int(bw), int(bh))})
+                           "box": (int(x0 * w), int(y0 * h), int(bw), int(bh)), "foot": (min(1.0, max(0.0, ft[0])), min(1.0, max(0.0, ft[1])))})
         return people
 
 

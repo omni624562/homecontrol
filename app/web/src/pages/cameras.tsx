@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { PageHeader } from "@/components/app-shell";
-import { CamAccessBox, CamLive, SLOT, hhmm, type Cam, type CamAccess, type FacePerson, type FaceRep } from "@/components/camera-bits";
+import { CamAccessBox, CamLive, SLOT, hhmm, type Act, type Cam, type CamAccess, type FacePerson, type FaceRep, type Line, type Zone } from "@/components/camera-bits";
 import type { MotionRule } from "@/components/motion-rules";
 import { api } from "@/lib/api";
 import { useHub } from "@/lib/hub";
@@ -256,14 +256,17 @@ function CamDetail(p: DetailProps) {
   );
 }
 
+type Kind = "door" | number | `z:${number}`;
+const ZONE_C = "rgb(139 92 246)"; // 區域和線的顏色（跟門的藍、不要看的橘分開）
+
 // 畫面：在即時畫面上點出門、「不要看的地方」的形狀（任意多邊形，斜斜的門也框得剛好）；基本設定
 type P = number[];
 const near = (a: P, b: P) => Math.hypot(a[0] - b[0], (a[1] - b[1]) * 0.5625) < 0.03; // 0.5625 = 9/16：換成畫面上的距離
 
-function ViewTab({ cam, rooms, setCams, upd, onBack }: DetailProps & { upd: (b: object, ok?: string) => Promise<void> }) {
-  const [mode, setMode] = useState<"door" | "ignore" | null>(null); // 正在畫哪一種
+function ViewTab({ cam, rooms, scenes, setCams, upd, onBack }: DetailProps & { upd: (b: object, ok?: string) => Promise<void> }) {
+  const [mode, setMode] = useState<"door" | "ignore" | "zone" | "line" | null>(null); // 正在畫哪一種
   const [pts, setPts] = useState<P[]>([]); // 正在畫的頂點
-  const [adj, setAdj] = useState<{ kind: "door" | number; pts: P[] } | null>(null); // 正在調整哪一塊
+  const [adj, setAdj] = useState<{ kind: Kind; pts: P[] } | null>(null); // 正在調整哪一塊（門、第幾塊不要看的地方、「z:第幾個區域」）
   const [hover, setHover] = useState<P | null>(null);
   const [t, setT] = useState(() => Date.now());
   const [busy, setBusy] = useState(false);
@@ -279,26 +282,42 @@ function ViewTab({ cam, rooms, setCams, upd, onBack }: DetailProps & { upd: (b: 
     return [Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), Math.min(1, Math.max(0, (e.clientY - r.top) / r.height))];
   };
   const r4 = (q: P[]) => q.map(([x, y]) => [Math.round(x * 1e4) / 1e4, Math.round(y * 1e4) / 1e4]);
-  const saveZone = async (kind: "door" | number, q: P[]) => {
-    if (kind === "door") {
+  const putZones = async (zs: Zone[], ok?: string) => { const r = await call<{ cameras: Cam[] }>("PUT", `/api/cameras/${cam.id}/zones`, { zones: zs }, ok); if (r) setCams(r.cameras); };
+  const putLines = async (ls: Line[], ok?: string) => { const r = await call<{ cameras: Cam[] }>("PUT", `/api/cameras/${cam.id}/lines`, { lines: ls }, ok); if (r) setCams(r.cameras); };
+  const saveZone = async (kind: Kind, q: P[]) => {
+    if (typeof kind === "string" && kind.startsWith("z:")) {
+      const i = Number(kind.slice(2));
+      const zs = [...(cam.zones || [])];
+      if (i >= zs.length) zs.push({ id: "", name: `區域 ${zs.length + 1}`, kind: "area", poly: r4(q), linger: 0, act: { notify: "off", scene: null, dark: false } });
+      else zs[i] = { ...zs[i], poly: r4(q) };
+      await putZones(zs, i >= (cam.zones || []).length ? "區域畫好了，在下面設定它要偵測什麼" : "形狀存好了");
+    } else if (kind === "door") {
       const r = await call<{ cameras: Cam[] }>("PUT", `/api/cameras/${cam.id}/door`, { poly: r4(q) }, "門的形狀存好了；門關著時按「門關著，記住這個樣子」");
       if (r) setCams(r.cameras);
-    } else {
+    } else if (typeof kind === "number") {
       const zones = [...(cam.ignore || [])];
       if (kind >= zones.length) zones.push(r4(q)); else zones[kind] = r4(q);
       await upd({ ignore: zones }, "存好了：這一塊之後不會看（路人、樹影不會被當成有人）");
     }
   };
   const finish = async () => {
-    if (pts.length < 3 || !mode) return;
-    await saveZone(mode === "door" ? "door" : (cam.ignore || []).length, pts);
+    if (pts.length < 3 || !mode || mode === "line") return;
+    await saveZone(mode === "door" ? "door" : mode === "zone" ? `z:${(cam.zones || []).length}` : (cam.ignore || []).length, pts);
     setMode(null);
     setPts([]);
   };
-  const start = (m: "door" | "ignore") => { setAdj(null); setPts([]); setMode(mode === m ? null : m); };
+  const start = (m: "door" | "ignore" | "zone" | "line") => { setAdj(null); setPts([]); setMode(mode === m ? null : m); };
   const onTap = (e: React.MouseEvent) => {
     if (!mode) return;
     const q = pos(e);
+    if (mode === "line") { // 線：點兩下（起點、終點）就好
+      if (!pts.length) { setPts([q]); return; }
+      const ls = [...(cam.lines || []), { id: "", name: `線 ${(cam.lines || []).length + 1}`, a: r4([pts[0]])[0], b: r4([q])[0], in: { notify: "off" as const, scene: null, dark: false }, out: { notify: "off" as const, scene: null, dark: false } }];
+      putLines(ls, "線畫好了：箭頭那邊算「回來」，方向不對可以在下面反過來");
+      setMode(null);
+      setPts([]);
+      return;
+    }
     if (pts.length >= 3 && near(q, pts[0])) { finish(); return; } // 點回第一個點：完成
     if (pts.length < 12) setPts([...pts, q]);
   };
@@ -343,7 +362,41 @@ function ViewTab({ cam, rooms, setCams, upd, onBack }: DetailProps & { upd: (b: 
                 {label(z, "不要看", "rgb(180 83 9)")}
               </g>
             ))}
-            {mode && pts.length > 0 && (
+            {(cam.zones || []).map((z, i) => {
+              const q = adj?.kind === `z:${i}` ? adj.pts : z.poly;
+              const lit = z.busy || z.open;
+              return (
+                <g key={`z${i}`}>
+                  <polygon points={path(q)} fill={lit ? "rgb(249 115 22)" : ZONE_C} fillOpacity={lit ? 0.28 : 0.16} stroke={lit ? "rgb(249 115 22)" : ZONE_C} vectorEffect="non-scaling-stroke" style={{ strokeWidth: 2 }} />
+                  {label(q, z.name + (z.kind === "door" && z.refs ? (z.open ? "・開著" : "・關著") : z.busy ? "・有人" : ""), lit ? "rgb(234 88 12)" : "rgb(109 40 217)")}
+                </g>
+              );
+            })}
+            {(cam.lines || []).map((ln, i) => {
+              const [ax, ay] = ln.a, [bx, by] = ln.b;
+              // 箭頭：在線中間、指向「回來」那一邊（畫面上 16:9，算垂直方向時要換成畫面比例）
+              const dx = (bx - ax) * 16, dy = (by - ay) * 9, L = Math.hypot(dx, dy) || 1;
+              // 畫面上的垂直方向 (dy, -dx) 就是後端算「回來」的那一邊；長度約畫面寬的 1/10，再換回 0～1 座標
+              const nx = ((dy / L) * 1.6) / 16, ny = ((-dx / L) * 1.6) / 9;
+              const mx = (ax + bx) / 2, my = (ay + by) / 2;
+              return (
+                <g key={`l${i}`}>
+                  <line x1={ax} y1={ay} x2={bx} y2={by} stroke={ZONE_C} vectorEffect="non-scaling-stroke" style={{ strokeWidth: 3 }} />
+                  <line x1={mx - nx * 0.4} y1={my - ny * 0.4} x2={mx + nx} y2={my + ny} stroke={ZONE_C} vectorEffect="non-scaling-stroke" style={{ strokeWidth: 2 }} markerEnd="url(#cam-arrow)" />
+                  <text x={mx + nx * 1.5} y={my + ny * 1.5} textAnchor="middle" dominantBaseline="middle" fill="rgb(109 40 217)" stroke="var(--card)" strokeWidth={0.006} paintOrder="stroke" style={{ fontSize: 0.04, fontWeight: 700 }}>回來</text>
+                  <text x={mx - nx * 1.1} y={my - ny * 1.1} textAnchor="middle" dominantBaseline="middle" fill="rgb(109 40 217)" stroke="var(--card)" strokeWidth={0.006} paintOrder="stroke" style={{ fontSize: 0.035 }}>出去</text>
+                  {label([ln.a, ln.b], ln.name, "rgb(109 40 217)")}
+                </g>
+              );
+            })}
+            <defs><marker id="cam-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill={ZONE_C} /></marker></defs>
+            {mode === "line" && pts.length === 1 && (
+              <g>
+                {hover && <line x1={pts[0][0]} y1={pts[0][1]} x2={hover[0]} y2={hover[1]} stroke={ZONE_C} strokeDasharray="6 4" vectorEffect="non-scaling-stroke" style={{ strokeWidth: 2 }} />}
+                <ellipse cx={pts[0][0]} cy={pts[0][1]} rx={0.011} ry={0.02} fill={ZONE_C} />
+              </g>
+            )}
+            {mode && mode !== "line" && pts.length > 0 && (
               <g>
                 <polyline points={path(hover ? [...pts, hover] : pts)} fill={mode === "door" ? "var(--primary)" : "rgb(245 158 11)"} fillOpacity={0.14}
                   stroke={mode === "door" ? "var(--primary)" : "rgb(245 158 11)"} vectorEffect="non-scaling-stroke" style={{ strokeWidth: 2 }} />
@@ -357,13 +410,13 @@ function ViewTab({ cam, rooms, setCams, upd, onBack }: DetailProps & { upd: (b: 
             ))}
           </svg>
           {mode && <div className="pointer-events-none absolute inset-x-0 top-0 bg-background/85 py-1.5 text-center text-sm font-medium">
-            {pts.length < 3 ? `一點一點點出${mode === "door" ? "門" : "不要看的地方"}的角（已點 ${pts.length} 個）` : "繼續點，或點回第一個點／按「完成」"}</div>}
+            {mode === "line" ? (pts.length ? "再點一下線的終點" : "點一下線的起點（例如樓梯口的一邊）") : pts.length < 3 ? `一點一點點出${mode === "door" ? "門" : mode === "zone" ? "區域" : "不要看的地方"}的角（已點 ${pts.length} 個）` : "繼續點，或點回第一個點／按「完成」"}</div>}
           {adj && <div className="pointer-events-none absolute inset-x-0 top-0 bg-background/85 py-1.5 text-center text-sm font-medium">拖圓點調整形狀，好了按「儲存」</div>}
         </div>
 
         {mode ? (
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" disabled={pts.length < 3} onClick={finish}>完成</Button>
+            {mode !== "line" && <Button size="sm" disabled={pts.length < 3} onClick={finish}>完成</Button>}
             <Button variant="outline" size="sm" disabled={!pts.length} onClick={() => setPts(pts.slice(0, -1))}>復原上一點</Button>
             <Button variant="ghost" size="sm" onClick={() => { setMode(null); setPts([]); }}>取消</Button>
           </div>
@@ -377,6 +430,8 @@ function ViewTab({ cam, rooms, setCams, upd, onBack }: DetailProps & { upd: (b: 
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" size="sm" onClick={() => start("door")}><DoorOpen />{door?.rect ? "重畫門" : "畫出門"}</Button>
             <Button variant="outline" size="sm" onClick={() => start("ignore")}><Plus />不要看的地方</Button>
+            <Button variant="outline" size="sm" onClick={() => start("zone")}><Plus />區域</Button>
+            <Button variant="outline" size="sm" onClick={() => start("line")}><Plus />線</Button>
             {door?.rect && <Button size="sm" disabled={busy} onClick={remember}>{busy && <Loader2 className="animate-spin" />}門關著，記住這個樣子{door.refs ? `（已記 ${door.refs} 張）` : ""}</Button>}
           </div>
         )}
@@ -398,6 +453,11 @@ function ViewTab({ cam, rooms, setCams, upd, onBack }: DetailProps & { upd: (b: 
         )}
         <p className="text-xs text-muted-foreground">門只比對畫出來的形狀裡面；「不要看的地方」會在認人之前先塗掉，路人、樹影、電視畫面就不會被當成有人。這裡看到的是原本的畫面。</p>
       </Card>
+
+      {((cam.zones || []).length > 0 || (cam.lines || []).length > 0) && (
+        <ZonesCard cam={cam} scenes={scenes} putZones={putZones} putLines={putLines} setCams={setCams}
+          onAdjust={(i) => { setMode(null); setAdj({ kind: `z:${i}`, pts: (cam.zones || [])[i].poly.map((q) => [...q]) }); }} />
+      )}
 
       <Card className="gap-0 divide-y py-0">
         <div className="space-y-2 px-4 py-3.5">
@@ -444,6 +504,90 @@ function ViewTab({ cam, rooms, setCams, upd, onBack }: DetailProps & { upd: (b: 
         </div>
       </Card>
     </>
+  );
+}
+
+// 區域和線：每一個要偵測什麼、觸發後做什麼
+const NOTIFY: [string, string][] = [["off", "不通知"], ["away", "沒人在家時通知"], ["always", "每次都通知"]];
+function ActRow({ act, scenes, onChange, label }: { act: Act; scenes: { id: string; name: string }[]; onChange: (a: Act) => void; label?: string }) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-sm">
+      {label && <span className="w-12 shrink-0 font-medium">{label}</span>}
+      <Select value={act.notify} onValueChange={(v) => onChange({ ...act, notify: v as Act["notify"] })}>
+        <SelectTrigger className="h-8 w-36 bg-background" aria-label={`${label || ""}通知`}><SelectValue /></SelectTrigger>
+        <SelectContent>{NOTIFY.map(([k, t]) => <SelectItem key={k} value={k}>{t}</SelectItem>)}</SelectContent>
+      </Select>
+      <Select value={act.scene || "_none"} onValueChange={(v) => onChange({ ...act, scene: v === "_none" ? null : v })}>
+        <SelectTrigger className="h-8 w-36 bg-background" aria-label={`${label || ""}執行的情境`}><SelectValue /></SelectTrigger>
+        <SelectContent><SelectItem value="_none">不執行情境</SelectItem>{scenes.map((sc) => <SelectItem key={sc.id} value={sc.id}>執行「{sc.name}」</SelectItem>)}</SelectContent>
+      </Select>
+      {act.scene && <label className="flex items-center gap-1.5"><Switch checked={act.dark} onCheckedChange={(v) => onChange({ ...act, dark: v })} aria-label="只在天黑後" />只在天黑後</label>}
+    </div>
+  );
+}
+
+function ZonesCard({ cam, scenes, putZones, putLines, setCams, onAdjust }: { cam: Cam; scenes: { id: string; name: string }[]; putZones: (z: Zone[], ok?: string) => Promise<void>; putLines: (l: Line[], ok?: string) => Promise<void>; setCams: (c: Cam[]) => void; onAdjust: (i: number) => void }) {
+  const zs = cam.zones || [], ls = cam.lines || [];
+  const setZ = (i: number, patch: Partial<Zone>, ok = "已更新") => putZones(zs.map((z, j) => (j === i ? { ...z, ...patch } : z)), ok);
+  const setL = (i: number, patch: Partial<Line>, ok = "已更新") => putLines(ls.map((l, j) => (j === i ? { ...l, ...patch } : l)), ok);
+  const remember = async (z: Zone) => {
+    const r = await call<{ cameras: Cam[]; refs: number }>("POST", `/api/cameras/${cam.id}/zones/${z.id}/ref`, undefined, z.kind === "door" ? "記住了關著的樣子" : "記住了：現在的樣子是正常的");
+    if (r) setCams(r.cameras);
+  };
+  return (
+    <Card className="gap-0 divide-y py-0">
+      <div className="px-4 py-3 font-semibold">區域和線</div>
+      {zs.map((z, i) => (
+        <div key={z.id || i} className="space-y-2.5 px-4 py-3.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="size-3 rounded-sm" style={{ background: ZONE_C }} aria-hidden />
+            <Input className="h-8 w-32 bg-background" defaultValue={z.name} maxLength={12} aria-label="區域名稱" onBlur={(e) => e.target.value.trim() && e.target.value !== z.name && setZ(i, { name: e.target.value.trim() }, "已改名")} />
+            <Select value={z.kind} onValueChange={(v) => setZ(i, { kind: v as Zone["kind"] }, "已更新；如果是門或東西，請按「現在的樣子是正常的」")}>
+              <SelectTrigger className="h-8 w-40 bg-background" aria-label="這一區偵測什麼"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="area">有人／逗留</SelectItem>
+                <SelectItem value="object">東西多了／不見了</SelectItem>
+                <SelectItem value="door">門（例如電梯門）</SelectItem>
+              </SelectContent>
+            </Select>
+            {z.kind === "area" && (
+              <Select value={String(z.linger || 0)} onValueChange={(v) => setZ(i, { linger: Number(v) })}>
+                <SelectTrigger className="h-8 w-36 bg-background" aria-label="待多久才算"><SelectValue /></SelectTrigger>
+                <SelectContent>{[0, 10, 30, 60, 120, 300].map((sec) => <SelectItem key={sec} value={String(sec)}>{sec ? `待超過 ${sec >= 60 ? `${sec / 60} 分鐘` : `${sec} 秒`}` : "一進來就算"}</SelectItem>)}</SelectContent>
+              </Select>
+            )}
+            <span className="ml-auto flex gap-1">
+              <Button variant="ghost" size="sm" onClick={() => onAdjust(i)}>調整形狀</Button>
+              <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive" aria-label={`移除 ${z.name}`} onClick={() => putZones(zs.filter((_, j) => j !== i), "已移除")}><Trash2 /></Button>
+            </span>
+          </div>
+          {z.kind !== "area" && (
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <Button size="sm" variant="outline" className="bg-background" onClick={() => remember(z)}>{z.kind === "door" ? "門關著，記住這個樣子" : "現在的樣子是正常的"}{z.refs ? `（已記 ${z.refs} 張）` : ""}</Button>
+              <span className="text-muted-foreground">{z.score != null ? `現在相似度 ${z.score}` : z.kind === "object" ? "沒記的話，沒人、畫面穩定 1 分鐘後會自己記" : "還沒記住"}</span>
+            </div>
+          )}
+          <ActRow act={z.act} scenes={scenes} onChange={(a) => setZ(i, { act: a })} />
+          <p className="text-xs text-muted-foreground">{z.kind === "area" ? "有人的腳踩進這一區才算（不會被經過旁邊的人觸發）。" : z.kind === "object" ? "沒人的時候比對：跟正常的樣子不一樣、而且維持 2 分鐘，才算多了東西或東西不見；之後自動把新的樣子記成正常的。" : "跟關著的樣子差很多就算開了；白天、晚上各記一次比較準。"}</p>
+        </div>
+      ))}
+      {ls.map((l, i) => (
+        <div key={l.id || i} className="space-y-2.5 px-4 py-3.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="h-0.5 w-4" style={{ background: ZONE_C }} aria-hidden />
+            <Input className="h-8 w-32 bg-background" defaultValue={l.name} maxLength={12} aria-label="線的名稱" onBlur={(e) => e.target.value.trim() && e.target.value !== l.name && setL(i, { name: e.target.value.trim() }, "已改名")} />
+            {l.last && <span className="text-sm text-muted-foreground">上次：{hhmm(l.last.t)} {l.last.way === "in" ? "回來" : "出去"}</span>}
+            <span className="ml-auto flex gap-1">
+              <Button variant="ghost" size="sm" onClick={() => setL(i, { a: l.b, b: l.a, in: l.out, out: l.in }, "方向反過來了")}>方向反過來</Button>
+              <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive" aria-label={`移除 ${l.name}`} onClick={() => putLines(ls.filter((_, j) => j !== i), "已移除")}><Trash2 /></Button>
+            </span>
+          </div>
+          <ActRow label="回來" act={l.in} scenes={scenes} onChange={(a) => setL(i, { in: a })} />
+          <ActRow label="出去" act={l.out} scenes={scenes} onChange={(a) => setL(i, { out: a })} />
+          <p className="text-xs text-muted-foreground">有人走過這條線就算；往箭頭那邊是「回來」。有人的時候每秒看 3 張，走樓梯也跟得上。</p>
+        </div>
+      ))}
+    </Card>
   );
 }
 

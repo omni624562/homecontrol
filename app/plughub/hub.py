@@ -21,7 +21,7 @@ from typing import Any, Callable
 
 from kasa import Device, Discover, Module
 
-from . import anomaly, arpprobe, camera, faces, habits, vision, locate, native, netlog, netprobe, roommotion, routine, sun, tariff
+from . import anomaly, arpprobe, camera, faces, habits, vision, zones as zonelib, locate, native, netlog, netprobe, roommotion, routine, sun, tariff
 from .sensing import INTERVAL as SENSE_INTERVAL, SAVE_EVERY as SENSE_SAVE_EVERY, Sensing
 from .notify import Notifier
 from .daysoff import DaysOff
@@ -161,6 +161,7 @@ class Hub:
         self.pose = vision.Pose()
         self._falls: dict[str, dict[str, Any]] = {}  # 攝影機 ID → 跌倒判斷的狀態
         self._door_pending: dict[str, float] = {}  # 攝影機 ID → 沒人在家時門被打開的時間（等家人的手機）
+        self._zone_pending: dict[str, dict[str, Any]] = {}  # 「攝影機:區域」→ 沒人在家時區域觸發的事（等家人的手機確認不是家人）
         self.locator = locate.Locator(self.store.data.setdefault("locate", {}))
         self._sense_path = store.dir / "sensing.json.gz"
         self.sensing.load(self._sense_path)
@@ -1386,6 +1387,9 @@ class Hub:
             if v["score"] >= roommotion.ACTIVE:
                 self._room_active[r] = now
         self._motion_rules(rm, now)
+        if getattr(self, "_dirty_cams", False):
+            self._dirty_cams = False
+            self.cameras.save()
         if any(events):
             await self.changed()
 
@@ -1399,14 +1403,15 @@ class Hub:
         if cam.get("pet_notify"):
             self.notifier.send(f"{cam.get('name')}看到{word}", f"{datetime.now().strftime('%H:%M')} 看到{word}")
 
-    async def _fall_check(self, cam: dict[str, Any], jpeg: bytes, now: float) -> None:
-        try:
-            people = await asyncio.to_thread(self.pose.analyze, jpeg)
-        except Exception as err:  # noqa: BLE001
-            if self.face_error != f"姿勢：{err}":
-                _LOGGER.warning("姿勢判斷失敗：%s", err)
-            self.face_error = f"姿勢：{err}"
-            return
+    async def _fall_check(self, cam: dict[str, Any], jpeg: bytes, now: float, people: list[dict[str, Any]] | None = None) -> None:
+        if people is None:
+            try:
+                people = await asyncio.to_thread(self.pose.analyze, jpeg)
+            except Exception as err:  # noqa: BLE001
+                if self.face_error != f"姿勢：{err}":
+                    _LOGGER.warning("姿勢判斷失敗：%s", err)
+                self.face_error = f"姿勢：{err}"
+                return
         st = self._falls.setdefault(cam["id"], {})
         if vision.fall_track(st, people, now) != "fall":
             return
@@ -1473,6 +1478,138 @@ class Hub:
             self.notifier.send("⚠️ 沒人在家，門被打開了", f"{cam.get('name') or cid}的門在 {datetime.fromtimestamp(t).strftime('%H:%M')} 打開，"
                                f"之後 {camera.ARRIVE_WAIT // 60} 分鐘都沒有家人的手機連上 Wi-Fi、門口也沒認出家人", "urgent")
 
+    # ---- 區域和線 ----
+
+    async def _zones_check(self, cam: dict[str, Any], st: dict[str, Any], jpeg: bytes, now: float, people: list[dict[str, Any]], someone: bool) -> None:
+        feet = [p["foot"] for p in people if p.get("foot")]
+        zst = st.setdefault("zones", {})
+        for z in cam.get("zones") or []:
+            s = zst.setdefault(z["id"], {})
+            kind = z.get("kind")
+            if kind == "area":
+                here = someone and any(zonelib.inside(f, z["poly"]) for f in feet)
+                for ev in zonelib.area_track(s, here, now, float(z.get("linger") or 0)):
+                    want = "linger" if z.get("linger") else "enter"
+                    if ev == want:
+                        self._zone_fire(cam, z, f"{z['name']}有人" + ("逗留" if ev == "linger" else ""), z.get("act") or {}, now)
+                continue
+            if kind not in ("object", "door"):
+                continue
+            try:
+                refs = z.get("_refs")
+                if refs is None:
+                    refs = z["_refs"] = [vision.sig_decode(r) for r in z.get("refs") or []]
+                sig = await asyncio.to_thread(vision.door_sig, jpeg, vision.poly_bbox(z["poly"]), z["poly"])
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug("區域判斷失敗：%s", err)
+                continue
+            score = round(vision.door_score(sig, refs), 2) if refs else None
+            s["score"] = score
+            if kind == "door":
+                if score is not None and vision.door_track(s, score) == "open":
+                    self._zone_fire(cam, z, f"{z['name']}開了", z.get("act") or {}, now)
+                continue
+            ev = zonelib.object_track(s, score, float(sig.sum()), now, someone)
+            if ev:
+                self._zone_learn(z, sig, s)  # 不管是第一次還是變了：現在的樣子記成正常的（包裹放著不會一直講）
+            if ev in ("more", "less", "changed"):
+                word = {"more": "多了東西", "less": "東西不見了", "changed": "有東西變了"}[ev]
+                self._zone_fire(cam, z, f"{z['name']}{word}", z.get("act") or {}, now, thumb=self._zone_thumb(jpeg, z["poly"]))
+        lst = st.setdefault("lines", {})
+        if someone or any((lst.get(ln["id"]) or {}).get("prev") for ln in cam.get("lines") or []):
+            for ln in cam.get("lines") or []:
+                self._line_feed(cam, ln, lst.setdefault(ln["id"], {}), feet if someone else [], now)
+
+    def _line_feed(self, cam: dict[str, Any], ln: dict[str, Any], s: dict[str, Any], feet: list[tuple[float, float]], now: float) -> None:
+        for way in zonelib.line_track(s, ln, feet, now):
+            s["last"] = {"way": way, "t": round(now)}
+            label = f"{ln.get('name') or '線'}：{'回來' if way == 'in' else '出去'}"
+            self._zone_fire(cam, ln, label, ln.get(way) or {}, now)
+
+    async def _line_boost(self, cams: list[dict[str, Any]]) -> None:
+        """有人經過畫了線的攝影機時，每秒多看兩張（走很快的人才不會跳過線）。"""
+        for c in cams:
+            if not c.get("lines") or not self.cameras.state.get(c["id"], {}).get("person"):
+                continue
+            lst = self.cameras.state[c["id"]].setdefault("lines", {})
+            for _ in range(2):
+                await asyncio.sleep(0.3)
+                try:
+                    jpeg = await asyncio.to_thread(camera.snapshot, c)
+                    if c.get("ignore"):
+                        jpeg = await asyncio.to_thread(camera.mask, jpeg, c["ignore"])
+                    people = await asyncio.to_thread(self.pose.analyze, jpeg)
+                except Exception:  # noqa: BLE001
+                    break
+                now = time.time()
+                feet = [p["foot"] for p in people if p.get("foot")]
+                for ln in c["lines"]:
+                    self._line_feed(c, ln, lst.setdefault(ln["id"], {}), feet, now)
+
+    def _zone_learn(self, z: dict[str, Any], sig: Any, s: dict[str, Any]) -> None:
+        z["refs"] = ((z.get("refs") or []) + [vision.sig_encode(sig)])[-zonelib.OBJ_KEEP:]
+        z.pop("_refs", None)
+        s["base_e"] = float(sig.sum())
+        self._dirty_cams = True
+
+    def zone_reference(self, cam: dict[str, Any], zid: str, jpeg: bytes) -> int:
+        """「現在的樣子是正常的」：門記成關著的樣子；東西多了／不見了記成正常的樣子。"""
+        z = next(x for x in cam.get("zones") or [] if x["id"] == zid)
+        sig = vision.door_sig(jpeg, vision.poly_bbox(z["poly"]), z["poly"])
+        keep = 4 if z.get("kind") == "door" else zonelib.OBJ_KEEP
+        z["refs"] = ((z.get("refs") or []) + [vision.sig_encode(sig)])[-keep:]
+        z.pop("_refs", None)
+        s = self.cameras.state.setdefault(cam["id"], {}).setdefault("zones", {}).setdefault(zid, {})
+        s.clear()
+        s["base_e"] = float(sig.sum())
+        return len(z["refs"])
+
+    def _zone_thumb(self, jpeg: bytes, poly: list[list[float]]) -> bytes:
+        try:
+            import io as _io
+
+            from PIL import Image
+
+            W, H = Image.open(_io.BytesIO(jpeg)).size
+            x, y, w, h = vision.poly_bbox(poly)
+            return self.face_engine.thumb(jpeg, (int(x * W), int(y * H), int(w * W), int(h * H)), 240)
+        except Exception:  # noqa: BLE001
+            return b""
+
+    def _zone_fire(self, cam: dict[str, Any], item: dict[str, Any], label: str, act: dict[str, Any], now: float, thumb: bytes | None = None) -> None:
+        """區域、線觸發了：記紀錄；照設定執行情境、通知（沒人在家時先等 3 分鐘確認不是家人）。"""
+        name = cam.get("name") or cam["host"]
+        key = f"{cam['id']}:{item['id']}:{label}"
+        if not self._face_once(key, 20, now):
+            return
+        self.face_log.add({"camera": name, "kind": "zone", "name": label, "sim": None}, thumb or None)
+        scene = act.get("scene")
+        if scene and (not act.get("dark") or self.is_dark()) and self._face_once(f"{key}:scene", 60, now):
+            self._presence_scene(scene, f"{name}：{label}")
+        mode = act.get("notify", "off")
+        at = datetime.now().strftime("%H:%M")
+        if mode == "always":
+            self.notifier.send(f"{name}：{label}", at)
+        elif mode == "away":
+            people = self.people_report()
+            if people and all(p.get("home") is False for p in people) and key not in self._zone_pending:
+                self._zone_pending[key] = {"t": now, "title": f"⚠️ 沒人在家，{name}：{label}", "msg": at}
+                if not self._probe_busy:
+                    self._probe_busy = True
+                    self._spawn(self._probe_people())
+
+    def _zone_pending_check(self, now: float) -> None:
+        if not self._zone_pending:
+            return
+        home = any(p.get("home") for p in self.people_report())
+        family = any(self.gallery.people.get(pid, {}).get("kind") == "family" for v in self._visits.values() for pid in v["known"])
+        for key, x in list(self._zone_pending.items()):
+            if home or family or now - self._face_arrived_at < camera.ARRIVE_WAIT:
+                del self._zone_pending[key]
+            elif now - x["t"] >= camera.ARRIVE_WAIT:
+                del self._zone_pending[key]
+                self.notifier.send(x["title"], f"{x['msg']}，之後 {camera.ARRIVE_WAIT // 60} 分鐘都沒有家人的手機連上 Wi-Fi、門口也沒認出家人", "urgent")
+
     def door_reference(self, cam: dict[str, Any], jpeg: bytes) -> int:
         """記住「門關著」的樣子（最多 4 張：白天、晚上各記一下就好）。"""
         door = cam.get("door") or {}
@@ -1496,8 +1633,18 @@ class Hub:
                 self._pet_seen(c, name, now)
             await self._door_check(c, st, jpeg, now)
             person = st.get("person")
-            if person and c.get("fall"):
-                await self._fall_check(c, jpeg, now)
+            areas = [z for z in c.get("zones") or [] if z.get("kind") == "area"]
+            people = None
+            if person and (c.get("fall") or areas or c.get("lines")):
+                try:
+                    people = await asyncio.to_thread(self.pose.analyze, jpeg)
+                except Exception as err:  # noqa: BLE001
+                    if self.face_error != f"姿勢：{err}":
+                        _LOGGER.warning("姿勢判斷失敗：%s", err)
+                    self.face_error = f"姿勢：{err}"
+            if people is not None and c.get("fall"):
+                await self._fall_check(c, jpeg, now, people)
+            await self._zones_check(c, st, jpeg, now, people or [], bool(person))
             enrolling = self.enroll is not None and self.enroll["cam"] == c["id"]
             if not (enrolling or (person and c.get("faces", True))):
                 continue
@@ -1518,6 +1665,8 @@ class Hub:
         for cid in [k for k in self._visits if not self.cameras.state.get(k, {}).get("person")]:
             del self._visits[cid]  # 人走了：這次結束
         self._door_pending_check(now)
+        self._zone_pending_check(now)
+        await self._line_boost(cams)
 
     def _face_visit(self, cam: dict[str, Any], jpeg: bytes, found: list[dict[str, Any]], now: float) -> None:
         v = self._visits.setdefault(cam["id"], {"start": now, "known": set(), "maybe": set(), "stranger": 0, "best": None, "alerted": False})
