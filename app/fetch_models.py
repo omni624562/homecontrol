@@ -2,9 +2,12 @@
 
 - EfficientDet-Lite0（Apache 2.0）：認人
 - YuNet（MIT）：找臉；SFace（Apache 2.0）：認是誰。都來自 OpenCV Zoo
+- MoveNet MultiPose Lightning（Apache 2.0）：姿勢（跌倒偵測），Kaggle 上的 tar.gz
 """
 import hashlib
+import io
 import sys
+import tarfile
 import urllib.request
 from pathlib import Path
 
@@ -22,6 +25,10 @@ MODELS = {
         ZOO + "face_recognition_sface/face_recognition_sface_2021dec.onnx",
         "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79",
     ),
+    "movenet_multipose.tflite": (
+        "https://www.kaggle.com/api/v1/models/google/movenet/tfLite/multipose-lightning-tflite-float16/1/download",
+        "d4489f89e6bd6777a8b9a1a16189832131f84ff90d82fae729e670b84d7948dd",
+    ),
 }
 
 
@@ -30,6 +37,10 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
     for name, (url, sha) in MODELS.items():
         data = urllib.request.urlopen(url, timeout=120).read()  # noqa: S310
+        if data[:2] == b"\x1f\x8b":  # tar.gz：取出裡面唯一的 .tflite
+            with tarfile.open(fileobj=io.BytesIO(data)) as tar:
+                member = next(m for m in tar.getmembers() if m.name.endswith(".tflite"))
+                data = tar.extractfile(member).read()
         got = hashlib.sha256(data).hexdigest()
         if got != sha:
             sys.exit(f"{name} 的 SHA-256 不對：{got}")

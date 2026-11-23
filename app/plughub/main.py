@@ -23,6 +23,7 @@ GET /api/net/events         斷線紀錄：外網、基地台卡住、Wi-Fi、�
 GET /api/net/plug-health    插座連線健檢：斷幾次、訊號、建議
 GET/POST /api/cameras       網路攝影機（認人）；PUT/DELETE /api/cameras/{id}（room、enabled、alert、帳密）；GET …/{id}/snapshot.jpg 現在的畫面
 GET /api/faces              認臉：認得的人、動作、登記（POST/DELETE /api/faces/enroll）、紀錄；PUT /api/faces/actions、PUT/DELETE /api/faces/{id}
+PUT /api/cameras/{id}/door  開門偵測（框門、通知、天黑情境）；POST …/door/ref 記住門關著的樣子；DELETE …/door
 PUT /api/cameras/access     誰可以看攝影機；POST …/access/send-code 驗證碼送到手機、POST …/access/claim 開通這台
 GET /api/report/monthly     每月報告預覽（上個月）
 GET/PUT /api/motion-rules   動靜自動化：{"rules": [{"room","plug","start","end","off_min","need_home","enabled"}]}
@@ -932,7 +933,7 @@ async def cameras_update(cam_id: str, request: Request, body: dict = Body(...)) 
     if "room" in body:
         rooms = {r.get("id") for r in (store.data.get("floorplan") or {}).get("rooms") or []}
         cam["room"] = body["room"] if body["room"] in rooms else None
-    for key in ("enabled", "alert", "faces"):
+    for key in ("enabled", "alert", "faces", "pets", "fall", "pet_notify"):
         if key in body:
             cam[key] = bool(body[key])
     if body.get("role") in ("entry", "room"):
@@ -951,6 +952,61 @@ async def cameras_update(cam_id: str, request: Request, body: dict = Body(...)) 
         hub.cameras.state.pop(cam_id, None)
     hub.cameras.save()
     await hub.changed()
+    return {"cameras": hub.cameras.public()}
+
+
+@app.put("/api/cameras/{cam_id}/door")
+async def cameras_door(cam_id: str, request: Request, body: dict = Body(...)) -> dict[str, Any]:
+    """開門偵測：{"rect": [x, y, w, h]（0～1，框出門；改了要重新記門關著的樣子）, "notify": away/always/off, "scene": 天黑後開門執行的情境}"""
+    _need_view(request)
+    cam = hub.cameras.get(cam_id)
+    if not cam:
+        raise HTTPException(404, "找不到這台攝影機")
+    door = dict(cam.get("door") or {})
+    if "rect" in body:
+        try:
+            x, y, w, h = (min(1.0, max(0.0, float(v))) for v in body["rect"])
+        except (TypeError, ValueError):
+            raise HTTPException(400, "框的位置不對") from None
+        if w < 0.03 or h < 0.03:
+            raise HTTPException(400, "框太小了")
+        door.update(rect=[round(x, 4), round(y, 4), round(w, 4), round(h, 4)], refs=[])
+        door.pop("_refs", None)
+        hub.cameras.state.get(cam_id, {}).pop("door", None)
+    if body.get("notify") in ("away", "always", "off"):
+        door["notify"] = body["notify"]
+    if "scene" in body:
+        door["scene"] = body["scene"] if body["scene"] and store.scene(body["scene"]) else None
+    cam["door"] = door
+    hub.cameras.save()
+    return {"cameras": hub.cameras.public()}
+
+
+@app.post("/api/cameras/{cam_id}/door/ref")
+async def cameras_door_ref(cam_id: str, request: Request) -> dict[str, Any]:
+    """現在門是關著的：記住這個樣子（白天、晚上各記一次）。"""
+    _need_view(request)
+    cam = hub.cameras.get(cam_id)
+    if not cam or not (cam.get("door") or {}).get("rect"):
+        raise HTTPException(400, "先框出門的位置")
+    try:
+        jpeg = await asyncio.to_thread(camera_mod.snapshot, cam)
+        n = hub.door_reference(cam, jpeg)
+    except Exception as err:  # noqa: BLE001
+        raise HTTPException(502, f"記不起來：{err}") from None
+    hub.cameras.save()
+    return {"cameras": hub.cameras.public(), "refs": n}
+
+
+@app.delete("/api/cameras/{cam_id}/door")
+async def cameras_door_delete(cam_id: str, request: Request) -> dict[str, Any]:
+    _need_view(request)
+    cam = hub.cameras.get(cam_id)
+    if not cam:
+        raise HTTPException(404, "找不到這台攝影機")
+    cam["door"] = None
+    hub.cameras.state.get(cam_id, {}).pop("door", None)
+    hub.cameras.save()
     return {"cameras": hub.cameras.public()}
 
 

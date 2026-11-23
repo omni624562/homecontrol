@@ -21,7 +21,7 @@ from typing import Any, Callable
 
 from kasa import Device, Discover, Module
 
-from . import anomaly, arpprobe, camera, faces, habits, locate, native, netlog, netprobe, roommotion, routine, sun, tariff
+from . import anomaly, arpprobe, camera, faces, habits, vision, locate, native, netlog, netprobe, roommotion, routine, sun, tariff
 from .sensing import INTERVAL as SENSE_INTERVAL, SAVE_EVERY as SENSE_SAVE_EVERY, Sensing
 from .notify import Notifier
 from .daysoff import DaysOff
@@ -158,6 +158,9 @@ class Hub:
         self._face_arrived_at = 0.0  # 上次認臉認出家人回家的時間（Wi-Fi 的「回家情境」就不用再跑一次）
         self.enroll: dict[str, Any] | None = None  # 正在登記的臉：{"pid","name","kind","cam","until","cands"}
         self.enroll_result: dict[str, Any] | None = None
+        self.pose = vision.Pose()
+        self._falls: dict[str, dict[str, Any]] = {}  # 攝影機 ID → 跌倒判斷的狀態
+        self._door_pending: dict[str, float] = {}  # 攝影機 ID → 沒人在家時門被打開的時間（等家人的手機）
         self.locator = locate.Locator(self.store.data.setdefault("locate", {}))
         self._sense_path = store.dir / "sensing.json.gz"
         self.sensing.load(self._sense_path)
@@ -1360,7 +1363,7 @@ class Hub:
         seen = self.cameras.rooms_with_person()
         for room, names in self.cameras.rooms().items():
             v = rm.get(room) or {"score": 0.0, "cover": 0.0, "hot": []}
-            rm[room] = {**v, "cover": max(v["cover"], 1.0), "camera": names, "person": room in seen}
+            rm[room] = {**v, "cover": max(v["cover"], 1.0), "camera": names, "person": room in seen, "pets": self.cameras.pets_in(room)}
             if room in seen:
                 rm[room]["score"] = max(v["score"], CAMERA_SCORE)
         return rm
@@ -1386,15 +1389,117 @@ class Hub:
         if any(events):
             await self.changed()
 
+    # ---- 寵物、跌倒、開門 ----
+
+    def _pet_seen(self, cam: dict[str, Any], name: str, now: float) -> None:
+        word = {"cat": "貓", "dog": "狗"}.get(name, name)
+        if not self._face_once(f"{cam['id']}:pet:{name}", FACE_COOL, now):
+            return
+        self.face_log.add({"camera": cam.get("name"), "kind": "pet", "name": word, "sim": None})
+        if cam.get("pet_notify"):
+            self.notifier.send(f"{cam.get('name')}看到{word}", f"{datetime.now().strftime('%H:%M')} 看到{word}")
+
+    async def _fall_check(self, cam: dict[str, Any], jpeg: bytes, now: float) -> None:
+        try:
+            people = await asyncio.to_thread(self.pose.analyze, jpeg)
+        except Exception as err:  # noqa: BLE001
+            if self.face_error != f"姿勢：{err}":
+                _LOGGER.warning("姿勢判斷失敗：%s", err)
+            self.face_error = f"姿勢：{err}"
+            return
+        st = self._falls.setdefault(cam["id"], {})
+        if vision.fall_track(st, people, now) != "fall":
+            return
+        flat = next((p for p in people if vision.posture(p) == "flat"), people[0] if people else None)
+        try:
+            thumb = self.face_engine.thumb(jpeg, flat["box"], 240) if flat else b""
+        except Exception:  # noqa: BLE001
+            thumb = b""
+        self.face_log.add({"camera": cam.get("name"), "kind": "fall", "sim": None}, thumb)
+        if self._face_once(f"{cam['id']}:fall", camera.ALERT_GAP, now):
+            self.notifier.send("⚠️ 可能有人跌倒", f"{cam.get('name')} {datetime.now().strftime('%H:%M')} 看到有人站著突然倒下，"
+                               f"超過 {vision.FALL_HOLD} 秒沒起來。請確認一下；照片在「設定 → 認臉 → 攝影機紀錄」", "urgent")
+
+    async def _door_check(self, cam: dict[str, Any], st: dict[str, Any], jpeg: bytes, now: float) -> None:
+        door = cam.get("door") or {}
+        if not door.get("rect") or not door.get("refs"):
+            return
+        try:
+            refs = door.get("_refs")
+            if refs is None:
+                refs = door["_refs"] = [vision.sig_decode(r) for r in door["refs"]]
+            sig = await asyncio.to_thread(vision.door_sig, jpeg, door["rect"])
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("門的判斷失敗：%s", err)
+            return
+        ds = st.setdefault("door", {})
+        ds["score"] = round(vision.door_score(sig, refs), 2)
+        ev = vision.door_track(ds, ds["score"])
+        if ev == "open":
+            self._door_opened(cam, door, now)
+        if ev:
+            await self.changed()
+
+    def _door_opened(self, cam: dict[str, Any], door: dict[str, Any], now: float) -> None:
+        name = cam.get("name") or cam["host"]
+        self.face_log.add({"camera": name, "kind": "door", "name": "開門", "sim": None})
+        if door.get("scene") and self.is_dark() and self._face_once(f"{cam['id']}:doorscene", 120, now):
+            self._presence_scene(door["scene"], f"{name}的門打開了")
+        mode = door.get("notify", "away")
+        people = self.people_report()
+        away = bool(people) and all(p.get("home") is False for p in people)
+        if mode == "always":
+            self.notifier.send(f"{name}的門打開了", datetime.now().strftime("%H:%M"))
+        elif mode == "away" and away and cam["id"] not in self._door_pending:
+            # 沒人在家：先等等看是不是家人回來（手機連上 Wi-Fi、或門口認出家人）
+            self._door_pending[cam["id"]] = now
+            if not self._probe_busy:
+                self._probe_busy = True
+                self._spawn(self._probe_people())
+
+    def _door_pending_check(self, now: float) -> None:
+        if not self._door_pending:
+            return
+        home = any(p.get("home") for p in self.people_report())
+        family = any(self.gallery.people.get(pid, {}).get("kind") == "family" for v in self._visits.values() for pid in v["known"])
+        for cid, t in list(self._door_pending.items()):
+            if home or family or now - self._face_arrived_at < camera.ARRIVE_WAIT:
+                del self._door_pending[cid]
+                continue
+            if now - t < camera.ARRIVE_WAIT:
+                continue
+            del self._door_pending[cid]
+            cam = self.cameras.get(cid) or {}
+            self.notifier.send("⚠️ 沒人在家，門被打開了", f"{cam.get('name') or cid}的門在 {datetime.fromtimestamp(t).strftime('%H:%M')} 打開，"
+                               f"之後 {camera.ARRIVE_WAIT // 60} 分鐘都沒有家人的手機連上 Wi-Fi、門口也沒認出家人", "urgent")
+
+    def door_reference(self, cam: dict[str, Any], jpeg: bytes) -> int:
+        """記住「門關著」的樣子（最多 4 張：白天、晚上各記一下就好）。"""
+        door = cam.get("door") or {}
+        sig = vision.door_sig(jpeg, door["rect"])
+        door["refs"] = ((door.get("refs") or []) + [vision.sig_encode(sig)])[-4:]
+        door.pop("_refs", None)
+        cam["door"] = door
+        self.cameras.state.get(cam["id"], {}).pop("door", None)
+        return len(door["refs"])
+
     # ---- 認臉：看到人時找臉，認出家人就做他的動作，不認得就通知 ----
 
     async def _face_tick(self, cams: list[dict[str, Any]], now: float) -> None:
         frames, self.cameras.frames = self.cameras.frames, {}
         for c in cams:
             jpeg = frames.get(c["id"])
+            if not jpeg:
+                continue
+            st = self.cameras.state.get(c["id"], {})
+            for name in st.pop("pet_new", []):
+                self._pet_seen(c, name, now)
+            await self._door_check(c, st, jpeg, now)
+            person = st.get("person")
+            if person and c.get("fall"):
+                await self._fall_check(c, jpeg, now)
             enrolling = self.enroll is not None and self.enroll["cam"] == c["id"]
-            person = self.cameras.state.get(c["id"], {}).get("person")
-            if not jpeg or not (enrolling or (person and c.get("faces", True))):
+            if not (enrolling or (person and c.get("faces", True))):
                 continue
             try:
                 found = await asyncio.to_thread(self.face_engine.analyze, jpeg)
@@ -1412,6 +1517,7 @@ class Hub:
             self._enroll_finish()
         for cid in [k for k in self._visits if not self.cameras.state.get(k, {}).get("person")]:
             del self._visits[cid]  # 人走了：這次結束
+        self._door_pending_check(now)
 
     def _face_visit(self, cam: dict[str, Any], jpeg: bytes, found: list[dict[str, Any]], now: float) -> None:
         v = self._visits.setdefault(cam["id"], {"start": now, "known": set(), "maybe": set(), "stranger": 0, "best": None, "alerted": False})
@@ -1460,7 +1566,8 @@ class Hub:
             self._face_leave(pid, name, now)
 
     def _face_once(self, key: str, gap: float, now: float) -> bool:
-        if now - self._face_cool.get(key, 0) < gap:
+        last = self._face_cool.get(key)
+        if last is not None and now - last < gap:
             return False
         self._face_cool[key] = now
         return True
