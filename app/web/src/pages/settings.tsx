@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { AlertCircle, Archive, Bell, Cctv, Eye, EyeOff, Lock, Plus, ShieldCheck, Trash2, CheckCircle2, CloudSun, KeyRound, MessageCircle, ChevronRight, ExternalLink, Loader2, MessageSquareText, Mic, Moon, Palette, Search, Wifi, WifiOff } from "lucide-react";
+import { AlertCircle, Archive, Bell, Cctv, Eye, EyeOff, Lock, ScanFace, Plus, ShieldCheck, Trash2, CheckCircle2, CloudSun, KeyRound, MessageCircle, ChevronRight, ExternalLink, Loader2, MessageSquareText, Mic, Moon, Palette, Search, Wifi, WifiOff } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -390,7 +390,7 @@ function NetCheck({ s }: { s: HubState }) {
   );
 }
 
-const SECTIONS: [string, string][] = [["s-look", "外觀"], ["s-notify", "通知"], ["s-night", "晚安"], ["s-life", "天氣生活"], ["s-ask", "問家裡"], ["s-google", "Google Home"], ["s-cam", "攝影機"], ["s-dev", "裝置"], ["s-sys", "安全與備份"]];
+const SECTIONS: [string, string][] = [["s-look", "外觀"], ["s-notify", "通知"], ["s-night", "晚安"], ["s-life", "天氣生活"], ["s-ask", "問家裡"], ["s-google", "Google Home"], ["s-cam", "攝影機"], ["s-face", "認臉"], ["s-dev", "裝置"], ["s-sys", "安全與備份"]];
 
 const ago = (t: number) => {
   const s = Date.now() / 1000 - t;
@@ -603,7 +603,7 @@ function JumpChips() {
 
 // 網路攝影機：樹莓派每秒看一張快照認人；看到人 → 那間算有動靜（動靜自動開關、地圖），沒人在家時看到人就通知
 interface CamAccess { can_view: boolean; me: string | null; count: number; viewers?: { id: string; name: string }[]; candidates?: { id: string; name: string; kind: string }[] }
-interface Cam { id: string; name: string; host: string; port: number; room: string | null; enabled: boolean; alert: boolean; model?: string; person: boolean; score: number | null; ok: boolean | null; error: string | null }
+interface Cam { id: string; name: string; host: string; port: number; room: string | null; enabled: boolean; alert: boolean; model?: string; faces?: boolean; role?: "entry" | "room"; light?: string | null; person: boolean; score: number | null; ok: boolean | null; error: string | null }
 
 // 誰可以看攝影機畫面：沒權限的裝置用手機通知的驗證碼開通；有權限的人勾選其他裝置
 function CamAccessBox({ acc, onChange }: { acc: CamAccess; onChange: (a: CamAccess) => void }) {
@@ -729,6 +729,7 @@ function CamerasCard() {
   const [form, setForm] = useState({ host: "", user: "", pwd: "" });
   const [busy, setBusy] = useState(false);
   const [view, setView] = useState<string | null>(null);
+  const plugs = useHub().state?.plugs || [];
   useEffect(() => {
     let alive = true;
     const load = () => api<{ cameras: Cam[]; access: CamAccess }>("GET", "/api/cameras").then((r) => { if (alive) { setCams(r.cameras); setAcc(r.access); } }).catch(() => {});
@@ -808,9 +809,35 @@ function CamerasCard() {
                   </Select>
                 </label>
                 <label className="flex items-center gap-2 text-sm">
-                  <Switch checked={c.alert} onCheckedChange={(v) => upd(c.id, { alert: v }, v ? "沒人在家時看到人會通知" : "不會通知")} aria-label={`${c.name} 沒人在家時看到人就通知`} />
-                  沒人在家時看到人就通知
+                  用途
+                  <Select value={c.role || "room"} onValueChange={(v) => upd(c.id, { role: v }, v === "entry" ? "當作門口：認出誰回家、出門、門口的陌生人" : "當作房間")}>
+                    <SelectTrigger className="h-8 w-24 bg-background" aria-label={`${c.name} 的用途`}><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="entry">門口</SelectItem>
+                      <SelectItem value="room">房間</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <Switch checked={c.alert} onCheckedChange={(v) => upd(c.id, { alert: v }, v ? "會通知" : "不會通知")} aria-label={`${c.name} 有不認得的人就通知`} />
+                  不認得的人就通知
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <Switch checked={c.faces !== false} onCheckedChange={(v) => upd(c.id, { faces: v }, v ? "會認臉" : "不認臉，只認有沒有人")} aria-label={`${c.name} 認臉`} />
+                  認臉
+                </label>
+                {c.role === "entry" && (
+                  <label className="flex items-center gap-2 text-sm">
+                    半夜有陌生人開
+                    <Select value={c.light || "_none"} onValueChange={(v) => upd(c.id, { light: v === "_none" ? null : v }, v === "_none" ? "不開燈" : "半夜看到陌生人會開這個 5 分鐘")}>
+                      <SelectTrigger className="h-8 w-32 bg-background" aria-label={`${c.name} 半夜看到陌生人時打開的插座`}><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="_none">不開</SelectItem>
+                        {plugs.map((pl) => <SelectItem key={pl.id} value={pl.id}>{pl.name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </label>
+                )}
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
                     <Button variant="ghost" size="sm" className="ml-auto text-muted-foreground hover:text-destructive"><Trash2 />移除</Button>
@@ -828,7 +855,7 @@ function CamerasCard() {
                 </AlertDialog>
               </div>
             )}
-            {c.enabled && c.alert && <p className="pl-5.5 text-xs text-muted-foreground">沒人在家時看到人，會先等 3 分鐘：這段時間有家人的手機連上 Wi-Fi，就當作家人回來，不通知。</p>}
+            {c.enabled && c.alert && <p className="pl-5.5 text-xs text-muted-foreground">看清楚的臉、跟登記的人都不像才通知（{c.role === "entry" ? "門口要待 30 秒以上；沒人在家或半夜是緊急通知" : "家裡有人時只記紀錄"}）。看不清楚臉、又沒人在家時，先等 3 分鐘：有家人的手機連上 Wi-Fi 就不通知。</p>}
             {c.enabled && !c.room && <p className="pl-5.5 text-xs text-muted-foreground">選了區域，才能在「家中地圖 → 動靜」設定「有人就開燈」。</p>}
           </div>
         ))
@@ -849,6 +876,185 @@ function CamerasCard() {
           <Button variant="outline" size="sm" onClick={() => setAdding(true)}><Plus />新增攝影機</Button>
         </div>
       )}
+    </SCard>
+  );
+}
+
+// 認臉：登記家人和訪客、認出家人時做什麼、最近的紀錄（只有「可以看攝影機」的裝置看得到）
+interface FacePerson { id: string; name: string; kind: "family" | "guest"; samples: number; at: number | null; notify?: boolean }
+interface FaceLogItem { id: string; t: number; camera: string; kind: "family" | "guest" | "stranger"; name?: string; sim: number | null; thumb: boolean }
+interface FaceAct { day?: string | null; night?: string | null; late?: string | null; notify?: boolean }
+interface FaceRep {
+  family: FacePerson[]; guests: FacePerson[]; actions: Record<string, FaceAct>; slot: "day" | "night" | "late";
+  enroll: { pid: string; name: string; cam: string; count: number; need: number; left: number } | null;
+  result: { pid: string; ok: boolean; msg: string } | null; error: string | null; log: FaceLogItem[];
+}
+const SLOT: [keyof FaceAct & ("day" | "night" | "late"), string][] = [["day", "白天"], ["night", "天黑後"], ["late", "半夜 0～6 點"]];
+const hhmm = (t: number) => { const d = new Date(t * 1000); return `${d.getMonth() + 1}/${d.getDate()} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
+
+function FaceCard() {
+  const { state } = useHub();
+  const [rep, setRep] = useState<FaceRep | null>(null);
+  const [denied, setDenied] = useState(false);
+  const [cams, setCams] = useState<Cam[]>([]);
+  const [cam, setCam] = useState("");
+  const [guest, setGuest] = useState("");
+  const [shown, setShown] = useState<string | null>(null);
+  const enrolling = !!rep?.enroll;
+  useEffect(() => {
+    let alive = true;
+    const load = () => api<FaceRep>("GET", "/api/faces").then((r) => { if (alive) { setRep(r); setDenied(false); } })
+      .catch((e) => alive && /權限/.test((e as Error).message) && setDenied(true));
+    load();
+    api<{ cameras: Cam[] }>("GET", "/api/cameras").then((r) => alive && setCams(r.cameras.filter((c) => c.enabled))).catch(() => {});
+    const t = setInterval(load, enrolling ? 1500 : 10000);
+    return () => { alive = false; clearInterval(t); };
+  }, [enrolling]);
+  useEffect(() => {
+    if (rep?.result && rep.result.msg !== shown) {
+      setShown(rep.result.msg);
+      if (rep.result.ok) toast.success(rep.result.msg);
+      else toast.error("沒有登記成功", { description: rep.result.msg });
+    }
+  }, [rep?.result, shown]);
+  if (denied || !rep) return null;
+  const camId = cam || cams.find((c) => c.role === "entry")?.id || cams[0]?.id || "";
+  const call = async (method: string, path: string, body?: object, ok?: string) => {
+    try {
+      setRep(await api<FaceRep>(method, path, body));
+      if (ok) toast.success(ok);
+    } catch (e) {
+      toast.error("沒有成功", { description: (e as Error).message });
+    }
+  };
+  const enroll = (person: string | null, name?: string) => call("POST", "/api/faces/enroll", { person, name, camera: camId });
+  const scenes = state?.scenes || [];
+  const row = (p: FacePerson) => (
+    <div key={p.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-2.5">
+      <div className="min-w-0 flex-1 basis-40">
+        <div className="font-medium">{p.name}{p.kind === "guest" && <Badge variant="secondary" className="ml-2">訪客</Badge>}</div>
+        <div className="text-sm text-muted-foreground">{p.samples ? `已登記 ${p.samples} 個角度` : "還沒登記臉"}</div>
+      </div>
+      {p.kind === "guest" && (
+        <label className="flex items-center gap-2 text-sm">
+          <Switch checked={p.notify !== false} onCheckedChange={(v) => call("PUT", `/api/faces/${p.id}`, { notify: v }, v ? `${p.name} 來了會通知` : `${p.name} 來了不通知，只記紀錄`)} aria-label={`${p.name} 來了通知`} />來了通知
+        </label>
+      )}
+      <Button variant="outline" size="sm" className="bg-background" disabled={enrolling || !camId} onClick={() => enroll(p.id)}><ScanFace />{p.samples ? "重新登記" : "登記臉"}</Button>
+      {(p.samples > 0 || p.kind === "guest") && (
+        <AlertDialog>
+          <AlertDialogTrigger asChild><Button variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive" aria-label={`刪除 ${p.name} 的臉`}><Trash2 /></Button></AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>刪除「{p.name}」的臉？</AlertDialogTitle>
+              <AlertDialogDescription>{p.kind === "guest" ? "這位訪客會整個移除。" : "之後就認不出他，要再登記一次。"}存著的只有數字特徵，沒有照片。</AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>取消</AlertDialogCancel>
+              <AlertDialogAction variant="destructive" onClick={() => call("DELETE", `/api/faces/${p.id}`, undefined, "已刪除")}>刪除</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      )}
+    </div>
+  );
+  const e = rep.enroll;
+  return (
+    <SCard id="s-face" icon={ScanFace} title="認臉">
+      <p className="px-4 pt-3 text-sm leading-relaxed text-muted-foreground sm:px-5">
+        看到人時才找臉。認出家人就做他的動作；看清楚、但跟登記的人都不像，才當作陌生人。臉只存數字特徵、不存照片，資料都在樹莓派上；陌生人的小圖 7 天後自動刪掉。
+      </p>
+      {rep.error && <p className="mx-4 mt-2 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 sm:mx-5 dark:bg-red-500/10 dark:text-red-300">認臉出了問題：{rep.error}</p>}
+
+      {e ? (
+        <div className="space-y-3 px-4 py-3.5 sm:px-5">
+          <div className="font-medium">正在登記「{e.name}」・{cams.find((c) => c.id === e.cam)?.name}</div>
+          <p className="text-sm text-muted-foreground">請站在攝影機前 1～2 公尺、畫面裡只有一個人，慢慢左右轉頭、抬頭低頭。</p>
+          <CamLive id={e.cam} name={cams.find((c) => c.id === e.cam)?.name || "攝影機"} />
+          <div className="flex items-center gap-3">
+            <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted"><div className="h-full bg-primary transition-all" style={{ width: `${Math.min(100, (e.count / (e.need * 3)) * 100)}%` }} /></div>
+            <span className="text-sm tabular-nums text-muted-foreground">拍到 {e.count} 張・剩 {e.left} 秒</span>
+            <Button variant="ghost" size="sm" onClick={() => call("DELETE", "/api/faces/enroll")}>取消</Button>
+          </div>
+        </div>
+      ) : cams.length > 1 && (
+        <div className="flex items-center gap-2 px-4 pt-3 text-sm sm:px-5">
+          用這台登記
+          <Select value={camId} onValueChange={setCam}>
+            <SelectTrigger className="h-8 w-32 bg-background" aria-label="用哪台攝影機登記"><SelectValue /></SelectTrigger>
+            <SelectContent>{cams.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
+          </Select>
+        </div>
+      )}
+
+      <div className="px-4 py-2 sm:px-5">
+        <div className="pt-1 font-medium">家人</div>
+        {rep.family.length ? <div className="divide-y">{rep.family.map(row)}</div> : <p className="py-2 text-sm text-muted-foreground">先在「網路裝置 → 誰在家」新增家人。</p>}
+        <div className="pt-3 font-medium">訪客（常來的人，例如清潔阿姨、爺爺奶奶）</div>
+        {rep.guests.length > 0 && <div className="divide-y">{rep.guests.map(row)}</div>}
+        <form className="flex gap-2 py-2.5" onSubmit={(ev) => { ev.preventDefault(); if (guest.trim()) { enroll(null, guest.trim()); setGuest(""); } }}>
+          <Input id="face-guest" placeholder="訪客的名字" className="max-w-48 bg-background" value={guest} onChange={(ev) => setGuest(ev.target.value)} aria-label="新訪客的名字" />
+          <Button type="submit" variant="outline" className="bg-background" disabled={enrolling || !guest.trim() || !camId}><Plus />新增並登記</Button>
+        </form>
+      </div>
+
+      {rep.family.length > 0 && (
+        <div className="px-4 py-3.5 sm:px-5">
+          <div className="font-medium leading-snug">門口認出家人回來時</div>
+          <div className="mb-2 text-sm leading-relaxed text-muted-foreground">依時段執行他的情境（現在是{SLOT.find(([k]) => k === rep.slot)?.[1]}）。比手機連上 Wi-Fi 還早，進門燈就亮了；這次就不會再跑「出門與回家」裡的回家情境。</div>
+          <div className="space-y-3">
+            {rep.family.map((p) => {
+              const a = rep.actions[p.id] || {};
+              return (
+                <div key={p.id} className="rounded-lg border p-3">
+                  <div className="mb-2 flex items-center gap-2">
+                    <span className="font-medium">{p.name}</span>
+                    {!p.samples && <span className="text-xs text-muted-foreground">（還沒登記臉，認不出來）</span>}
+                    <label className="ml-auto flex items-center gap-2 text-sm">
+                      <Switch checked={!!a.notify} onCheckedChange={(v) => call("PUT", "/api/faces/actions", { [p.id]: { notify: v } }, v ? `${p.name} 回家時會通知` : "不通知")} aria-label={`${p.name} 回家時通知`} />回家時通知
+                    </label>
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    {SLOT.map(([k, label]) => (
+                      <label key={k} className="flex items-center gap-2 text-sm">
+                        <span className="w-20 shrink-0 text-muted-foreground">{label}</span>
+                        <Select value={a[k] || "_none"} onValueChange={(v) => call("PUT", "/api/faces/actions", { [p.id]: { [k]: v === "_none" ? null : v } })}>
+                          <SelectTrigger className="h-8 min-w-0 flex-1 bg-background" aria-label={`${p.name} ${label}回家時執行的情境`}><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="_none">不做事</SelectItem>
+                            {scenes.map((sc) => <SelectItem key={sc.id} value={sc.id}>{sc.name}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">家裡只剩他一個、門口又認出他時，會提醒他還開著的電器（多半是要出門）。</p>
+        </div>
+      )}
+
+      <div className="px-4 py-3.5 sm:px-5">
+        <div className="mb-2 font-medium">認臉紀錄（最近 7 天）</div>
+        {rep.log.length === 0 ? <p className="text-sm text-muted-foreground">還沒有紀錄。</p> : (
+          <ul className="max-h-96 divide-y overflow-y-auto rounded-lg border">
+            {rep.log.map((x) => (
+              <li key={x.id} className="flex items-center gap-3 px-3 py-2">
+                {x.thumb ? <img src={`/api/faces/log/${x.id}.jpg`} alt="不認得的人" className="size-12 shrink-0 rounded-md object-cover" loading="lazy" />
+                  : <span className="flex size-12 shrink-0 items-center justify-center rounded-md bg-muted"><ScanFace className="size-5 text-muted-foreground" /></span>}
+                <div className="min-w-0 flex-1">
+                  <div className={cn("text-sm font-medium", x.kind === "stranger" && "text-orange-600 dark:text-orange-400")}>
+                    {x.kind === "stranger" ? "不認得的人" : x.kind === "guest" ? `${x.name}（訪客）` : x.name}
+                  </div>
+                  <div className="text-xs text-muted-foreground tabular-nums">{hhmm(x.t)}・{x.camera}{x.sim != null ? `・相似度 ${x.sim}` : ""}</div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </SCard>
   );
 }
@@ -1109,6 +1315,7 @@ export function SettingsPage() {
           </SCard>
           <GoogleCard />
           <CamerasCard />
+          <FaceCard />
           <SCard id="s-dev" icon={Search} title="裝置">
             <NetCheck s={state} />
             <SRow label="停電後恢復插座" hint="停電回來，插座開關跟停電前不一樣就改回來（6 小時內）；高風險電器不會自動打開">

@@ -22,6 +22,7 @@ GET /api/sensing/week       一週動靜：每間房「星期幾 × 幾點」有
 GET /api/net/events         斷線紀錄：外網、基地台卡住、Wi-Fi、插座、停電恢復
 GET /api/net/plug-health    插座連線健檢：斷幾次、訊號、建議
 GET/POST /api/cameras       網路攝影機（認人）；PUT/DELETE /api/cameras/{id}（room、enabled、alert、帳密）；GET …/{id}/snapshot.jpg 現在的畫面
+GET /api/faces              認臉：認得的人、動作、登記（POST/DELETE /api/faces/enroll）、紀錄；PUT /api/faces/actions、PUT/DELETE /api/faces/{id}
 PUT /api/cameras/access     誰可以看攝影機；POST …/access/send-code 驗證碼送到手機、POST …/access/claim 開通這台
 GET /api/report/monthly     每月報告預覽（上個月）
 GET/PUT /api/motion-rules   動靜自動化：{"rules": [{"room","plug","start","end","off_min","need_home","enabled"}]}
@@ -931,9 +932,13 @@ async def cameras_update(cam_id: str, request: Request, body: dict = Body(...)) 
     if "room" in body:
         rooms = {r.get("id") for r in (store.data.get("floorplan") or {}).get("rooms") or []}
         cam["room"] = body["room"] if body["room"] in rooms else None
-    for key in ("enabled", "alert"):
+    for key in ("enabled", "alert", "faces"):
         if key in body:
             cam[key] = bool(body[key])
+    if body.get("role") in ("entry", "room"):
+        cam["role"] = body["role"]
+    if "light" in body:
+        cam["light"] = body["light"] if body["light"] in hub.plugs else None
     if "user" in body or "pwd" in body:
         test = {**cam, "user": str(body.get("user", cam.get("user", ""))), "pwd": str(body.get("pwd", cam.get("pwd", "")))}
         try:
@@ -960,6 +965,110 @@ async def cameras_delete(cam_id: str, request: Request) -> dict[str, Any]:
     hub.cameras.save()
     await hub.changed()
     return {"cameras": hub.cameras.public()}
+
+
+# ---- 認臉（都要「可以看攝影機」的權限）----
+
+
+def _faces_report() -> dict[str, Any]:
+    known = {p["id"]: p for p in hub.gallery.public()}
+    family = [{"id": p["id"], "name": p["name"], "kind": "family", "samples": known.get(p["id"], {}).get("samples", 0),
+               "at": known.get(p["id"], {}).get("at")} for p in store.data["people"]]
+    guests = [g for g in known.values() if g["kind"] == "guest"]
+    return {"family": family, "guests": guests, "actions": store.data["settings"].get("face_actions") or {},
+            "enroll": hub.enroll_status(), "result": hub.enroll_result, "error": hub.face_error, "slot": hub.face_slot(),
+            "log": list(reversed(hub.face_log.items[-100:]))}
+
+
+@app.get("/api/faces")
+def faces_get(request: Request) -> dict[str, Any]:
+    """認得的人（家人、訪客）、認出家人時的動作、登記狀態、最近的認臉紀錄。"""
+    _need_view(request)
+    return _faces_report()
+
+
+@app.post("/api/faces/enroll")
+async def faces_enroll(request: Request, body: dict = Body(...)) -> dict[str, Any]:
+    """開始登記臉：{"person": 家人 ID 或訪客 ID（空白 = 新訪客）, "name": 新訪客的名字, "camera": 攝影機 ID}"""
+    _need_view(request)
+    cam = hub.cameras.get(str(body.get("camera") or ""))
+    if not cam or not cam.get("enabled"):
+        raise HTTPException(400, "請選一台啟用中的攝影機")
+    pid = str(body.get("person") or "")
+    fam = next((p for p in store.data["people"] if p["id"] == pid), None)
+    if fam:
+        name, kind = fam["name"], "family"
+    elif pid in hub.gallery.people and hub.gallery.people[pid].get("kind") == "guest":
+        name, kind = hub.gallery.people[pid]["name"], "guest"
+    else:
+        name = str(body.get("name") or "").strip()[:20]
+        if not name:
+            raise HTTPException(400, "請填訪客的名字")
+        pid, kind = f"g-{uuid.uuid4().hex[:6]}", "guest"
+    hub.enroll_start(pid, name, kind, cam["id"])
+    return _faces_report()
+
+
+@app.delete("/api/faces/enroll")
+async def faces_enroll_cancel(request: Request) -> dict[str, Any]:
+    _need_view(request)
+    hub.enroll = None
+    return _faces_report()
+
+
+@app.put("/api/faces/actions")
+async def faces_actions(request: Request, body: dict = Body(...)) -> dict[str, Any]:
+    """認出家人時：{家人 ID: {"day", "night", "late": 情境 ID 或 null, "notify": 回家時通知}}"""
+    _need_view(request)
+    ids = {p["id"] for p in store.data["people"]}
+    acts = dict(store.data["settings"].get("face_actions") or {})
+    for pid, cfg in body.items():
+        if pid not in ids or not isinstance(cfg, dict):
+            continue
+        cur = dict(acts.get(pid) or {})
+        for slot in ("day", "night", "late"):
+            if slot in cfg:
+                cur[slot] = cfg[slot] if cfg[slot] and store.scene(cfg[slot]) else None
+        if "notify" in cfg:
+            cur["notify"] = bool(cfg["notify"])
+        acts[pid] = cur
+    store.data["settings"]["face_actions"] = acts
+    store.save()
+    return _faces_report()
+
+
+@app.put("/api/faces/{pid}")
+async def faces_update(pid: str, request: Request, body: dict = Body(...)) -> dict[str, Any]:
+    """訪客：{"name", "notify": 來了要不要通知}"""
+    _need_view(request)
+    g = hub.gallery.people.get(pid)
+    if not g:
+        raise HTTPException(404, "找不到")
+    if "name" in body and str(body["name"]).strip():
+        g["name"] = str(body["name"]).strip()[:20]
+    if "notify" in body:
+        g["notify"] = bool(body["notify"])
+    hub.gallery.save()
+    return _faces_report()
+
+
+@app.delete("/api/faces/{pid}")
+async def faces_delete(pid: str, request: Request) -> dict[str, Any]:
+    """刪掉這個人的臉部特徵（訪客整個移除）。"""
+    _need_view(request)
+    if not hub.gallery.remove(pid):
+        raise HTTPException(404, "找不到")
+    return _faces_report()
+
+
+@app.get("/api/faces/log/{item_id}.jpg")
+async def faces_thumb(item_id: str, request: Request) -> Response:
+    """認臉紀錄裡陌生人的小圖。"""
+    _need_view(request)
+    path = hub.face_log.thumb_path(item_id)
+    if not path:
+        raise HTTPException(404, "沒有這張圖（可能超過 7 天已經刪掉）")
+    return Response(path.read_bytes(), media_type="image/jpeg", headers={"Cache-Control": "private, no-store"})
 
 
 @app.get("/api/net/plug-health")

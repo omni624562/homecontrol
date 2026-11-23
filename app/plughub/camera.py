@@ -174,6 +174,7 @@ class Cameras:
         self.viewers: list[str] = []  # 可以看畫面、改攝影機設定的裝置 ID（配對的裝置 ID，或家人手機的「mac:…」）
         self.code = AccessCode()
         self.state: dict[str, dict[str, Any]] = {}  # 攝影機 ID → 認人的狀態（不存檔）
+        self.frames: dict[str, bytes] = {}  # 這一輪拿到的快照（給認臉用，用完就丟，不存檔）
         self.detector = Detector()
         self.load()
 
@@ -192,6 +193,9 @@ class Cameras:
             c.setdefault("enabled", True)
             c.setdefault("alert", True)
             c.setdefault("room", None)
+            c.setdefault("faces", True)  # 看到人時認臉
+            c.setdefault("role", "room")  # entry：門口（認出誰回家、出門、門口的陌生人）；room：房間
+            c.setdefault("light", None)  # 門口：半夜看到陌生人時打開的插座
 
     def save(self) -> None:
         tmp = self.path.with_suffix(".tmp")
@@ -207,7 +211,7 @@ class Cameras:
         out = []
         for c in self.list:
             st = self.state.get(c["id"], {})
-            out.append({k: c.get(k) for k in ("id", "name", "host", "port", "room", "enabled", "alert", "model")}
+            out.append({k: c.get(k) for k in ("id", "name", "host", "port", "room", "enabled", "alert", "model", "faces", "role", "light")}
                        | {"person": bool(st.get("person")), "since": st.get("since"), "score": (st.get("recent") or [None])[-1],
                           "ok": st.get("ok"), "error": st.get("error"), "at": st.get("at")})
         return out
@@ -234,7 +238,9 @@ class Cameras:
         if st.get("ok") is False and now - (st.get("at") or 0) < RETRY:
             return None
         try:
-            score = self.detector.person_score(snapshot(cam))
+            jpeg = snapshot(cam)
+            self.frames[cam["id"]] = jpeg
+            score = self.detector.person_score(jpeg)
         except Exception as err:  # noqa: BLE001
             msg = str(err) or type(err).__name__
             if st.get("error") != msg:

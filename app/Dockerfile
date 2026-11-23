@@ -15,12 +15,9 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends openssh-client && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-# 攝影機認人用的模型：EfficientDet-Lite0（Apache 2.0，約 4.6 MB），下載後核對 SHA-256
-RUN mkdir -p models && python -c "import hashlib,urllib.request; \
-u='https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/int8/1/efficientdet_lite0.tflite'; \
-d=urllib.request.urlopen(u, timeout=60).read(); \
-assert hashlib.sha256(d).hexdigest()=='0720bf247bd76e6594ea28fa9c6f7c5242be774818997dbbeffc4da460c723bb', 'model checksum'; \
-open('models/efficientdet_lite0.tflite','wb').write(d)"
+# 攝影機用的模型（認人、找臉、認是誰），下載後核對 SHA-256
+COPY fetch_models.py .
+RUN python fetch_models.py models
 COPY plughub ./plughub
 COPY --from=web /web/dist ./plughub/web
 EXPOSE 8100
