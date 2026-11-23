@@ -66,21 +66,44 @@ def test_room_motion_includes_camera(app_module, monkeypatch):
     assert v["score"] >= 1.0 and v["camera"] == ["客廳攝影機"] and v["person"] is True
 
 
-def test_camera_alert_only_when_everyone_away(app_module, monkeypatch):
+def test_camera_alert_waits_for_family_wifi(app_module, monkeypatch):
     hub, sent = _hub(app_module, monkeypatch)
+    probed = []
+
+    async def fake_probe():
+        probed.append(1)
+        hub._probe_busy = False
+
+    monkeypatch.setattr(hub, "_probe_people", fake_probe)
+    monkeypatch.setattr(hub, "_spawn", lambda coro: __import__("asyncio").run(coro))
     cam = hub.cameras.list[0]
     hub.store.data["people"] = [{"id": "x", "name": "X", "macs": []}]
+    t = time.time()
     hub._presence["x"] = {"home": True, "since": 1.0}
-    hub._camera_seen(cam, time.time())
-    assert sent == []
+    hub._camera_seen(cam, t)  # 有人在家：不管
+    assert hub._cam_pending == {}
+    # 沒人在家看到人，1 分鐘後 X 的手機連上 Wi-Fi：是家人，不通知
     hub._presence["x"] = {"home": False, "since": 1.0}
-    hub._camera_seen(cam, time.time())
-    hub._camera_seen(cam, time.time())  # 10 分鐘內不重複
-    assert len(sent) == 1 and "攝影機看到人" in sent[0][0] and sent[0][2] == "urgent"
+    hub._camera_seen(cam, t)
+    assert probed and "c1" in hub._cam_pending
+    hub._camera_pending(t + 30)
+    assert sent == []
+    hub._presence["x"] = {"home": True, "since": t + 60}
+    hub._camera_pending(t + 60)
+    assert sent == [] and hub._cam_pending == {}
+    # 沒人在家看到人，3 分鐘都沒有家人的手機：緊急通知（10 分鐘內不重複）
+    hub._presence["x"] = {"home": False, "since": t + 100}
+    hub._camera_seen(cam, t + 200)
+    hub._camera_pending(t + 200 + 179)
+    assert sent == []
+    hub._camera_pending(t + 200 + 180)
+    assert len(sent) == 1 and "攝影機看到人" in sent[0][0] and "Wi-Fi" in sent[0][1] and sent[0][2] == "urgent"
+    hub._camera_seen(cam, t + 400)
+    assert hub._cam_pending == {}
     cam["alert"] = False
     hub._cam_alert.clear()
-    hub._camera_seen(cam, time.time())
-    assert len(sent) == 1
+    hub._camera_seen(cam, t + 2000)
+    assert hub._cam_pending == {}
 
 
 def test_api_cameras(app_module, monkeypatch):
