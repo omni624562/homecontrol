@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { AlertCircle, Archive, Bell, Cctv, Plus, ShieldCheck, Trash2, CheckCircle2, CloudSun, KeyRound, MessageCircle, ChevronRight, ExternalLink, Loader2, MessageSquareText, Mic, Moon, Palette, Search, Wifi, WifiOff } from "lucide-react";
+import { AlertCircle, Archive, Bell, Cctv, Eye, EyeOff, Plus, ShieldCheck, Trash2, CheckCircle2, CloudSun, KeyRound, MessageCircle, ChevronRight, ExternalLink, Loader2, MessageSquareText, Mic, Moon, Palette, Search, Wifi, WifiOff } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -604,12 +604,32 @@ function JumpChips() {
 // 網路攝影機：樹莓派每秒看一張快照認人；看到人 → 那間算有動靜（動靜自動開關、地圖），沒人在家時看到人就通知
 interface Cam { id: string; name: string; host: string; port: number; room: string | null; enabled: boolean; alert: boolean; model?: string; person: boolean; score: number | null; ok: boolean | null; error: string | null }
 
+// 攝影機現在的畫面：上一張載完再過 1 秒拿下一張（不會越積越多）；看不到就顯示原因
+function CamLive({ id, name }: { id: string; name: string }) {
+  const [t, setT] = useState(() => Date.now());
+  const [err, setErr] = useState(false);
+  const timer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  const next = (bad: boolean) => {
+    setErr(bad);
+    timer.current = window.setTimeout(() => setT(Date.now()), bad ? 5000 : 1000);
+  };
+  return (
+    <div className="relative aspect-video w-full max-w-xl overflow-hidden rounded-lg border bg-muted">
+      <img src={`/api/cameras/${id}/snapshot.jpg?t=${t}`} alt={`${name} 現在的畫面`} className="size-full object-contain"
+        onLoad={() => next(false)} onError={() => next(true)} />
+      {err && <div className="absolute inset-0 flex items-center justify-center bg-muted/90 text-sm text-muted-foreground">讀不到畫面，5 秒後再試</div>}
+    </div>
+  );
+}
+
 function CamerasCard() {
   const [cams, setCams] = useState<Cam[] | null>(null);
   const [rooms, setRooms] = useState<{ id: string; name: string }[]>([]);
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState({ host: "", user: "", pwd: "" });
   const [busy, setBusy] = useState(false);
+  const [view, setView] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
     const load = () => api<{ cameras: Cam[] }>("GET", "/api/cameras").then((r) => alive && setCams(r.cameras)).catch(() => {});
@@ -668,8 +688,12 @@ function CamerasCard() {
                   {!c.enabled ? "已停用" : c.ok === false ? `連不上：${c.error || "沒有回應"}` : c.ok == null ? "連線中…" : c.person ? "現在看到人" : "現在沒看到人"}
                 </div>
               </div>
+              <Button variant="outline" size="sm" className="bg-background" aria-expanded={view === c.id} onClick={() => setView(view === c.id ? null : c.id)}>
+                {view === c.id ? <EyeOff /> : <Eye />}{view === c.id ? "收起" : "看畫面"}
+              </Button>
               <Switch checked={c.enabled} onCheckedChange={(v) => upd(c.id, { enabled: v }, v ? `${c.name} 開始認人` : `${c.name} 已停用`)} aria-label={`啟用 ${c.name}`} />
             </div>
+            {view === c.id && <CamLive id={c.id} name={c.name} />}
             {c.enabled && (
               <div className="flex flex-wrap items-center gap-x-4 gap-y-2 pl-5.5">
                 <label className="flex items-center gap-2 text-sm">

@@ -133,4 +133,9 @@ def test_api_cameras(app_module, monkeypatch):
     saved = json.loads((app_module.store.dir / "cameras.json").read_text("utf-8"))
     assert saved["cameras"][0]["pwd"] == "ok"
     assert "pwd" not in json.dumps(c.get("/api/cameras").json())
+    monkeypatch.setattr(cam_mod, "snapshot", lambda c: b"\xff\xd8jpeg")
+    r = c.get(f"/api/cameras/{cam['id']}/snapshot.jpg")
+    assert r.status_code == 200 and r.headers["content-type"] == "image/jpeg" and r.headers["cache-control"] == "no-store"
+    assert r.headers.get("content-encoding") is None
+    assert TestClient(app_module.app, base_url="http://hub:8100").get(f"/api/cameras/{cam['id']}/snapshot.jpg").status_code == 401
     assert c.delete(f"/api/cameras/{cam['id']}").json()["cameras"] == []

@@ -21,7 +21,7 @@ GET /api/sensing/replay     動靜回放：最近 24 小時每 5 分鐘一格
 GET /api/sensing/week       一週動靜：每間房「星期幾 × 幾點」有動靜的比例
 GET /api/net/events         斷線紀錄：外網、基地台卡住、Wi-Fi、插座、停電恢復
 GET /api/net/plug-health    插座連線健檢：斷幾次、訊號、建議
-GET/POST /api/cameras       網路攝影機（認人）；PUT/DELETE /api/cameras/{id}（room、enabled、alert、帳密）
+GET/POST /api/cameras       網路攝影機（認人）；PUT/DELETE /api/cameras/{id}（room、enabled、alert、帳密）；GET …/{id}/snapshot.jpg 現在的畫面
 GET /api/report/monthly     每月報告預覽（上個月）
 GET/PUT /api/motion-rules   動靜自動化：{"rules": [{"room","plug","start","end","off_min","need_home","enabled"}]}
 GET /api/locate/{id}         人在哪個房間（實驗）：每個房間教了幾筆、現在的判斷；POST …/train {"room"} 教 2 分鐘、DELETE …/train 停止、DELETE /api/locate/{id}?room= 清掉
@@ -818,6 +818,19 @@ async def cameras_add(body: dict = Body(...)) -> dict[str, Any]:
     hub.cameras.save()
     await hub.changed()
     return {"camera": next(c for c in hub.cameras.public() if c["id"] == cam["id"])}
+
+
+@app.get("/api/cameras/{cam_id}/snapshot.jpg")
+async def cameras_snapshot(cam_id: str) -> Response:
+    """看攝影機現在的畫面（一張 JPEG，不存檔）。只有配對過的裝置拿得到。"""
+    cam = hub.cameras.get(cam_id)
+    if not cam:
+        raise HTTPException(404, "找不到這台攝影機")
+    try:
+        data = await asyncio.to_thread(camera_mod.snapshot, cam)
+    except Exception as err:  # noqa: BLE001
+        raise HTTPException(502, f"讀不到畫面：{err}") from None
+    return Response(data, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
 @app.put("/api/cameras/{cam_id}")
