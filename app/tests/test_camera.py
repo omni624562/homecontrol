@@ -120,6 +120,19 @@ def test_api_cameras(app_module, monkeypatch):
         return {"model": "Z2", "name": "IN_HOUSE"}
 
     monkeypatch.setattr(cam_mod, "dev_info", fake_info)
+    sent = []
+    monkeypatch.setattr(app_module.hub.notifier, "send", lambda *a, **k: sent.append(a))
+    # 還沒開通：不能加攝影機
+    acc = c.get("/api/cameras").json()["access"]
+    assert acc["can_view"] is False and "candidates" not in acc
+    assert c.post("/api/cameras", json={"host": "10.0.0.5", "user": "u", "pwd": "ok"}).status_code == 403
+    # 驗證碼送到手機通知 → 輸入 → 開通
+    assert c.post("/api/cameras/access/send-code").status_code == 200
+    code = app_module.hub.cameras.code._code[0]
+    assert code in sent[-1][1]
+    assert c.post("/api/cameras/access/claim", json={"code": "000000" if code != "000000" else "111111"}).status_code == 400
+    acc = c.post("/api/cameras/access/claim", json={"code": code}).json()["access"]
+    assert acc["can_view"] is True and acc["viewers"][0]["id"] == acc["me"]
     assert c.post("/api/cameras", json={"host": "10.0.0.5", "user": "u", "pwd": "bad"}).status_code == 400
     r = c.post("/api/cameras", json={"host": "10.0.0.5", "user": "u", "pwd": "ok"})
     assert r.status_code == 200
@@ -138,4 +151,31 @@ def test_api_cameras(app_module, monkeypatch):
     assert r.status_code == 200 and r.headers["content-type"] == "image/jpeg" and r.headers["cache-control"] == "no-store"
     assert r.headers.get("content-encoding") is None
     assert TestClient(app_module.app, base_url="http://hub:8100").get(f"/api/cameras/{cam['id']}/snapshot.jpg").status_code == 401
+    # 另一台配對過、但沒權限的裝置：看不到畫面、改不了設定
+    other = TestClient(app_module.app, base_url="http://hub:8100")
+    tok2, dev2 = app_module.auth.pair(app_module.auth.new_code())
+    other.cookies.set("plughub_token", tok2)
+    assert other.get(f"/api/cameras/{cam['id']}/snapshot.jpg").status_code == 403
+    assert other.put(f"/api/cameras/{cam['id']}", json={"alert": True}).status_code == 403
+    assert other.put("/api/cameras/access", json={"viewers": [dev2["id"]]}).status_code == 403
+    # 有權限的人把它加進名單
+    ids = [v["id"] for v in c.get("/api/cameras").json()["access"]["viewers"]] + [dev2["id"], "bogus"]
+    acc = c.put("/api/cameras/access", json={"viewers": ids}).json()["access"]
+    assert [v["id"] for v in acc["viewers"]] == ids[:2]
+    assert other.get(f"/api/cameras/{cam['id']}/snapshot.jpg").status_code == 200
     assert c.delete(f"/api/cameras/{cam['id']}").json()["cameras"] == []
+
+
+def test_access_code_locks_after_fails():
+    now = [0.0]
+    ac = camera.AccessCode(clock=lambda: now[0])
+    code = ac.new()
+    wrong = "000000" if code != "000000" else "111111"
+    for _ in range(camera.AccessCode.MAX_FAILS):
+        assert not ac.claim(wrong)
+    assert ac.locked_for() > 0 and not ac.claim(code)  # 鎖住時對的也不行（而且這組碼作廢）
+    now[0] += camera.AccessCode.LOCK + 1
+    assert not ac.claim(code)
+    code = ac.new()
+    now[0] += camera.AccessCode.TTL + 1
+    assert not ac.claim(code)  # 過期
