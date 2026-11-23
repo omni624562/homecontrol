@@ -513,7 +513,7 @@ class Assistant:
             names = {d["key"]: d["name"] for d in hist["devices"]}
             devs = []
             for key, it in fp["items"].items():
-                if key.startswith("ap:"):
+                if key.startswith(("ap:", "o:")):
                     continue
                 c = cl.get(key, {})
                 rssi = next((p.rssi for p in hub.plugs.values() if p.device_key == key and p.rssi is not None), None) or c.get("rssi")
