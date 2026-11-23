@@ -71,6 +71,7 @@ from starlette.middleware.gzip import GZipMiddleware
 
 from . import auth as authmod
 from . import camera as camera_mod
+from . import vision as vision_mod
 from .locate import MIN_SAMPLES as LOCATE_MIN, TRAIN_S as LOCATE_TRAIN_S
 from .assistant import MODELS as ASSISTANT_MODELS, Assistant
 from .hub import APP_VERSION, SOURCE, Hub, Locked
@@ -977,15 +978,12 @@ async def cameras_update(cam_id: str, request: Request, body: dict = Body(...)) 
         cam["role"] = body["role"]
         if body.get("defaults"):  # 選了門口／房間：常用的功能先幫忙打開
             cam.update(camera_mod.ROLE_DEFAULTS[body["role"]])
-    if isinstance(body.get("ignore"), list):  # 不要看的地方：[[x, y, w, h], …]（0～1）
+    if isinstance(body.get("ignore"), list):  # 不要看的地方：每塊是多邊形頂點 [[x, y], …]（或舊的方框 [x, y, w, h]），0～1
         zones = []
-        for r in body["ignore"][:6]:
-            try:
-                x, y, w, h = (min(1.0, max(0.0, float(v))) for v in r)
-            except (TypeError, ValueError):
-                raise HTTPException(400, "框的位置不對") from None
-            if w >= 0.02 and h >= 0.02:
-                zones.append([round(x, 4), round(y, 4), round(w, 4), round(h, 4)])
+        for z in body["ignore"][:6]:
+            pts = _poly(z)
+            if pts:
+                zones.append(pts)
         cam["ignore"] = zones
     if "light" in body:
         cam["light"] = body["light"] if body["light"] in hub.plugs else None
@@ -1004,6 +1002,19 @@ async def cameras_update(cam_id: str, request: Request, body: dict = Body(...)) 
     return {"cameras": hub.cameras.public()}
 
 
+def _poly(z: Any) -> list[list[float]] | None:
+    """畫面上的一塊區域 → 0～1 的多邊形頂點（3～12 個點；外框太小就不收）。舊的方框 [x, y, w, h] 也收。"""
+    try:
+        pts = camera_mod.zone_points(z)
+        pts = [[round(min(1.0, max(0.0, float(x))), 4), round(min(1.0, max(0.0, float(y))), 4)] for x, y in pts][:12]
+    except (TypeError, ValueError, IndexError):
+        raise HTTPException(400, "框的位置不對") from None
+    if len(pts) < 3:
+        return None
+    _, _, w, h = vision_mod.poly_bbox(pts)
+    return pts if w >= 0.02 and h >= 0.02 else None
+
+
 @app.put("/api/cameras/{cam_id}/door")
 async def cameras_door(cam_id: str, request: Request, body: dict = Body(...)) -> dict[str, Any]:
     """開門偵測：{"rect": [x, y, w, h]（0～1，框出門；改了要重新記門關著的樣子）, "notify": away/always/off, "scene": 天黑後開門執行的情境}"""
@@ -1012,6 +1023,14 @@ async def cameras_door(cam_id: str, request: Request, body: dict = Body(...)) ->
     if not cam:
         raise HTTPException(404, "找不到這台攝影機")
     door = dict(cam.get("door") or {})
+    if "poly" in body:  # 斜斜的門：點出多邊形
+        pts = _poly(body["poly"])
+        if not pts:
+            raise HTTPException(400, "框太小了，或點的位置不對（至少 3 個點）")
+        bx = vision_mod.poly_bbox(pts)
+        door.update(rect=[round(v, 4) for v in bx], poly=pts, refs=[])
+        door.pop("_refs", None)
+        hub.cameras.state.get(cam_id, {}).pop("door", None)
     if "rect" in body:
         try:
             x, y, w, h = (min(1.0, max(0.0, float(v))) for v in body["rect"])
@@ -1020,6 +1039,7 @@ async def cameras_door(cam_id: str, request: Request, body: dict = Body(...)) ->
         if w < 0.03 or h < 0.03:
             raise HTTPException(400, "框太小了")
         door.update(rect=[round(x, 4), round(y, 4), round(w, 4), round(h, 4)], refs=[])
+        door.pop("poly", None)
         door.pop("_refs", None)
         hub.cameras.state.get(cam_id, {}).pop("door", None)
     if body.get("notify") in ("away", "always", "off"):

@@ -101,7 +101,7 @@ def test_door_open_when_away_waits_then_alerts(app_module, monkeypatch):
     hub, sent, ran = _hub(app_module, monkeypatch)
     vis = __import__("sys").modules["plughub.vision"]
     scores = iter([0.2, 0.2])
-    monkeypatch.setattr(vis, "door_sig", lambda jpeg, rect: "sig")
+    monkeypatch.setattr(vis, "door_sig", lambda jpeg, rect, poly=None: "sig")
     monkeypatch.setattr(vis, "door_score", lambda sig, refs: next(scores))
     monkeypatch.setattr(hub, "is_dark", lambda: True)
     now = time.time()
@@ -156,3 +156,15 @@ def test_door_api(app_module, monkeypatch):
     monkeypatch.setattr(hub, "door_reference", lambda cam, jpeg: 1)
     assert c.post("/api/cameras/c/door/ref").json()["refs"] == 1
     assert c.delete("/api/cameras/c/door").json()["cameras"][0]["door"] is None
+
+
+def test_door_poly_only_looks_inside():
+    cv2 = pytest.importorskip("cv2")
+    img = np.full((240, 320, 3), 120, np.uint8)
+    cv2.line(img, (60, 40), (60, 200), (20, 20, 20), 4)  # 門框（在多邊形裡）
+    jpg = lambda im: cv2.imencode(".jpg", im)[1].tobytes()  # noqa: E731
+    poly = [[0.1, 0.1], [0.3, 0.15], [0.3, 0.85], [0.1, 0.9]]
+    ref = vision.door_sig(jpg(img), [0, 0, 1, 1], poly)
+    outside = img.copy()
+    cv2.circle(outside, (95, 200), 6, (250, 250, 250), -1)  # 多邊形外框裡、但在多邊形外面的東西變了（右下角）
+    assert vision.door_score(vision.door_sig(jpg(outside), [0, 0, 1, 1], poly), [ref]) > 0.9

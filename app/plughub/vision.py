@@ -117,8 +117,17 @@ class Pose:
 
 # ---- 開門：框出門的那一塊，跟「門關著」時記住的樣子比（用邊緣比，不怕亮度變化）----
 
-def door_sig(jpeg: bytes, rect: list[float]) -> Any:
-    """門那一塊的「樣子」：灰階 → 邊緣 → 模糊，縮成 64×64（rect 是 0～1 的 [x, y, w, h]）。"""
+def poly_bbox(poly: list[list[float]]) -> list[float]:
+    """多邊形（0～1 的頂點）→ 外框 [x, y, w, h]。"""
+    xs, ys = [p[0] for p in poly], [p[1] for p in poly]
+    return [min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)]
+
+
+def door_sig(jpeg: bytes, rect: list[float], poly: list[list[float]] | None = None) -> Any:
+    """門那一塊的「樣子」：灰階 → 邊緣 → 模糊，縮成 64×64。
+
+    rect 是 0～1 的 [x, y, w, h]；有 poly（多邊形的頂點）就只看多邊形裡面（斜斜的門不會包進牆和地板）。
+    """
     import cv2
     import numpy as np
 
@@ -126,6 +135,8 @@ def door_sig(jpeg: bytes, rect: list[float]) -> Any:
     if img is None:
         raise ValueError("讀不到畫面")
     H, W = img.shape
+    if poly:
+        rect = poly_bbox(poly)
     x, y, w, h = rect
     x0, y0 = int(max(0, x) * W), int(max(0, y) * H)
     x1, y1 = int(min(1, x + w) * W), int(min(1, y + h) * H)
@@ -134,6 +145,12 @@ def door_sig(jpeg: bytes, rect: list[float]) -> Any:
     crop = cv2.resize(img[y0:y1, x0:x1], (DOOR_SIZE, DOOR_SIZE), interpolation=cv2.INTER_AREA)
     crop = cv2.equalizeHist(crop)
     edges = cv2.Canny(cv2.GaussianBlur(crop, (3, 3), 0), 50, 150)
+    if poly:
+        # 多邊形換到 64×64 的座標，外面的邊緣不算
+        pts = np.array([[(px * W - x0) / max(1, x1 - x0) * DOOR_SIZE, (py * H - y0) / max(1, y1 - y0) * DOOR_SIZE] for px, py in poly], np.int32)
+        m = np.zeros((DOOR_SIZE, DOOR_SIZE), np.uint8)
+        cv2.fillPoly(m, [pts], 255)
+        edges = cv2.bitwise_and(edges, m)
     return cv2.GaussianBlur(edges.astype(np.float32), (7, 7), 0)
 
 

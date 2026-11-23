@@ -13,8 +13,8 @@ import { cn } from "@/lib/utils";
 
 // 網路攝影機：樹莓派每秒看一張快照認人；看到人 → 那間算有動靜（動靜自動開關、地圖），沒人在家時看到人就通知
 export interface CamAccess { can_view: boolean; me: string | null; count: number; viewers?: { id: string; name: string }[]; candidates?: { id: string; name: string; kind: string }[] }
-export interface Cam { id: string; name: string; host: string; port: number; room: string | null; enabled: boolean; alert: boolean; model?: string; faces?: boolean; role?: "entry" | "room"; light?: string | null; pets?: boolean; fall?: boolean; pet_notify?: boolean; pets_here?: string[]; ignore?: number[][];
-  door?: { rect: number[]; refs: number; notify: "away" | "always" | "off"; scene: string | null; open: boolean; score: number | null } | null; person: boolean; score: number | null; ok: boolean | null; error: string | null }
+export interface Cam { id: string; name: string; host: string; port: number; room: string | null; enabled: boolean; alert: boolean; model?: string; faces?: boolean; role?: "entry" | "room"; light?: string | null; pets?: boolean; fall?: boolean; pet_notify?: boolean; pets_here?: string[]; ignore?: number[][][];
+  door?: { rect: number[]; poly?: number[][] | null; refs: number; notify: "away" | "always" | "off"; scene: string | null; open: boolean; score: number | null } | null; person: boolean; score: number | null; ok: boolean | null; error: string | null }
 
 // 誰可以看攝影機畫面：沒權限的裝置用手機通知的驗證碼開通；有權限的人勾選其他裝置
 export function CamAccessBox({ acc, onChange }: { acc: CamAccess; onChange: (a: CamAccess) => void }) {
