@@ -5,6 +5,7 @@ import { AskProvider } from "@/components/ask-sheet";
 import { TruckRush } from "@/components/truck-rush";
 import { FxLayer } from "@/components/fx";
 import { Standby } from "@/components/standby";
+import { useLook } from "@/lib/look";
 
 // 首頁以外的頁面用到才載入（首頁比較快出現）；首頁出來後趁空檔先載好，切換時就不用等
 const load = {
@@ -30,6 +31,18 @@ export default function App() {
     const t = setTimeout(() => Object.values(load).forEach((f) => f().catch(() => {})), 2500);
     return () => clearTimeout(t);
   }, []);
+  // 手機上方狀態列（和加到主畫面時的系統列）的顏色跟著畫面底色：換外觀、深淺色時一起換
+  const look = useLook();
+  useEffect(() => {
+    const sync = () => {
+      const bg = getComputedStyle(document.body).backgroundColor;
+      document.querySelectorAll('meta[name="theme-color"]').forEach((m) => m.setAttribute("content", bg));
+    };
+    sync();
+    const mq = matchMedia("(prefers-color-scheme: dark)");
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, [look]);
   const Page = tab in PAGES ? PAGES[tab as keyof typeof load] : null;
   return (
     <AskProvider>
