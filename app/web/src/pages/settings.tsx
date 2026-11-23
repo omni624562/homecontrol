@@ -24,6 +24,7 @@ import { api } from "@/lib/api";
 import { pad2 } from "@/lib/format";
 import { useHub } from "@/lib/hub";
 import { setLook, useLook } from "@/lib/look";
+import { setNavStyle, useNavStyle } from "@/lib/nav";
 import { previewStandby, setStandbyMin, useStandbyMin } from "@/components/standby";
 import { Segmented } from "@/components/schedule-bits";
 import type { HubState, PairedDevice } from "@/lib/types";
@@ -602,6 +603,7 @@ function JumpChips() {
 
 export function SettingsPage() {
   const look = useLook();
+  const navStyle = useNavStyle();
   const standby = useStandbyMin();
   const { state, connected } = useHub();
   const [sheet, setSheet] = useState<"sense" | "cloud" | "weather" | "life" | "line" | "keys" | null>(null);
@@ -742,6 +744,11 @@ export function SettingsPage() {
             <SRow wrap label="畫面風格" hint="只換這台裝置的樣子；功能和資料都一樣，隨時可以換回來">
               <div className="w-56"><Segmented label="畫面風格" value={look} onChange={setLook} options={[["classic", "原本"], ["tech", "科技感"]]} /></div>
             </SRow>
+            <div className="lg:hidden">
+              <SRow wrap label="手機選單" hint="左上角「☰」打開全部頁面，或放在畫面下方（排程、網路裝置、設定在「更多」裡）；只換這台裝置">
+                <div className="w-56"><Segmented label="手機選單" value={navStyle} onChange={setNavStyle} options={[["menu", "左上角 ☰"], ["tabs", "下方分頁"]]} /></div>
+              </SRow>
+            </div>
             <SRow wrap label="待機畫面" hint="這台裝置沒人碰這麼久，就換成大時鐘和公車、垃圾車這些當下有用的事；碰一下回來。適合牆上的平板">
               <Select value={String(standby)} onValueChange={(v) => setStandbyMin(Number(v))}>
                 <SelectTrigger className="w-32 bg-background" aria-label="待機畫面"><SelectValue /></SelectTrigger>
