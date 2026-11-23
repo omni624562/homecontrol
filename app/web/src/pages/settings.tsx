@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { AlertCircle, Archive, Bell, Cctv, Plus, ShieldCheck, Trash2, CheckCircle2, CloudSun, KeyRound, MessageCircle, ChevronRight, ExternalLink, Loader2, MessageSquareText, Mic, Moon, Palette, Search, Wifi, WifiOff } from "lucide-react";
+import { AlertCircle, Archive, Bell, Cctv, Download, Lock, Plus, ShieldCheck, Trash2, CheckCircle2, CloudSun, KeyRound, MessageCircle, ChevronRight, ExternalLink, Loader2, MessageSquareText, Mic, Moon, Palette, Search, Wifi, WifiOff } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -390,7 +390,7 @@ function NetCheck({ s }: { s: HubState }) {
   );
 }
 
-const SECTIONS: [string, string][] = [["s-look", "外觀"], ["s-notify", "通知"], ["s-night", "晚安"], ["s-life", "天氣生活"], ["s-ask", "問家裡"], ["s-google", "Google Home"], ["s-cam", "攝影機"], ["s-dev", "裝置"], ["s-sys", "安全與備份"]];
+const SECTIONS: [string, string][] = [["s-look", "外觀"], ["s-notify", "通知"], ["s-night", "晚安"], ["s-life", "天氣生活"], ["s-ask", "問家裡"], ["s-google", "Google Home"], ["s-cam", "攝影機"], ["s-dev", "裝置"], ["s-sys", "安全與備份"], ["s-tls", "HTTPS"]];
 
 const ago = (t: number) => {
   const s = Date.now() / 1000 - t;
@@ -437,6 +437,57 @@ function NewCode() {
       <div className="font-mono text-2xl font-bold tracking-[0.25em] tabular-nums" aria-label={`配對碼 ${code.code.split("").join(" ")}`}>{code.code}</div>
       <div className="text-xs text-muted-foreground">{Math.floor(left / 60)}:{pad2(left % 60)} 內在新裝置輸入</div>
     </div>
+  );
+}
+
+// 安全連線（HTTPS）：樹莓派自己當憑證機構；每台要用鏡頭、麥克風的裝置裝一次根憑證
+interface TlsInfo { ready: boolean; port: number; secure: boolean; fingerprint?: string; until?: string; ca_until?: string; ips?: string[]; names?: string[]; error?: string }
+const TLS_STEPS: [string, string[]][] = [
+  ["Windows 電腦", ["按上面的「下載憑證」", "在下載的檔案上點兩下 →「安裝憑證」→ 存放位置選「目前使用者」", "選「將所有憑證放入以下的存放區」→「瀏覽」→「受信任的根憑證授權單位」→ 完成", "關掉瀏覽器再打開，用下面的 https 網址"]],
+  ["Mac", ["按「下載憑證」，點兩下下載的檔案，加到「系統」鑰匙圈", "在「鑰匙圈存取」裡找到「家庭中控 本機憑證」，點兩下 →「信任」→ 使用此憑證時選「永遠信任」", "關掉瀏覽器再打開，用下面的 https 網址"]],
+  ["iPhone、iPad", ["用 Safari 打開這一頁，按「下載憑證」→「允許」", "到「設定 → 一般 → VPN 與裝置管理」安裝「家庭中控 本機憑證」", "再到「設定 → 一般 → 關於本機 → 憑證信任設定」，把它打開", "用下面的 https 網址"]],
+  ["Android", ["按「下載憑證」", "到「設定 → 安全性 → 加密與憑證 → 安裝憑證 → CA 憑證」，選剛下載的檔案（各廠牌位置稍有不同）", "用下面的 https 網址"]],
+];
+
+function TlsCard() {
+  const [info, setInfo] = useState<TlsInfo | null>(null);
+  const [open, setOpen] = useState<string | null>(null);
+  useEffect(() => { api<TlsInfo>("GET", "/api/tls").then(setInfo).catch(() => {}); }, []);
+  if (!info) return null;
+  const url = `https://${location.hostname}:${info.port}${location.pathname}${location.hash}`;
+  return (
+    <SCard id="s-tls" icon={Lock} title="安全連線（HTTPS）" badge={info.secure ? <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300">現在是 HTTPS</Badge> : undefined}>
+      <p className="px-4 pt-3 text-sm leading-relaxed text-muted-foreground sm:px-5">
+        瀏覽器只在 HTTPS 下讓網頁用鏡頭、麥克風（手勢遙控之類的功能）。樹莓派做了一張家裡專用的憑證，每台要用的電腦、手機裝一次就好；沒裝的照常用原本的網址，不受影響。
+      </p>
+      {!info.ready ? (
+        <p className="px-4 py-3 text-sm text-red-600 sm:px-5 dark:text-red-400">HTTPS 還沒準備好{info.error ? `：${info.error}` : "（重新啟動後會自動產生憑證）"}</p>
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center gap-2 px-4 py-3 sm:px-5">
+            <Button asChild><a href="/api/tls/ca.crt" download="homecontrol-ca.crt"><Download />下載憑證</a></Button>
+            {!info.secure && <Button variant="outline" asChild><a href={url}><Lock />改用 HTTPS 打開</a></Button>}
+          </div>
+          <div className="px-4 pb-1 sm:px-5">
+            {TLS_STEPS.map(([os, steps]) => (
+              <div key={os} className="border-t first:border-t-0">
+                <button className="flex w-full items-center justify-between py-2.5 text-left font-medium" aria-expanded={open === os} onClick={() => setOpen(open === os ? null : os)}>
+                  {os}<ChevronRight className={cn("size-4 text-muted-foreground transition-transform", open === os && "rotate-90")} />
+                </button>
+                {open === os && <ol className="mb-3 list-decimal space-y-1 pl-5 text-sm leading-relaxed">{steps.map((x) => <li key={x}>{x}</li>)}</ol>}
+              </div>
+            ))}
+          </div>
+          <div className="space-y-1 px-4 py-3 text-sm sm:px-5">
+            <div><span className="text-muted-foreground">HTTPS 網址：</span><span className="font-mono">https://{location.hostname}:{info.port}</span></div>
+            <div><span className="text-muted-foreground">包含的位址：</span>{[...(info.ips || []), ...(info.names || [])].join("、")}</div>
+            <div><span className="text-muted-foreground">伺服器憑證到：</span>{info.until}（到期前會自動換新，不用重裝）・根憑證到 {info.ca_until}</div>
+            <div className="break-all"><span className="text-muted-foreground">根憑證指紋（SHA-256，安裝時可以對照）：</span><span className="font-mono text-xs">{info.fingerprint}</span></div>
+            <p className="pt-1 text-xs text-muted-foreground">Firefox 用自己的憑證清單：到「設定 → 隱私權與安全性 → 憑證 → 檢視憑證 → 憑證機構 → 匯入」。根憑證的私鑰只在樹莓派上，不會傳出去。</p>
+          </div>
+        </>
+      )}
+    </SCard>
   );
 }
 
@@ -897,6 +948,7 @@ export function SettingsPage() {
             </SRow>
           </SCard>
           <SystemCard s={state} />
+          <TlsCard />
         </div>
       </div>
       <SenseSheet open={sheet === "sense"} onClose={() => setSheet(null)} />
