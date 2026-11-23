@@ -71,13 +71,13 @@ def test_notifier_counts(app_module, monkeypatch):
 def test_setup_checklist(app_module):
     c = _client(app_module)
     hub = app_module.hub
-    hub.cameras.list = [{"id": "g", "name": "大門口", "host": "x", "enabled": True, "role": "entry", "door": {"rect": [0, 0, 1, 1], "refs": [1]}},
+    hub.cameras.list = [{"id": "g", "name": "大門口", "host": "x", "enabled": True, "role": "entry", "zones": [{"id": "door", "name": "大門", "kind": "door", "poly": [[0, 0], [1, 0], [1, 1]], "refs": ["a"], "ref_when": ["day"]}]},
                         {"id": "r", "name": "客廳", "host": "y", "enabled": True, "role": "room", "room": None}]
     items = {i["id"]: i for i in c.get("/api/setup").json()["items"]}
-    assert not items["cam_door"]["done"] and "大門口" in items["cam_door"]["hint"]
+    assert not items["cam_door"]["done"] and "大門口的大門" in items["cam_door"]["hint"]
     assert not items["cam_room"]["done"] and "客廳" in items["cam_room"]["hint"]
     assert {"line", "people", "rooms", "map", "scene", "schedule", "backup", "faces", "cam_view"} <= set(items)
-    hub.cameras.list[0]["door"]["refs"] = [1, 2]
+    hub.cameras.list[0]["zones"][0].update(refs=["a", "b"], ref_when=["day", "night"])
     hub.cameras.list[1]["room"] = "r1"
     items = {i["id"]: i for i in c.get("/api/setup").json()["items"]}
     assert items["cam_door"]["done"] and items["cam_room"]["done"]

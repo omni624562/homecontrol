@@ -142,6 +142,25 @@ def zone_points(z: Any) -> list[list[float]]:
     return [[float(p[0]), float(p[1])] for p in z]
 
 
+def _migrate_door(c: dict[str, Any]) -> None:
+    """舊版的「門」（攝影機只能有一個）搬進區域清單，變成種類是門、叫「大門」的區域；設定、記住的樣子都保留。"""
+    door = c.pop("door", None) or {}
+    poly = door.get("poly") or (zone_points(door["rect"]) if door.get("rect") else None)
+    if not poly:
+        return
+    refs = list(door.get("refs") or [])
+    c["zones"] = [{"id": "door", "name": "大門", "kind": "door", "poly": poly, "linger": 0,
+                   "act": {"notify": door.get("notify") or "away", "scene": door.get("scene"), "dark": True},
+                   "refs": refs, "ref_when": ["day"] * len(refs)}] + [z for z in c.get("zones") or [] if z.get("id") != "door"]
+
+
+def ref_counts(z: dict[str, Any]) -> dict[str, int]:
+    """記住的樣子裡，白天、晚上（夜視黑白）各幾張。"""
+    when = list(z.get("ref_when") or [])
+    when += ["day"] * (len(z.get("refs") or []) - len(when))  # 舊資料沒有標：算白天
+    return {"day": when.count("day"), "night": when.count("night")}
+
+
 def _zone_state(st: dict[str, Any], z: dict[str, Any]) -> dict[str, Any]:
     zs = (st.get("zones") or {}).get(z["id"]) or {}
     return {"busy": bool(zs.get("in")), "open": bool(zs.get("open")), "score": zs.get("score")}
@@ -262,14 +281,14 @@ class Cameras:
             c["ignore"] = [zone_points(z) for z in c.get("ignore") or []]  # 不要看的地方（例如路邊）：每塊是 0～1 的多邊形頂點
             c.setdefault("zones", [])  # 區域：[{"id","name","kind": area/object/door,"poly","linger","act": {...},"refs": [樣子…]}]
             c.setdefault("lines", [])  # 線：[{"id","name","a","b","in": {...},"out": {...}}]（箭頭那邊＝回來）
-            c.setdefault("door", None)  # 開門：{"rect": [x,y,w,h], "refs": [樣子…], "notify": away/always/off, "scene": 天黑後開門執行的情境}
+            _migrate_door(c)
 
     def save(self) -> None:
         tmp = self.path.with_suffix(".tmp")
         def strip(d: dict[str, Any]) -> dict[str, Any]:
             return {k: v for k, v in d.items() if not k.startswith("_")}
 
-        clean = [{**c, "door": strip(c["door"]) if c.get("door") else None, "zones": [strip(z) for z in c.get("zones") or []]} for c in self.list]
+        clean = [{**c, "zones": [strip(z) for z in c.get("zones") or []]} for c in self.list]
         tmp.write_text(json.dumps({"cameras": clean, "viewers": self.viewers}, ensure_ascii=False, indent=2), "utf-8")
         os.chmod(tmp, 0o600)
         tmp.replace(self.path)
@@ -282,12 +301,10 @@ class Cameras:
         out = []
         for c in self.list:
             st = self.state.get(c["id"], {})
-            door = c.get("door") or {}
             out.append({k: c.get(k) for k in ("id", "name", "host", "port", "room", "enabled", "alert", "model", "faces", "role", "light", "pets", "fall", "pet_notify", "ignore")}
-                       | {"door": {"rect": door.get("rect"), "poly": door.get("poly") or (zone_points(door["rect"]) if door.get("rect") else None), "refs": len(door.get("refs") or []), "notify": door.get("notify", "away"), "scene": door.get("scene"),
-                                   "open": bool((st.get("door") or {}).get("open")), "score": (st.get("door") or {}).get("score")} if door.get("rect") else None,
+                       | {"night": st.get("night"),
                           "pets_here": [n for n, p in (st.get("pets") or {}).items() if p.get("here")],
-                          "zones": [{k: z.get(k) for k in ("id", "name", "kind", "poly", "linger", "act")} | {"refs": len(z.get("refs") or []), **_zone_state(st, z)} for z in c.get("zones") or []],
+                          "zones": [{k: z.get(k) for k in ("id", "name", "kind", "poly", "linger", "act")} | {"refs": len(z.get("refs") or []), **ref_counts(z), **_zone_state(st, z)} for z in c.get("zones") or []],
                           "lines": [{k: ln.get(k) for k in ("id", "name", "a", "b", "in", "out")} | {"last": (st.get("lines") or {}).get(ln["id"], {}).get("last")} for ln in c.get("lines") or []]}
                        | {"person": bool(st.get("person")), "since": st.get("since"), "score": (st.get("recent") or [None])[-1],
                           "ok": st.get("ok"), "error": st.get("error"), "at": st.get("at")})

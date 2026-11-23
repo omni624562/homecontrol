@@ -194,3 +194,16 @@ def door_track(st: dict[str, Any], score: float) -> str | None:
         return None
     st["open"], st["n"] = want, 0
     return "open" if want else "close"
+
+
+def is_night(jpeg: bytes) -> bool:
+    """攝影機切成夜視（黑白）了沒：三個顏色幾乎一樣就是黑白畫面。"""
+    import cv2
+    import numpy as np
+
+    img = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_REDUCED_COLOR_4)
+    if img is None:
+        raise ValueError("讀不到畫面")
+    b, g, r = (img[:, :, i].astype(np.int16) for i in range(3))
+    return float((np.abs(b - g) + np.abs(g - r)).mean()) < 6.0
+

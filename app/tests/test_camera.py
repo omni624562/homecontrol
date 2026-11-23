@@ -226,6 +226,61 @@ def test_mask_and_role_defaults(app_module, monkeypatch):
     tri = [[0.1, 0.1], [0.5, 0.2], [0.2, 0.7]]
     got = c.put("/api/cameras/g", json={"ignore": [tri, [[0, 0], [0.01, 0.01]]]}).json()["cameras"][0]
     assert got["ignore"] == [tri]
-    r = c.put("/api/cameras/g/door", json={"poly": [[0.1, 0.1], [0.3, 0.15], [0.3, 0.8], [0.1, 0.9]]}).json()["cameras"][0]["door"]
-    assert r["rect"] == [0.1, 0.1, 0.2, 0.8] and len(r["poly"]) == 4 and r["refs"] == 0
-    assert c.put("/api/cameras/g/door", json={"poly": [[0.1, 0.1], [0.2, 0.2]]}).status_code == 400
+    assert c.put("/api/cameras/g/door", json={"poly": [[0.1, 0.1], [0.3, 0.15], [0.3, 0.8]]}).status_code in (404, 405)  # 舊的「門」API 拿掉了：門是區域的一種
+
+
+def test_old_door_moves_into_zones(tmp_path):
+    import json
+
+    from plughub import camera
+
+    (tmp_path / "cameras.json").write_text(json.dumps({"cameras": [
+        {"id": "g", "name": "大門口", "host": "x", "zones": [{"id": "z1", "name": "區域 1", "kind": "door", "poly": [[0.3, 0], [0.4, 0], [0.4, 0.4]], "linger": 0, "act": {"notify": "off", "scene": None, "dark": False}}],
+         "door": {"rect": [0.1, 0.2, 0.1, 0.4], "poly": [[0.1, 0.2], [0.2, 0.2], [0.2, 0.6], [0.1, 0.6]], "refs": ["a", "b"], "notify": "always", "scene": "s1"}},
+        {"id": "r", "name": "客廳", "host": "y", "door": None}], "viewers": []}), "utf-8")
+    cams = camera.Cameras(tmp_path)
+    g = cams.get("g")
+    assert "door" not in g
+    assert [z["id"] for z in g["zones"]] == ["door", "z1"]
+    d = g["zones"][0]
+    assert d["name"] == "大門" and d["kind"] == "door" and d["refs"] == ["a", "b"] and d["act"] == {"notify": "always", "scene": "s1", "dark": True}
+    assert camera.ref_counts(d) == {"day": 2, "night": 0}
+    assert cams.get("r")["zones"] == []
+    cams.save()
+    again = camera.Cameras(tmp_path).get("g")
+    assert [z["id"] for z in again["zones"]] == ["door", "z1"]  # 存過之後再讀：不會重複搬
+    pub = cams.public()[0]
+    assert "door" not in pub and pub["zones"][0]["day"] == 2 and pub["zones"][0]["night"] == 0
+
+
+def test_door_refs_keep_day_and_night():
+    from plughub.hub import _add_ref
+
+    z = {"kind": "door", "refs": ["d1"]}
+    _add_ref(z, "d2", "day", 2)
+    _add_ref(z, "d3", "day", 2)
+    _add_ref(z, "n1", "night", 2)
+    assert z["refs"] == ["d2", "d3", "n1"] and z["ref_when"] == ["day", "day", "night"]  # 白天記再多，晚上那張也不會被擠掉
+    o = {"kind": "object", "refs": []}
+    for k in range(5):
+        _add_ref(o, f"o{k}", "night" if k % 2 else "day", 3)
+    assert o["refs"] == ["o2", "o3", "o4"] and o["ref_when"] == ["day", "night", "day"]
+
+
+def test_is_night():
+    import io
+
+    from PIL import Image
+
+    from plughub import vision
+
+    def jpg(img):
+        b = io.BytesIO()
+        img.save(b, "JPEG")
+        return b.getvalue()
+
+    color = Image.new("RGB", (160, 90), (200, 120, 60))
+    gray = Image.new("RGB", (160, 90), (110, 110, 110))
+    assert not vision.is_night(jpg(color))
+    assert vision.is_night(jpg(gray))
+

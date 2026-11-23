@@ -91,7 +91,8 @@ def _hub(app_module, monkeypatch):
     monkeypatch.setattr(hub, "_spawn", lambda coro: (hub.spawned.append(coro), coro.close()))
     monkeypatch.setattr(hub, "changed", lambda: asyncio.sleep(0))
     hub.cameras.list = [{"id": "c", "name": "客廳", "host": "x", "enabled": True, "faces": False, "fall": True, "pets": True, "role": "room",
-                         "door": {"rect": [0, 0, 1, 1], "refs": ["x"], "_refs": ["ref"], "notify": "away", "scene": "s-light"}}]
+                         "zones": [{"id": "door", "name": "大門", "kind": "door", "poly": [[0, 0], [1, 0], [1, 1], [0, 1]], "refs": ["x"], "_refs": ["ref"],
+                                    "act": {"notify": "away", "scene": "s-light", "dark": True}}]}]
     hub.cameras.state["c"] = {"person": True}
     hub.store.data["people"] = [{"id": "dad", "name": "爸爸", "macs": []}]
     return hub, sent, ran
@@ -101,26 +102,22 @@ def test_door_open_when_away_waits_then_alerts(app_module, monkeypatch):
     hub, sent, ran = _hub(app_module, monkeypatch)
     vis = __import__("sys").modules["plughub.vision"]
     scores = iter([0.2, 0.2])
-    monkeypatch.setattr(vis, "door_sig", lambda jpeg, rect, poly=None: "sig")
+    monkeypatch.setattr(vis, "door_sig", lambda jpeg, rect, poly=None: np.zeros((4, 4), np.float32))
     monkeypatch.setattr(vis, "door_score", lambda sig, refs: next(scores))
+    monkeypatch.setattr(vis, "is_night", lambda jpeg: True)
     monkeypatch.setattr(hub, "is_dark", lambda: True)
     now = time.time()
     hub._presence = {"dad": {"home": False, "since": now - 9999}}
     cam = hub.cameras.list[0]
     st = hub.cameras.state["c"]
-    asyncio.run(hub._door_check(cam, st, b"j", now))
-    asyncio.run(hub._door_check(cam, st, b"j", now + 1))
-    assert st["door"]["open"] and ran and ran[0][0] == "s-light"
-    assert hub.face_log.items[-1]["kind"] == "door" and "c" in hub._door_pending
-    hub._door_pending_check(now + 60)
+    asyncio.run(hub._zones_check(cam, st, b"j", now, [], False))
+    asyncio.run(hub._zones_check(cam, st, b"j", now + 1, [], False))
+    assert st["zones"]["door"]["open"] and ran and ran[0][0] == "s-light" and st["night"] is True
+    assert hub.face_log.items[-1]["kind"] == "zone" and any("大門開了" in k for k in hub._zone_pending)
+    hub._zone_pending_check(now + 60)
     assert sent == []
-    hub._door_pending_check(now + 1 + camera.ARRIVE_WAIT)
-    assert "門被打開了" in sent[-1][0] and sent[-1][2] == "urgent"
-    # 家人回來（手機連上）：不通知
-    hub._door_pending["c"] = now
-    hub._presence["dad"] = {"home": True, "since": now + 30}
-    hub._door_pending_check(now + 999)
-    assert len(sent) == 1 and hub._door_pending == {}
+    hub._zone_pending_check(now + 1 + camera.ARRIVE_WAIT)
+    assert "大門開了" in sent[-1][0] and sent[-1][2] == "urgent"
 
 
 def test_pet_and_fall_logged(app_module, monkeypatch):
@@ -139,23 +136,28 @@ def test_pet_and_fall_logged(app_module, monkeypatch):
     assert "跌倒" in sent[-1][0] and sent[-1][2] == "urgent" and hub.face_log.items[-1]["kind"] == "fall"
 
 
-def test_door_api(app_module, monkeypatch):
+def test_door_zone_remember_api(app_module, monkeypatch):
     from fastapi.testclient import TestClient
 
     c = TestClient(app_module.app, base_url="http://hub:8100")
     token, dev = app_module.auth.pair(app_module.auth.new_code())
     c.cookies.set("plughub_token", token)
     hub = app_module.hub
-    hub.cameras.list = [{"id": "c", "name": "客廳", "host": "x", "enabled": True}]
-    assert c.put("/api/cameras/c/door", json={"rect": [0.1, 0.1, 0.3, 0.6]}).status_code == 403
+    hub.cameras.list = [{"id": "c", "name": "客廳", "host": "x", "enabled": True,
+                         "zones": [{"id": "d", "name": "電梯", "kind": "door", "poly": [[0.1, 0.1], [0.4, 0.1], [0.4, 0.7]], "act": {"notify": "off"}}]}]
+    assert c.post("/api/cameras/c/zones/d/ref").status_code == 403
     hub.cameras.viewers = [dev["id"]]
-    r = c.put("/api/cameras/c/door", json={"rect": [0.1, 0.1, 0.3, 0.6], "notify": "always"}).json()
-    assert r["cameras"][0]["door"]["rect"] == [0.1, 0.1, 0.3, 0.6] and r["cameras"][0]["door"]["refs"] == 0
-    assert c.put("/api/cameras/c/door", json={"rect": [0.1, 0.1, 0.01, 0.6]}).status_code == 400
+    vis = __import__("sys").modules["plughub.vision"]
     monkeypatch.setattr(__import__("sys").modules["plughub.camera"], "snapshot", lambda cam: b"jpeg")
-    monkeypatch.setattr(hub, "door_reference", lambda cam, jpeg: 1)
-    assert c.post("/api/cameras/c/door/ref").json()["refs"] == 1
-    assert c.delete("/api/cameras/c/door").json()["cameras"][0]["door"] is None
+    monkeypatch.setattr(vis, "door_sig", lambda jpeg, rect, poly=None: np.ones((4, 4), np.float32))
+    night = {"v": False}
+    monkeypatch.setattr(vis, "is_night", lambda jpeg: night["v"])
+    r = c.post("/api/cameras/c/zones/d/ref").json()
+    assert (r["day"], r["night"], r["refs"], r["is_night"]) == (1, 0, 1, False)
+    night["v"] = True
+    r = c.post("/api/cameras/c/zones/d/ref").json()
+    z = r["cameras"][0]["zones"][0]
+    assert r["is_night"] and r["night"] == 1 and z["day"] == 1 and z["night"] == 1 and r["cameras"][0]["night"] is True
 
 
 def test_door_poly_only_looks_inside():

@@ -119,6 +119,23 @@ def _notify_key(title: str) -> str:
     t = re.sub(r"[\s\d]+", "", t)
     return re.sub(r"[^\w\-]", "", t)[:30] or "其他"
 
+
+def _add_ref(z: dict[str, Any], sig: str, when: str, keep: int) -> None:
+    """加一張「記住的樣子」，標上白天或晚上。門：白天、晚上各留最新的 keep 張；其他：一共留最新的 keep 張。"""
+    refs = list(z.get("refs") or [])
+    tags = list(z.get("ref_when") or [])
+    tags += ["day"] * (len(refs) - len(tags))
+    pairs = list(zip(refs, tags[:len(refs)])) + [(sig, when)]
+    if z.get("kind") == "door":
+        day = [p for p in pairs if p[1] == "day"][-keep:]
+        night = [p for p in pairs if p[1] == "night"][-keep:]
+        pairs = [p for p in pairs if p in day or p in night]
+    else:
+        pairs = pairs[-keep:]
+    z["refs"] = [p[0] for p in pairs]
+    z["ref_when"] = [p[1] for p in pairs]
+    z.pop("_refs", None)
+
 class Hub:
     def __init__(self, store: Store, notifier: Notifier) -> None:
         self.store = store
@@ -172,7 +189,6 @@ class Hub:
         self.enroll_result: dict[str, Any] | None = None
         self.pose = vision.Pose()
         self._falls: dict[str, dict[str, Any]] = {}  # 攝影機 ID → 跌倒判斷的狀態
-        self._door_pending: dict[str, float] = {}  # 攝影機 ID → 沒人在家時門被打開的時間（等家人的手機）
         self._zone_pending: dict[str, dict[str, Any]] = {}  # 「攝影機:區域」→ 沒人在家時區域觸發的事（等家人的手機確認不是家人）
         self.locator = locate.Locator(self.store.data.setdefault("locate", {}))
         self._sense_path = store.dir / "sensing.json.gz"
@@ -1437,64 +1453,16 @@ class Hub:
             self.notifier.send("⚠️ 可能有人跌倒", f"{cam.get('name')} {datetime.now().strftime('%H:%M')} 看到有人站著突然倒下，"
                                f"超過 {vision.FALL_HOLD} 秒沒起來。請確認一下；照片在「設定 → 認臉 → 攝影機紀錄」", "urgent")
 
-    async def _door_check(self, cam: dict[str, Any], st: dict[str, Any], jpeg: bytes, now: float) -> None:
-        door = cam.get("door") or {}
-        if not door.get("rect") or not door.get("refs"):
-            return
-        try:
-            refs = door.get("_refs")
-            if refs is None:
-                refs = door["_refs"] = [vision.sig_decode(r) for r in door["refs"]]
-            sig = await asyncio.to_thread(vision.door_sig, jpeg, door["rect"], door.get("poly"))
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.debug("門的判斷失敗：%s", err)
-            return
-        ds = st.setdefault("door", {})
-        ds["score"] = round(vision.door_score(sig, refs), 2)
-        ev = vision.door_track(ds, ds["score"])
-        if ev == "open":
-            self._door_opened(cam, door, now)
-        if ev:
-            await self.changed()
-
-    def _door_opened(self, cam: dict[str, Any], door: dict[str, Any], now: float) -> None:
-        name = cam.get("name") or cam["host"]
-        self.face_log.add({"camera": name, "kind": "door", "name": "開門", "sim": None})
-        if door.get("scene") and self.is_dark() and self._face_once(f"{cam['id']}:doorscene", 120, now):
-            self._presence_scene(door["scene"], f"{name}的門打開了")
-        mode = door.get("notify", "away")
-        people = self.people_report()
-        away = bool(people) and all(p.get("home") is False for p in people)
-        if mode == "always":
-            self.notifier.send(f"{name}的門打開了", datetime.now().strftime("%H:%M"))
-        elif mode == "away" and away and cam["id"] not in self._door_pending:
-            # 沒人在家：先等等看是不是家人回來（手機連上 Wi-Fi、或門口認出家人）
-            self._door_pending[cam["id"]] = now
-            if not self._probe_busy:
-                self._probe_busy = True
-                self._spawn(self._probe_people())
-
-    def _door_pending_check(self, now: float) -> None:
-        if not self._door_pending:
-            return
-        home = any(p.get("home") for p in self.people_report())
-        family = any(self.gallery.people.get(pid, {}).get("kind") == "family" for v in self._visits.values() for pid in v["known"])
-        for cid, t in list(self._door_pending.items()):
-            if home or family or now - self._face_arrived_at < camera.ARRIVE_WAIT:
-                del self._door_pending[cid]
-                continue
-            if now - t < camera.ARRIVE_WAIT:
-                continue
-            del self._door_pending[cid]
-            cam = self.cameras.get(cid) or {}
-            self.notifier.send("⚠️ 沒人在家，門被打開了", f"{cam.get('name') or cid}的門在 {datetime.fromtimestamp(t).strftime('%H:%M')} 打開，"
-                               f"之後 {camera.ARRIVE_WAIT // 60} 分鐘都沒有家人的手機連上 Wi-Fi、門口也沒認出家人", "urgent")
-
     # ---- 區域和線 ----
 
     async def _zones_check(self, cam: dict[str, Any], st: dict[str, Any], jpeg: bytes, now: float, people: list[dict[str, Any]], someone: bool) -> None:
         feet = [p["foot"] for p in people if p.get("foot")]
         zst = st.setdefault("zones", {})
+        if any(z.get("kind") in ("door", "object") for z in cam.get("zones") or []):
+            try:
+                st["night"] = await asyncio.to_thread(vision.is_night, jpeg)
+            except Exception:  # noqa: BLE001
+                pass
         for z in cam.get("zones") or []:
             s = zst.setdefault(z["id"], {})
             kind = z.get("kind")
@@ -1523,7 +1491,7 @@ class Hub:
                 continue
             ev = zonelib.object_track(s, score, float(sig.sum()), now, someone)
             if ev:
-                self._zone_learn(z, sig, s)  # 不管是第一次還是變了：現在的樣子記成正常的（包裹放著不會一直講）
+                self._zone_learn(z, sig, s, "night" if st.get("night") else "day")  # 不管是第一次還是變了：現在的樣子記成正常的（包裹放著不會一直講）
             if ev in ("more", "less", "changed"):
                 word = {"more": "多了東西", "less": "東西不見了", "changed": "有東西變了"}[ev]
                 self._zone_fire(cam, z, f"{z['name']}{word}", z.get("act") or {}, now, thumb=self._zone_thumb(jpeg, z["poly"]))
@@ -1558,9 +1526,8 @@ class Hub:
                 for ln in c["lines"]:
                     self._line_feed(c, ln, lst.setdefault(ln["id"], {}), feet, now)
 
-    def _zone_learn(self, z: dict[str, Any], sig: Any, s: dict[str, Any]) -> None:
-        z["refs"] = ((z.get("refs") or []) + [vision.sig_encode(sig)])[-zonelib.OBJ_KEEP:]
-        z.pop("_refs", None)
+    def _zone_learn(self, z: dict[str, Any], sig: Any, s: dict[str, Any], when: str = "day") -> None:
+        _add_ref(z, vision.sig_encode(sig), when, zonelib.OBJ_KEEP)
         s["base_e"] = float(sig.sum())
         self._dirty_cams = True
 
@@ -1568,9 +1535,12 @@ class Hub:
         """「現在的樣子是正常的」：門記成關著的樣子；東西多了／不見了記成正常的樣子。"""
         z = next(x for x in cam.get("zones") or [] if x["id"] == zid)
         sig = vision.door_sig(jpeg, vision.poly_bbox(z["poly"]), z["poly"])
-        keep = 4 if z.get("kind") == "door" else zonelib.OBJ_KEEP
-        z["refs"] = ((z.get("refs") or []) + [vision.sig_encode(sig)])[-keep:]
-        z.pop("_refs", None)
+        try:
+            night = vision.is_night(jpeg)
+        except Exception:  # noqa: BLE001
+            night = False
+        self.cameras.state.setdefault(cam["id"], {})["night"] = night
+        _add_ref(z, vision.sig_encode(sig), "night" if night else "day", 2 if z.get("kind") == "door" else zonelib.OBJ_KEEP)
         s = self.cameras.state.setdefault(cam["id"], {}).setdefault("zones", {}).setdefault(zid, {})
         s.clear()
         s["base_e"] = float(sig.sum())
@@ -1622,16 +1592,6 @@ class Hub:
                 del self._zone_pending[key]
                 self.notifier.send(x["title"], f"{x['msg']}，之後 {camera.ARRIVE_WAIT // 60} 分鐘都沒有家人的手機連上 Wi-Fi、門口也沒認出家人", "urgent")
 
-    def door_reference(self, cam: dict[str, Any], jpeg: bytes) -> int:
-        """記住「門關著」的樣子（最多 4 張：白天、晚上各記一下就好）。"""
-        door = cam.get("door") or {}
-        sig = vision.door_sig(jpeg, door["rect"], door.get("poly"))
-        door["refs"] = ((door.get("refs") or []) + [vision.sig_encode(sig)])[-4:]
-        door.pop("_refs", None)
-        cam["door"] = door
-        self.cameras.state.get(cam["id"], {}).pop("door", None)
-        return len(door["refs"])
-
     # ---- 認臉：看到人時找臉，認出家人就做他的動作，不認得就通知 ----
 
     async def _face_tick(self, cams: list[dict[str, Any]], now: float) -> None:
@@ -1643,7 +1603,6 @@ class Hub:
             st = self.cameras.state.get(c["id"], {})
             for name in st.pop("pet_new", []):
                 self._pet_seen(c, name, now)
-            await self._door_check(c, st, jpeg, now)
             person = st.get("person")
             areas = [z for z in c.get("zones") or [] if z.get("kind") == "area"]
             people = None
@@ -1676,7 +1635,6 @@ class Hub:
             self._enroll_finish()
         for cid in [k for k in self._visits if not self.cameras.state.get(k, {}).get("person")]:
             del self._visits[cid]  # 人走了：這次結束
-        self._door_pending_check(now)
         self._zone_pending_check(now)
         await self._line_boost(cams)
 

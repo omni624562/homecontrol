@@ -23,7 +23,6 @@ GET /api/net/events         斷線紀錄：外網、基地台卡住、Wi-Fi、�
 GET /api/net/plug-health    插座連線健檢：斷幾次、訊號、建議
 GET/POST /api/cameras       網路攝影機（認人）；PUT/DELETE /api/cameras/{id}（room、enabled、alert、帳密）；GET …/{id}/snapshot.jpg 現在的畫面
 GET /api/faces              認臉：認得的人、動作、登記（POST/DELETE /api/faces/enroll）、紀錄；PUT /api/faces/actions、PUT/DELETE /api/faces/{id}
-PUT /api/cameras/{id}/door  開門偵測（框門、通知、天黑情境）；POST …/door/ref 記住門關著的樣子；DELETE …/door
 PUT /api/cameras/access     誰可以看攝影機；POST …/access/send-code 驗證碼送到手機、POST …/access/claim 開通這台
 GET /api/report/monthly     每月報告預覽（上個月）
 GET/PUT /api/motion-rules   動靜自動化：{"rules": [{"room","plug","start","end","off_min","need_home","enabled"}]}
@@ -1075,58 +1074,6 @@ def _poly(z: Any) -> list[list[float]] | None:
     return pts if w >= 0.02 and h >= 0.02 else None
 
 
-@app.put("/api/cameras/{cam_id}/door")
-async def cameras_door(cam_id: str, request: Request, body: dict = Body(...)) -> dict[str, Any]:
-    """開門偵測：{"rect": [x, y, w, h]（0～1，框出門；改了要重新記門關著的樣子）, "notify": away/always/off, "scene": 天黑後開門執行的情境}"""
-    _need_view(request)
-    cam = hub.cameras.get(cam_id)
-    if not cam:
-        raise HTTPException(404, "找不到這台攝影機")
-    door = dict(cam.get("door") or {})
-    if "poly" in body:  # 斜斜的門：點出多邊形
-        pts = _poly(body["poly"])
-        if not pts:
-            raise HTTPException(400, "框太小了，或點的位置不對（至少 3 個點）")
-        bx = vision_mod.poly_bbox(pts)
-        door.update(rect=[round(v, 4) for v in bx], poly=pts, refs=[])
-        door.pop("_refs", None)
-        hub.cameras.state.get(cam_id, {}).pop("door", None)
-    if "rect" in body:
-        try:
-            x, y, w, h = (min(1.0, max(0.0, float(v))) for v in body["rect"])
-        except (TypeError, ValueError):
-            raise HTTPException(400, "框的位置不對") from None
-        if w < 0.03 or h < 0.03:
-            raise HTTPException(400, "框太小了")
-        door.update(rect=[round(x, 4), round(y, 4), round(w, 4), round(h, 4)], refs=[])
-        door.pop("poly", None)
-        door.pop("_refs", None)
-        hub.cameras.state.get(cam_id, {}).pop("door", None)
-    if body.get("notify") in ("away", "always", "off"):
-        door["notify"] = body["notify"]
-    if "scene" in body:
-        door["scene"] = body["scene"] if body["scene"] and store.scene(body["scene"]) else None
-    cam["door"] = door
-    hub.cameras.save()
-    return {"cameras": hub.cameras.public()}
-
-
-@app.post("/api/cameras/{cam_id}/door/ref")
-async def cameras_door_ref(cam_id: str, request: Request) -> dict[str, Any]:
-    """現在門是關著的：記住這個樣子（白天、晚上各記一次）。"""
-    _need_view(request)
-    cam = hub.cameras.get(cam_id)
-    if not cam or not (cam.get("door") or {}).get("rect"):
-        raise HTTPException(400, "先框出門的位置")
-    try:
-        jpeg = await asyncio.to_thread(camera_mod.snapshot, cam)
-        n = hub.door_reference(cam, jpeg)
-    except Exception as err:  # noqa: BLE001
-        raise HTTPException(502, f"記不起來：{err}") from None
-    hub.cameras.save()
-    return {"cameras": hub.cameras.public(), "refs": n}
-
-
 def _act(a: Any) -> dict[str, Any]:
     """觸發後要做什麼：{"notify": off/away/always, "scene": 情境 ID, "dark": 情境只在天黑後}"""
     a = a if isinstance(a, dict) else {}
@@ -1153,7 +1100,7 @@ async def cameras_zones(cam_id: str, request: Request, body: dict = Body(...)) -
         same = prev.get("poly") == pts and prev.get("kind") == kind
         out.append({"id": zid, "name": str(z.get("name") or "區域").strip()[:12], "kind": kind, "poly": pts,
                     "linger": int(_num(z.get("linger") or 0, 0, 600)), "act": _act(z.get("act")),
-                    "refs": prev.get("refs") or [] if same else []})  # 形狀或種類改了：記住的樣子作廢
+                    "refs": prev.get("refs") or [] if same else [], "ref_when": prev.get("ref_when") or [] if same else []})  # 形狀或種類改了：記住的樣子作廢
         if not same:
             hub.cameras.state.get(cam_id, {}).get("zones", {}).pop(zid, None)
     cam["zones"] = out
@@ -1174,7 +1121,8 @@ async def cameras_zone_ref(cam_id: str, zid: str, request: Request) -> dict[str,
     except Exception as err:  # noqa: BLE001
         raise HTTPException(502, f"記不起來：{err}") from None
     hub.cameras.save()
-    return {"cameras": hub.cameras.public(), "refs": n}
+    z = next(x for x in cam["zones"] if x["id"] == zid)
+    return {"cameras": hub.cameras.public(), "refs": n, "is_night": bool(hub.cameras.state.get(cam_id, {}).get("night")), **camera_mod.ref_counts(z)}
 
 
 @app.put("/api/cameras/{cam_id}/lines")
@@ -1201,16 +1149,7 @@ async def cameras_lines(cam_id: str, request: Request, body: dict = Body(...)) -
     return {"cameras": hub.cameras.public()}
 
 
-@app.delete("/api/cameras/{cam_id}/door")
-async def cameras_door_delete(cam_id: str, request: Request) -> dict[str, Any]:
-    _need_view(request)
-    cam = hub.cameras.get(cam_id)
-    if not cam:
-        raise HTTPException(404, "找不到這台攝影機")
-    cam["door"] = None
-    hub.cameras.state.get(cam_id, {}).pop("door", None)
-    hub.cameras.save()
-    return {"cameras": hub.cameras.public()}
+
 
 
 @app.delete("/api/cameras/{cam_id}")
@@ -2103,8 +2042,10 @@ def _setup_items() -> list[dict[str, Any]]:
         left = [c["name"] for c in rooms_cams if not c.get("room")]
         items.append({"id": "cam_room", "title": "攝影機選房間", "hint": f"還沒選：{'、'.join(left)}" if left else "有人就開燈、地圖上顯示有人", "done": not left, "href": "#cameras"})
     if entry_cams:
-        left = [c["name"] for c in entry_cams if not ((c.get("door") or {}).get("rect") and len((c.get("door") or {}).get("refs") or []) >= 2)]
-        items.append({"id": "cam_door", "title": "門口攝影機：圈出門、記住關門的樣子", "hint": f"{'、'.join(left)}：圈好門之後，白天、晚上各按一次「記住現在的樣子」" if left else "開門偵測已經可以用", "done": not left, "href": "#cameras"})
+        doors = [(c, z) for c in entry_cams for z in c.get("zones") or [] if z.get("kind") == "door"]
+        left = [f"{c['name']}的{z['name']}" for c, z in doors if not all(camera_mod.ref_counts(z).values())]
+        hint = (f"{'、'.join(left)}：門關著時，白天、晚上各記一次" if left else "開門偵測已經可以用") if doors else "在門口攝影機「新增偵測」選「門」，點出門的形狀"
+        items.append({"id": "cam_door", "title": "門口攝影機：圈出門、記住關門的樣子", "hint": hint, "done": bool(doors) and not left, "href": "#cameras"})
     if cams:
         items.append({"id": "faces", "title": "登錄家人的臉", "hint": "認出家人就做對應的事，陌生人才通知", "done": any(p.get("kind") == "family" for p in hub.gallery.people.values()), "href": "#cameras"})
     skip = set(data["settings"].get("setup_skip") or [])
