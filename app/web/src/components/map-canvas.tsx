@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { fmt } from "@/lib/format";
 import { doorGeom, inRoom, mapShort, nearSeg, roomPath, roomPts, sigQ, shortName, tidyPts, topEdge, withPts, type Floorplan, type FpRoom, type FpWall, type MapDev, type MapLink, type Pt } from "@/lib/map-model";
 import { deviceIcon } from "@/components/icons";
+import { Plug as PlugIcon } from "lucide-react";
 import type { Plug } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { covColor, type CoverCell } from "@/lib/coverage";
@@ -27,7 +28,8 @@ const devName = (d: MapDev) => (d.plugs.length > 1 ? `排插・${d.plugs.length}
 
 // 多孔插座每一孔的點：地圖上的代碼「o:插座 ID」
 const outletKey = (p: Plug) => `o:${p.id}`;
-const OUT_R = 14; // 每孔圓點的半徑（跟裝置圓點差不多大，好按）
+const OUT_R = 13; // 每孔圓點的半徑
+const DOT_R = 13; // 裝置圓點的半徑（跟每孔的點一樣大：中間畫電器圖示，點一下開關）
 
 type XY = { x: number; y: number };
 
@@ -108,7 +110,7 @@ export function MapCanvas({
     for (const r of fp.rooms || []) for (const [x, y] of roomPts(r)) { xs.push(x); ys.push(y); }
     for (const it of Object.values(fp.items)) { xs.push(it.x); ys.push(it.y); }
     if (edit || fp.image || xs.length < 2) return { x: 0, y: 0, w: W, h: H };
-    const pad = Math.max(24, W * 0.03);
+    const pad = Math.max(24, W * 0.03) + DOT_R * 2.6; // 多留一個圓點（最大的時候）的大小，邊邊的不會被切到
     const x0 = Math.max(0, Math.min(...xs) - pad), y0 = Math.max(0, Math.min(...ys) - pad);
     const x1 = Math.min(W, Math.max(...xs) + pad), y1 = Math.min(H, Math.max(...ys) + pad * 1.8);
     return x1 - x0 < W * 0.3 || y1 - y0 < H * 0.3 ? { x: 0, y: 0, w: W, h: H } : { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
@@ -139,6 +141,10 @@ export function MapCanvas({
   });
   // 看的時候每一孔也一起參加「疊在一起就推開」
   if (!edit) for (const o of outlets) pos[o.key] = { x: o.x, y: o.y };
+  const keepIn = () => {
+    const m = DOT_R * k + 2;
+    for (const v of Object.values(pos)) { v.x = Math.max(m, Math.min(W - m, v.x)); v.y = Math.max(m, Math.min(H - m, v.y)); }
+  };
   if (!edit) {
     // 每個裝置連同下面的名字當成一個方框（中心在圓圈下方一點），重疊就往重疊比較少的方向推開
     const bw = (showNames ? 66 : 34) * k, bh = (showNames ? 48 : 34) * k, cy = (showNames ? 9 : 0) * k;
@@ -238,21 +244,37 @@ export function MapCanvas({
     }
   }
 
+  keepIn(); // 推開之後，圓點都留在地圖範圍內（邊邊的不會被切一半）
   type DevLabel = { dx: number; dy: number; anchor: "middle" | "start" | "end" };
   const devLabel: Record<string, DevLabel> = {};
-  for (const d of placed) {
-    const c = pos[d.key];
-    const w = textW(devName(d), 11.5 * k), h = 15 * k;
+  // 名字放在圓點的下、上、右、左，挑第一個不會跟別的字、人名標籤疊到的位置
+  function placeLabel(c: { x: number; y: number }, text: string): DevLabel {
+    const w = textW(text, 11.5 * k), h = 15 * k, r = (DOT_R + 4) * k;
     const opts: (DevLabel & { b: Box })[] = [
-      { dx: 0, dy: 31, anchor: "middle", b: { x0: c.x - w / 2, y0: c.y + 20 * k, x1: c.x + w / 2, y1: c.y + 20 * k + h } },
-      { dx: 0, dy: -23, anchor: "middle", b: { x0: c.x - w / 2, y0: c.y - 35 * k, x1: c.x + w / 2, y1: c.y - 35 * k + h } },
-      { dx: 21, dy: 4, anchor: "start", b: { x0: c.x + 20 * k, y0: c.y - 7 * k, x1: c.x + 20 * k + w, y1: c.y + 8 * k } },
-      { dx: -21, dy: 4, anchor: "end", b: { x0: c.x - 20 * k - w, y0: c.y - 7 * k, x1: c.x - 20 * k, y1: c.y + 8 * k } },
+      { dx: 0, dy: DOT_R + 15, anchor: "middle", b: { x0: c.x - w / 2, y0: c.y + r, x1: c.x + w / 2, y1: c.y + r + h } },
+      { dx: 0, dy: -DOT_R - 7, anchor: "middle", b: { x0: c.x - w / 2, y0: c.y - r - h, x1: c.x + w / 2, y1: c.y - r } },
+      { dx: DOT_R + 5, dy: 4, anchor: "start", b: { x0: c.x + r, y0: c.y - 7 * k, x1: c.x + r + w, y1: c.y + 8 * k } },
+      { dx: -DOT_R - 5, dy: 4, anchor: "end", b: { x0: c.x - r - w, y0: c.y - 7 * k, x1: c.x - r, y1: c.y + 8 * k } },
     ];
     const o = showNames && !edit ? opts.find((x) => free(x.b) && x.b.x0 >= 0 && x.b.x1 <= W && x.b.y1 <= H) ?? opts[0] : opts[0];
     if (showNames) taken.push(o.b);
-    devLabel[d.key] = o;
+    return o;
   }
+  for (const d of placed) {
+    const c = pos[d.key];
+    devLabel[d.key] = placeLabel(c, devName(d));
+  }
+  for (const o of outlets) devLabel[o.key] = placeLabel(pos[o.key] || o, mapShort(o.p));
+
+  // 長按（0.5 秒）看詳細；短按交給 onClick（開關）
+  const pressed = useRef<string | null>(null);
+  const pressTimer = useRef<number | undefined>(undefined);
+  const pressStart = (key: string) => {
+    pressed.current = null;
+    window.clearTimeout(pressTimer.current);
+    pressTimer.current = window.setTimeout(() => { pressed.current = "long"; onPick({ kind: "dev", id: key }); }, 500);
+  };
+  const pressEnd = () => window.clearTimeout(pressTimer.current);
 
   const point = (e: { clientX: number; clientY: number }) => {
     const el = svg.current!;
@@ -738,8 +760,8 @@ export function MapCanvas({
               <circle r={OUT_R} className={on ? "fill-primary" : "fill-card"} stroke={on ? "var(--card)" : "var(--muted-foreground)"} strokeWidth={on ? 2 : 1.5}
                 strokeDasharray={o.p.online ? undefined : "3 2"} style={{ filter: "drop-shadow(0 1px 2px rgb(15 23 42 / .22))" }} />
               <Icon x={-8} y={-8} width={16} height={16} strokeWidth={2.2} color={on ? "var(--primary-foreground)" : "var(--muted-foreground)"} aria-hidden />
-              {showNames && (
-                <text y={OUT_R + 14} textAnchor="middle" className="fill-foreground font-semibold" style={{ fontSize: 11, paintOrder: "stroke", stroke: "var(--card)", strokeWidth: 3, strokeLinejoin: "round" }}>{mapShort(o.p)}</text>
+              {showNames && devLabel[o.key] && (
+                <text x={devLabel[o.key].dx} y={devLabel[o.key].dy} textAnchor={devLabel[o.key].anchor} className="fill-foreground font-semibold" style={{ fontSize: 11, paintOrder: "stroke", stroke: "var(--card)", strokeWidth: 3, strokeLinejoin: "round" }}>{mapShort(o.p)}</text>
               )}
             </g>
           </g>
@@ -751,47 +773,52 @@ export function MapCanvas({
         const q = d.online && d.rssi != null ? sigQ(d.rssi) : null;
         const isSel = sel?.kind === "dev" && sel.id === d.key;
         const hot = layer === "motion" && m != null && m > 0.15;
-        const tip = `${d.full}：${d.online ? `訊號 ${d.rssi ?? "—"} dBm` : "離線"}${m != null ? `・擾動 ${fmt(m, 1)}` : ""}`;
+        const single = d.plugs.length === 1 ? d.plugs[0] : null;
+        const pw = !!single && !!powerOf?.(single);
+        const Icon = single ? deviceIcon(single.name) : d.plugs.length ? PlugIcon : deviceIcon(d.name);
+        // 數字（訊號或擾動）平常不顯示：選取時、或訊號弱、或動靜層擾動明顯時才出現
+        const showNum = isSel || (layer !== "motion" && q === "weak") || (layer === "motion" && hot);
+        const canFlip = !edit && !!single && d.online && !!onPower;
+        const tip = `${d.full}：${single ? `${pw ? "開著" : "關著"}・` : ""}${d.online ? `訊號 ${d.rssi ?? "—"} dBm` : "離線"}${m != null ? `・擾動 ${fmt(m, 1)}` : ""}${canFlip ? "（點一下開關，長按看詳細）" : ""}`;
         return (
           <g
             key={d.key}
             transform={`translate(${it.x} ${it.y}) scale(${k.toFixed(2)})`}
             className={edit ? "cursor-grab" : "cursor-pointer"}
-            onPointerDown={(e) => startDrag(e, { kind: "item", id: d.key })}
-            onClick={() => !edit && onPick({ kind: "dev", id: d.key })}
+            role={edit ? undefined : "button"}
+            aria-label={tip}
+            onPointerDown={(e) => { startDrag(e, { kind: "item", id: d.key }); if (!edit) pressStart(d.key); }}
+            onPointerUp={pressEnd}
+            onPointerLeave={pressEnd}
+            onContextMenu={(e) => { if (edit) return; e.preventDefault(); onPick({ kind: "dev", id: d.key }); }}
+            onClick={() => {
+              if (edit) return;
+              if (pressed.current === "long") { pressed.current = null; return; }
+              if (canFlip) onPower!(single!); else onPick({ kind: "dev", id: d.key });
+            }}
             onMouseEnter={() => onTip(tip)}
             onMouseLeave={() => onTip(null)}
           >
             <title>{tip}</title>
-            {hot && <circle r={19 + Math.min(m!, 3) * 5} fill={WARN} fillOpacity={Math.min(1, m! / 3) * 0.3 + 0.12} />}
+            {hot && <circle r={DOT_R + 4 + Math.min(m!, 3) * 5} fill={WARN} fillOpacity={Math.min(1, m! / 3) * 0.3 + 0.12} />}
+            <circle r={DOT_R + 7} fill="transparent" />
             <circle
-              r={15}
-              className="fill-card"
+              r={DOT_R}
+              className={pw ? "fill-primary" : "fill-card"}
               stroke={!d.online ? "var(--muted-foreground)" : q ? STROKE[q] : "var(--primary)"}
               strokeDasharray={d.online ? undefined : "3 3"}
-              strokeWidth={isSel || hot ? 4 : 2.5}
-              style={{ filter: "drop-shadow(0 1px 2px rgb(15 23 42 / .18))" }}
+              strokeWidth={isSel || hot ? 4 : 3}
+              style={{ filter: "drop-shadow(0 1px 2px rgb(15 23 42 / .2))" }}
             />
-            <text y={5} textAnchor="middle" className={cn("font-bold tabular-nums", q === "weak" ? "fill-orange-600" : "fill-foreground")} style={{ fontSize: 11 }}>
-              {layer === "motion" ? (m == null ? "·" : fmt(m, 1)) : d.rssi ?? "—"}
-            </text>
-            {!edit && onPower && d.online && d.plugs.length === 1 && (() => {
-              const pl = d.plugs[0];
-              const pw = !!powerOf?.(pl);
-              const label = `${d.name}：${pw ? "開著，點一下關閉" : "關著，點一下打開"}`;
-              return (
-                <g transform="translate(13 -13)" className="cursor-pointer" role="button" aria-label={label}
-                  onPointerDown={(e) => e.stopPropagation()}
-                  onClick={(e) => { e.stopPropagation(); onPower(pl); }}>
-                  <title>{label}</title>
-                  <circle r={13} fill="transparent" />
-                  <circle r={8.5} className={pw ? "fill-primary" : "fill-card"} stroke={pw ? "var(--card)" : "var(--muted-foreground)"} strokeWidth={pw ? 2 : 1.5}
-                    style={{ filter: "drop-shadow(0 1px 1.5px rgb(15 23 42 / .25))" }} />
-                  <path d="M0 -4.2 V-0.6 M-2.9 -2.6 A3.9 3.9 0 1 0 2.9 -2.6" fill="none" strokeWidth={1.6} strokeLinecap="round"
-                    stroke={pw ? "var(--primary-foreground)" : "var(--muted-foreground)"} />
-                </g>
-              );
-            })()}
+            <Icon x={-8} y={-8} width={16} height={16} strokeWidth={2.2} color={pw ? "var(--primary-foreground)" : "var(--muted-foreground)"} aria-hidden />
+            {showNum && (
+              <g transform={`translate(${DOT_R - 1} ${-DOT_R + 1})`}>
+                <rect x={-2} y={-8} width={26} height={14} rx={7} className="fill-card" stroke={q ? STROKE[q] : "var(--muted-foreground)"} strokeWidth={1.5} />
+                <text x={11} y={2.6} textAnchor="middle" className={cn("font-bold tabular-nums", q === "weak" ? "fill-orange-600" : "fill-foreground")} style={{ fontSize: 9.5 }}>
+                  {layer === "motion" ? (m == null ? "·" : fmt(m, 1)) : d.rssi ?? "—"}
+                </text>
+              </g>
+            )}
             {(showNames || isSel) && (
               <text x={devLabel[d.key].dx} y={devLabel[d.key].dy} textAnchor={devLabel[d.key].anchor} className="fill-muted-foreground font-medium" style={{ fontSize: 11.5, paintOrder: "stroke", stroke: "var(--card)", strokeWidth: 3, strokeLinejoin: "round" }}>{devName(d)}</text>
             )}
