@@ -22,6 +22,7 @@ GET /api/sensing/week       一週動靜：每間房「星期幾 × 幾點」有
 GET /api/net/events         斷線紀錄：外網、基地台卡住、Wi-Fi、插座、停電恢復
 GET /api/net/plug-health    插座連線健檢：斷幾次、訊號、建議
 GET/POST /api/cameras       網路攝影機（認人）；PUT/DELETE /api/cameras/{id}（room、enabled、alert、帳密）；GET …/{id}/snapshot.jpg 現在的畫面
+PUT /api/cameras/access     誰可以看攝影機；POST …/access/send-code 驗證碼送到手機、POST …/access/claim 開通這台
 GET /api/report/monthly     每月報告預覽（上個月）
 GET/PUT /api/motion-rules   動靜自動化：{"rules": [{"room","plug","start","end","off_min","need_home","enabled"}]}
 GET /api/locate/{id}         人在哪個房間（實驗）：每個房間教了幾筆、現在的判斷；POST …/train {"room"} 教 2 分鐘、DELETE …/train 停止、DELETE /api/locate/{id}?room= 清掉
@@ -793,17 +794,101 @@ async def sensing_week(days: int = 28) -> dict[str, Any]:
 
 
 # ---- 網路攝影機（認人）----
+# 看畫面、改攝影機設定：只有「可以看攝影機」名單裡的裝置（樹莓派本機除外）。
+# 名單是空的時候沒有人能看；用送到手機通知的驗證碼開通第一台，之後由有權限的人勾選。
+
+
+def _me(request: Request) -> str | None:
+    """發出請求的是哪台裝置：配對的裝置 ID、家人手機的「mac:…」；樹莓派本機回 "local"。"""
+    if _is_local(request):
+        return "local"
+    device = getattr(request.state, "device", None)
+    return device["id"] if device else None
+
+
+def _can_view(request: Request) -> bool:
+    me = _me(request)
+    return me == "local" or (me is not None and me in hub.cameras.viewers)
+
+
+def _need_view(request: Request) -> None:
+    if not _can_view(request):
+        raise HTTPException(403, "這台裝置沒有看攝影機的權限")
+
+
+def _camera_candidates() -> list[dict[str, str]]:
+    """可以給權限的裝置：配對過的、家人的手機和信任的裝置。"""
+    out = [{"id": d["id"], "name": d["name"], "kind": "paired"} for d in auth.devices]
+    out += [{"id": f"mac:{m}", "name": n, "kind": "trusted"} for m, n in trusted_devices().items()]
+    return out
+
+
+def _camera_access(request: Request) -> dict[str, Any]:
+    can = _can_view(request)
+    acc: dict[str, Any] = {"can_view": can, "me": _me(request), "count": len(hub.cameras.viewers)}
+    if can:
+        names = {c["id"]: c["name"] for c in _camera_candidates()}
+        acc["viewers"] = [{"id": v, "name": names.get(v, "已移除的裝置")} for v in hub.cameras.viewers]
+        acc["candidates"] = _camera_candidates()
+    return acc
+
+
+_cam_code_sent: float | None = None
 
 
 @app.get("/api/cameras")
-def cameras_list() -> dict[str, Any]:
-    """攝影機清單和現在有沒有看到人（不含帳密）。"""
-    return {"cameras": hub.cameras.public()}
+def cameras_list(request: Request) -> dict[str, Any]:
+    """攝影機清單和現在有沒有看到人（不含帳密）；access：這台裝置能不能看畫面、誰可以看。"""
+    return {"cameras": hub.cameras.public(), "access": _camera_access(request)}
+
+
+@app.put("/api/cameras/access")
+async def cameras_access(request: Request, body: dict = Body(...)) -> dict[str, Any]:
+    """改「可以看攝影機」的名單：{"viewers": [裝置 ID…]}（只有已經有權限的裝置能改）。"""
+    _need_view(request)
+    known = {c["id"] for c in _camera_candidates()}
+    hub.cameras.viewers = list(dict.fromkeys(str(v) for v in body.get("viewers") or [] if str(v) in known))
+    hub.cameras.save()
+    return {"access": _camera_access(request)}
+
+
+@app.post("/api/cameras/access/send-code")
+async def cameras_access_code(request: Request) -> dict[str, Any]:
+    """把開通看攝影機的驗證碼送到手機通知（LINE／ntfy），也印在伺服器紀錄裡。"""
+    global _cam_code_sent
+    if _me(request) is None:
+        raise HTTPException(401, "這台裝置還沒配對")
+    if _cam_code_sent is not None and time.monotonic() - _cam_code_sent < 60:
+        raise HTTPException(429, "剛剛送過了，1 分鐘後再試")
+    _cam_code_sent = time.monotonic()
+    code = hub.cameras.code.new()
+    _LOGGER.warning("看攝影機的驗證碼：%s（10 分鐘內有效）", code)
+    hub.notifier.send("看攝影機畫面的驗證碼", f"{code}\n10 分鐘內有效。不是你要求的話，不要告訴別人", "high")
+    return {"ok": True}
+
+
+@app.post("/api/cameras/access/claim")
+async def cameras_access_claim(request: Request, body: dict = Body(...)) -> dict[str, Any]:
+    """輸入驗證碼：對了就把這台裝置加進「可以看攝影機」的名單。"""
+    me = _me(request)
+    if me is None or me == "local":
+        raise HTTPException(400, "這台裝置不能開通")
+    if hub.cameras.code.locked_for():
+        raise HTTPException(429, f"輸錯太多次，{hub.cameras.code.locked_for() // 60 + 1} 分鐘後再試")
+    if not hub.cameras.code.claim(str(body.get("code") or "")):
+        raise HTTPException(400, "驗證碼不對或已經過期")
+    if me not in hub.cameras.viewers:
+        hub.cameras.viewers.append(me)
+        hub.cameras.save()
+    name = next((c["name"] for c in _camera_candidates() if c["id"] == me), me)
+    hub.notifier.send("有裝置開通了攝影機畫面", f"{name} 現在可以看攝影機畫面了。不是你開通的話，到設定 → 攝影機把它拿掉")
+    return {"access": _camera_access(request)}
 
 
 @app.post("/api/cameras")
-async def cameras_add(body: dict = Body(...)) -> dict[str, Any]:
+async def cameras_add(request: Request, body: dict = Body(...)) -> dict[str, Any]:
     """新增攝影機：{"host", "port", "user", "pwd", "name"}；先登入看看，帳密錯就不加。"""
+    _need_view(request)
     host = str(body.get("host") or "").strip()
     if not host:
         raise HTTPException(400, "請填攝影機的 IP")
@@ -821,8 +906,9 @@ async def cameras_add(body: dict = Body(...)) -> dict[str, Any]:
 
 
 @app.get("/api/cameras/{cam_id}/snapshot.jpg")
-async def cameras_snapshot(cam_id: str) -> Response:
-    """看攝影機現在的畫面（一張 JPEG，不存檔）。只有配對過的裝置拿得到。"""
+async def cameras_snapshot(cam_id: str, request: Request) -> Response:
+    """看攝影機現在的畫面（一張 JPEG，不存檔）。只有「可以看攝影機」名單裡的裝置拿得到。"""
+    _need_view(request)
     cam = hub.cameras.get(cam_id)
     if not cam:
         raise HTTPException(404, "找不到這台攝影機")
@@ -834,8 +920,9 @@ async def cameras_snapshot(cam_id: str) -> Response:
 
 
 @app.put("/api/cameras/{cam_id}")
-async def cameras_update(cam_id: str, body: dict = Body(...)) -> dict[str, Any]:
+async def cameras_update(cam_id: str, request: Request, body: dict = Body(...)) -> dict[str, Any]:
     """改攝影機：{"name", "room"（地圖的區域 ID，null = 不指定）, "enabled", "alert", "user", "pwd"}"""
+    _need_view(request)
     cam = hub.cameras.get(cam_id)
     if not cam:
         raise HTTPException(404, "找不到這台攝影機")
@@ -863,7 +950,8 @@ async def cameras_update(cam_id: str, body: dict = Body(...)) -> dict[str, Any]:
 
 
 @app.delete("/api/cameras/{cam_id}")
-async def cameras_delete(cam_id: str) -> dict[str, Any]:
+async def cameras_delete(cam_id: str, request: Request) -> dict[str, Any]:
+    _need_view(request)
     cam = hub.cameras.get(cam_id)
     if not cam:
         raise HTTPException(404, "找不到這台攝影機")

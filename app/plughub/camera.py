@@ -8,10 +8,12 @@
 """
 from __future__ import annotations
 
+import hmac
 import io
 import json
 import logging
 import os
+import secrets
 import threading
 import time
 import urllib.parse
@@ -127,17 +129,59 @@ def dev_info(cam: dict[str, Any]) -> dict[str, str]:
     return {"model": tag("productName"), "name": tag("devName")}
 
 
+class AccessCode:
+    """開通「看攝影機畫面」的驗證碼：只送到手機通知（LINE），10 分鐘有效、用一次；輸錯 5 次鎖 5 分鐘。"""
+
+    TTL = 600
+    MAX_FAILS = 5
+    LOCK = 300
+
+    def __init__(self, clock=time.time) -> None:
+        self.clock = clock
+        self._code: tuple[str, float] | None = None
+        self._fails = 0
+        self._locked_until = 0.0
+
+    def new(self) -> str:
+        code = f"{secrets.randbelow(10**6):06d}"
+        self._code = (code, self.clock() + self.TTL)
+        return code
+
+    def locked_for(self) -> int:
+        return max(0, round(self._locked_until - self.clock()))
+
+    def claim(self, code: str) -> bool:
+        now = self.clock()
+        if self.locked_for():
+            return False
+        code = "".join(ch for ch in str(code) if ch.isdigit())
+        if self._code and self._code[1] > now and hmac.compare_digest(code, self._code[0]):
+            self._code = None
+            self._fails = 0
+            return True
+        self._fails += 1
+        if self._fails >= self.MAX_FAILS:
+            self._locked_until = now + self.LOCK
+            self._fails = 0
+            self._code = None  # 鎖住時這組碼也作廢
+        return False
+
+
 class Cameras:
     def __init__(self, data_dir: Path) -> None:
         self.path = data_dir / "cameras.json"
         self.list: list[dict[str, Any]] = []
+        self.viewers: list[str] = []  # 可以看畫面、改攝影機設定的裝置 ID（配對的裝置 ID，或家人手機的「mac:…」）
+        self.code = AccessCode()
         self.state: dict[str, dict[str, Any]] = {}  # 攝影機 ID → 認人的狀態（不存檔）
         self.detector = Detector()
         self.load()
 
     def load(self) -> None:
         try:
-            self.list = json.loads(self.path.read_text("utf-8")).get("cameras") or []
+            data = json.loads(self.path.read_text("utf-8"))
+            self.list = data.get("cameras") or []
+            self.viewers = [str(x) for x in data.get("viewers") or []]
         except FileNotFoundError:
             self.list = []
         except Exception as err:  # noqa: BLE001
@@ -151,7 +195,7 @@ class Cameras:
 
     def save(self) -> None:
         tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"cameras": self.list}, ensure_ascii=False, indent=2), "utf-8")
+        tmp.write_text(json.dumps({"cameras": self.list, "viewers": self.viewers}, ensure_ascii=False, indent=2), "utf-8")
         os.chmod(tmp, 0o600)
         tmp.replace(self.path)
 
