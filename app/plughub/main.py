@@ -1067,6 +1067,80 @@ async def cameras_door_ref(cam_id: str, request: Request) -> dict[str, Any]:
     return {"cameras": hub.cameras.public(), "refs": n}
 
 
+def _act(a: Any) -> dict[str, Any]:
+    """觸發後要做什麼：{"notify": off/away/always, "scene": 情境 ID, "dark": 情境只在天黑後}"""
+    a = a if isinstance(a, dict) else {}
+    return {"notify": a.get("notify") if a.get("notify") in ("off", "away", "always") else "off",
+            "scene": a.get("scene") if a.get("scene") and store.scene(a.get("scene")) else None, "dark": bool(a.get("dark"))}
+
+
+@app.put("/api/cameras/{cam_id}/zones")
+async def cameras_zones(cam_id: str, request: Request, body: dict = Body(...)) -> dict[str, Any]:
+    """區域：{"zones": [{"id","name","kind": area/object/door,"poly","linger": 秒,"act": {...}}]}（整份換掉；記住的樣子會保留）"""
+    _need_view(request)
+    cam = hub.cameras.get(cam_id)
+    if not cam:
+        raise HTTPException(404, "找不到這台攝影機")
+    old = {z["id"]: z for z in cam.get("zones") or []}
+    out = []
+    for z in (body.get("zones") or [])[:8]:
+        pts = _poly(z.get("poly"))
+        kind = z.get("kind")
+        if not pts or kind not in ("area", "object", "door"):
+            continue
+        zid = str(z.get("id") or uuid.uuid4().hex[:6])[:12]
+        prev = old.get(zid) or {}
+        same = prev.get("poly") == pts and prev.get("kind") == kind
+        out.append({"id": zid, "name": str(z.get("name") or "區域").strip()[:12], "kind": kind, "poly": pts,
+                    "linger": int(_num(z.get("linger") or 0, 0, 600)), "act": _act(z.get("act")),
+                    "refs": prev.get("refs") or [] if same else []})  # 形狀或種類改了：記住的樣子作廢
+        if not same:
+            hub.cameras.state.get(cam_id, {}).get("zones", {}).pop(zid, None)
+    cam["zones"] = out
+    hub.cameras.save()
+    return {"cameras": hub.cameras.public()}
+
+
+@app.post("/api/cameras/{cam_id}/zones/{zid}/ref")
+async def cameras_zone_ref(cam_id: str, zid: str, request: Request) -> dict[str, Any]:
+    """現在的樣子是正常的（門：關著的樣子；東西多了／不見了：正常的樣子）。"""
+    _need_view(request)
+    cam = hub.cameras.get(cam_id)
+    if not cam or not any(z["id"] == zid for z in cam.get("zones") or []):
+        raise HTTPException(404, "找不到這個區域")
+    try:
+        jpeg = await asyncio.to_thread(camera_mod.snapshot, cam)
+        n = hub.zone_reference(cam, zid, jpeg)
+    except Exception as err:  # noqa: BLE001
+        raise HTTPException(502, f"記不起來：{err}") from None
+    hub.cameras.save()
+    return {"cameras": hub.cameras.public(), "refs": n}
+
+
+@app.put("/api/cameras/{cam_id}/lines")
+async def cameras_lines(cam_id: str, request: Request, body: dict = Body(...)) -> dict[str, Any]:
+    """線：{"lines": [{"id","name","a": [x,y],"b": [x,y],"in": {...},"out": {...}}]}；從線的右邊走到左邊（畫面上箭頭指的方向）算「回來」"""
+    _need_view(request)
+    cam = hub.cameras.get(cam_id)
+    if not cam:
+        raise HTTPException(404, "找不到這台攝影機")
+    out = []
+    for ln in (body.get("lines") or [])[:4]:
+        try:
+            a = [round(min(1.0, max(0.0, float(v))), 4) for v in ln["a"]][:2]
+            b = [round(min(1.0, max(0.0, float(v))), 4) for v in ln["b"]][:2]
+        except (KeyError, TypeError, ValueError):
+            raise HTTPException(400, "線的位置不對") from None
+        if len(a) != 2 or len(b) != 2 or ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5 < 0.05:
+            continue
+        out.append({"id": str(ln.get("id") or uuid.uuid4().hex[:6])[:12], "name": str(ln.get("name") or "線").strip()[:12], "a": a, "b": b,
+                    "in": _act(ln.get("in")), "out": _act(ln.get("out"))})
+    cam["lines"] = out
+    hub.cameras.state.get(cam_id, {}).pop("lines", None)
+    hub.cameras.save()
+    return {"cameras": hub.cameras.public()}
+
+
 @app.delete("/api/cameras/{cam_id}/door")
 async def cameras_door_delete(cam_id: str, request: Request) -> dict[str, Any]:
     _need_view(request)
