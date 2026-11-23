@@ -14,6 +14,7 @@ import { MotionRules } from "@/components/motion-rules";
 import { MapCanvas, ROOM_ACTIVE, ROOM_STRONG, type MapGhost, type MapLayer, type MapPerson, type MapSel, type MapTool } from "@/components/map-canvas";
 import { COV_TEXT, bestApSpot, covColor, covQ, coverage, farApHints, fitModel, gapSpots, type ApSuggest } from "@/lib/coverage";
 import { WeekHeat } from "@/components/week-heat";
+import { needsConfirm } from "@/components/device-sheet";
 import { Segmented } from "@/components/schedule-bits";
 import { api } from "@/lib/api";
 import { fmt } from "@/lib/format";
@@ -21,6 +22,7 @@ import { useHub, useMedia } from "@/lib/hub";
 import {
   AP_HEIGHTS, AP_Z, DEV_HEIGHTS, DEV_Z, autoAps, autoLayout, fpPayload, mapDevices, mapLinks, type Floorplan, type FpAp, type MapSense, type MapReplay, type FpRoom,
 } from "@/lib/map-model";
+import type { Plug } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const qText = { good: "適合偵測走動", ok: "勉強可以偵測走動", poor: "不太適合偵測走動" };
@@ -96,7 +98,8 @@ function Confirm({ trigger, title, text, ok, onOk, safe }: { trigger: ReactNode;
 }
 
 export function MapPage() {
-  const { state } = useHub();
+  const { state, isOn, setPower } = useHub();
+  const [confirmPw, setConfirmPw] = useState<Plug | null>(null);
   const narrow = !useMedia("(min-width: 1024px)");
   const [fp, setFpState] = useState<Floorplan | null>(null);
   const [failed, setFailed] = useState(false);
@@ -614,6 +617,15 @@ export function MapPage() {
             <MapCanvas
               fp={fp} devs={devs} links={links} layer={layer} edit={edit} sel={sel} motion={motion} roomHeat={roomHeat} cover={cover ? { cells: cover, step: covStep } : null} ghosts={ghosts} people={past != null ? [] : people} tool={tool}
               onChange={setFp} onDragEnd={save} onPick={pick} onTip={setTip}
+              powerOf={(d) => d.plugs.some((p) => isOn(p))}
+              onPower={(d) => {
+                // 一台裝置多個插座（延長線）：選起來，到旁邊的詳細一個一個開關
+                if (d.plugs.length !== 1) return pick({ kind: "dev", id: d.key });
+                const p = d.plugs[0];
+                if (p.protect === "lock") return toast("這個插座已鎖定", { description: "要先在裝置詳細解鎖" });
+                if (needsConfirm(p, isOn(p))) return setConfirmPw(p);
+                setPower(p, !isOn(p));
+              }}
             />
           </div>
           {wantReplay && replay && replay.n > 0 && (
@@ -706,12 +718,24 @@ export function MapPage() {
                 ) : (
                   !fp.aps.length && <Note>按右上角「編輯」可以把你的 Wi-Fi 基地台也擺上去，比較容易看出哪裡離基地台太遠。</Note>
                 )}
-                <Note>點裝置或 Wi-Fi 基地台可以設定它放的高度。裝置周圍的顏色是它的訊號：藍色強（-55 dBm 以上）、淡藍普通、橘色弱（低於 -70，容易斷線）。</Note>
+                <Note>點裝置或 Wi-Fi 基地台可以設定它放的高度。裝置右上角的小圓鈕可以直接開關插座（實心是開著）。裝置周圍的顏色是它的訊號：藍色強（-55 dBm 以上）、淡藍普通、橘色弱（低於 -70，容易斷線）。</Note>
               </SideCard>
             </>
           )}
         </div>
       </div>
+      <AlertDialog open={!!confirmPw} onOpenChange={(v) => !v && setConfirmPw(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{confirmPw && (isOn(confirmPw) ? `關閉「${confirmPw.name}」？` : `打開「${confirmPw.name}」？`)}</AlertDialogTitle>
+            <AlertDialogDescription className="leading-relaxed">這個裝置設定了開關前確認，避免誤按。</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction onClick={() => confirmPw && setPower(confirmPw, !isOn(confirmPw))}>{confirmPw && (isOn(confirmPw) ? "關閉" : "打開")}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

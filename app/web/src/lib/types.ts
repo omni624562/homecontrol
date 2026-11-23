@@ -269,7 +269,8 @@ export interface HubState {
   summary: { power: number | null; energy_today: number; cost_today: number; cost_month: number };
   settings: {
     long_on_hours?: number;
-    away?: { enabled: boolean; start: string; end: string; plugs: string[] };
+    away?: { enabled: boolean; start: string; end: string; plugs: string[]; auto_on?: boolean; auto_h?: number; auto_off?: boolean; auto_started?: number };
+    goodnight?: { at?: string; mode?: "notify" | "off" | "none"; keep?: string[] };
     [k: string]: unknown;
   };
   schedules: Schedule[];

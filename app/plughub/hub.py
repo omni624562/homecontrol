@@ -21,7 +21,7 @@ from typing import Any, Callable
 
 from kasa import Device, Discover, Module
 
-from . import anomaly, arpprobe, habits, locate, native, netlog, netprobe, roommotion, sun, tariff
+from . import anomaly, arpprobe, habits, locate, native, netlog, netprobe, roommotion, routine, sun, tariff
 from .sensing import INTERVAL as SENSE_INTERVAL, SAVE_EVERY as SENSE_SAVE_EVERY, Sensing
 from .notify import Notifier
 from .daysoff import DaysOff
@@ -175,6 +175,7 @@ class Hub:
         self._router_sig: Any = None
         self._probe_at = 0.0  # 上次直接問家人手機（ARP）的時間
         self._probe_busy = False
+        self._tier_at = 0.0  # 上次算電費級距的時間（一小時算一次）
         self._router_since = 0.0  # 這次連上路由器的時間（剛連上時資料不完整，先不判斷「出門」）
         self._router_fed: dict[str, float] = {}  # MAC → 上次餵給 Wi-Fi 感測的讀數時間
         self._home_since: float | None = None  # 有人回家的時間（用來判斷這次出門結束了沒）
@@ -500,6 +501,10 @@ class Hub:
                 self._log_switch(plug, now_on, "button")
             if not plug.online:
                 self._maybe_restore(plug, now_on)
+                # 插座連線健檢：這次開著的期間看過它在線、又斷掉再回來的，記一筆
+                if pid in self._state_known and plug.offline_since:
+                    routine.add_drop(self.store.data.setdefault("plug_drops", {}), pid, plug.offline_since, time.time())
+                    self._dirty = True
             self._state_known.add(pid)
             self._set_is_on(plug, now_on)
             # 「開了多久」用插座自己記錄的（樹莓派重開也不會歸零）
@@ -1704,6 +1709,7 @@ class Hub:
         if before and not after:
             self._presence_scene(cfg.get("away_scene"), "大家都出門了")
         elif after and not before and arrived:
+            self._away_end(arrived)
             if not cfg.get("home_dark_only") or self.is_dark():
                 self._presence_scene(cfg.get("home_scene"), f"{'、'.join(arrived)}回家了")
         return True
@@ -2195,6 +2201,7 @@ class Hub:
             self.sched_skipped.clear()
             self.mark_native()
             self._check_weekly()
+        self._check_monthly()
         if time.time() - self._calendar_at < 600:
             return
         self._calendar_at = time.time()
@@ -2262,6 +2269,11 @@ class Hub:
                                        + ("（儲水）" if x["kind"] == "water" else "（手機充電、冰箱少開）"))
 
         self._check_alerts_notify(now, dt, cfg, sent)
+        self._check_night(now, dt)
+        self._check_away_auto(now)
+        if cfg.get("tier", True) and now - self._tier_at >= 3600:
+            self._tier_at = now
+            self._check_tier(dt)
 
         for k in [k for k, v in sent.items() if now - v > 7 * 86400]:
             del sent[k]
@@ -2319,6 +2331,136 @@ class Hub:
                     sent[key] = now
                     self.notifier.send("明天空氣品質不好", f"{tm['zone']}空品區預報 AQI {tm['aqi']:.0f}（{tm['status']}）"
                                        + (f"，主要是{tm['pollutant']}" if tm.get("pollutant") else "") + "。記得關窗、可以開清淨機")
+
+    # ---- 例行：電費級距、每月報告、晚安檢查、離家模式自動開關、插座連線健檢 ----
+
+    def _check_tier(self, dt: datetime) -> None:
+        """這個月插座用得比上個月多，照這個速度電費單會跨到下一級電價：一個月講一次。"""
+        ym = dt.strftime("%Y-%m")
+        if self.store.data.get("tier_sent") == ym:
+            return
+        rep = self.energy_report()
+        hit = routine.tier_alert(self.store.data["settings"]["household_monthly_kwh"], rep["projected"]["kwh"],
+                                 rep["last_month"]["kwh"], dt.day, dt.date())
+        if not hit:
+            return
+        self.store.data["tier_sent"] = ym
+        self._dirty = True
+        top = sorted((p for p in rep["plugs"] if p.get("known") and p.get("month_kwh")), key=lambda p: -p["month_kwh"])[:3]
+        most = "、".join(f"{p['name']} {p['month_kwh']:.1f} 度" for p in top)
+        self.notifier.send(
+            "這個月電費可能跳級",
+            f"插座這個月預估比上個月多用 {hit['extra']:g} 度，加上平常的用電約 {hit['est']} 度，"
+            f"會超過 {hit['limit']:g} 度，多出來的每度從 {hit['from']:g} 元變 {hit['to']:g} 元。"
+            + (f"這個月用最多：{most}" if most else ""),
+        )
+
+    def monthly_text(self, ym: str | None = None) -> str:
+        """上個月的家：插座用電、電費、最耗電的、網路斷線、常斷線的插座。"""
+        rep = self.energy_report()
+        months = [m["month"] for m in rep["months"]]
+        ym = ym or routine.prev_month(date.today())
+        i = months.index(ym) if ym in months else len(months) - 2
+        cur, prev = rep["months"][i], rep["months"][i - 1] if i > 0 else None
+        lines = [f"{int(ym[5:])} 月插座用電約 {cur['kwh']:.1f} 度（約 {cur['cost']:.0f} 元）"
+                 + (f"，比前一個月{'多' if cur['kwh'] > prev['kwh'] else '少'} {abs(cur['kwh'] - prev['kwh']) / prev['kwh'] * 100:.0f}%" if prev and prev["kwh"] > 0 else "")]
+        top = sorted(((p["months"][i] / 60 * (p["watts"] or 0) / 1000, p["name"]) for p in rep["plugs"] if p.get("known") and p.get("watts")), reverse=True)[:3]
+        if top and top[0][0] > 0:
+            lines.append("用最多：" + "、".join(f"{n} {k:.1f} 度" for k, n in top if k > 0))
+        net = routine.net_summary(self.store.data["net_events"], *routine.month_range(ym))
+        words = {"wan": "外網", "wifi": "Wi-Fi", "ap": "基地台卡住", "plug": "插座斷線"}
+        parts = [f"{words[k]} {int(v['count'])} 次（共 {netlog.fmt_dur(v['sec'])}）" for k, v in net.items() if k in words]
+        lines.append("斷線：" + "、".join(parts) if parts else "網路都很穩，沒有斷線")
+        bad = [h["name"] for h in self.plug_health() if h["level"] == "bad"]
+        if bad:
+            lines.append(f"常斷線的插座：{'、'.join(bad[:3])}（到「網路裝置 → 插座連線」看建議）")
+        return "\n".join(lines)
+
+    def _check_monthly(self) -> None:
+        """每月 1 號早上 9 點後推播上個月的摘要（一個月一次）。"""
+        now = datetime.now()
+        ym = routine.prev_month(now.date())
+        if now.day != 1 or now.hour < 9 or self.store.data.get("monthly_sent") == ym:
+            return
+        if not self.store.data["settings"].get("monthly", True):
+            return
+        self.store.data["monthly_sent"] = ym
+        self._dirty = True
+        try:
+            self.notifier.send(f"{int(ym[5:])} 月的家", self.monthly_text(ym))
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("每月報告失敗：%s", err)
+
+    def night_left_on(self) -> list[Plug]:
+        """睡覺時還開著、不該開著的電器：常開的、「晚上也開著」清單裡的不算。"""
+        keep = set((self.store.data["settings"].get("goodnight") or {}).get("keep") or [])
+        return [p for p in self.ordered() if p.online and p.is_on and not self.store.meta(p.id).keep_on and p.id not in keep]
+
+    def _check_night(self, now: float, dt: datetime) -> None:
+        """晚安檢查：到了設定的時間、有人在家，還有電器開著就通知（或直接關掉）。一個晚上一次。"""
+        cfg = self.store.data["settings"].get("goodnight") or {}
+        if cfg.get("mode", "notify") == "none":
+            return
+        key = routine.night_due(cfg.get("at", "23:30"), dt, self.store.data.get("night_sent"))
+        if not key:
+            return
+        self.store.data["night_sent"] = key
+        self._dirty = True
+        people = self.people_report()
+        if people and not any(p.get("home") for p in people):  # 沒人在家：交給「沒人在家」的檢查
+            return
+        on = self.night_left_on()
+        if not on:
+            return
+        risky = any(self.store.meta(p.id).risky for p in on)
+        names = "、".join(self.name(p) for p in on[:8]) + (f" 等 {len(on)} 個" if len(on) > 8 else "")
+        if cfg.get("mode") == "off":
+            todo = [p for p in on if self.store.meta(p.id).protect != "lock"]
+
+            async def go() -> None:
+                SOURCE.set("night")
+                results = await asyncio.gather(*(self.set_power(p.id, False) for p in todo), return_exceptions=True)
+                done = [self.name(p) for p, r in zip(todo, results) if not isinstance(r, Exception)]
+                if done:
+                    self.notifier.send("晚安，已經關掉電器", "、".join(done))
+                await self.changed()
+
+            self._spawn(go())
+        else:
+            self.notifier.send("晚安檢查：還有電器開著", f"{names}。要關的話打開家庭中控的「晚安」", "high" if risky else "default")
+
+    def _check_away_auto(self, now: float) -> None:
+        """大家出門夠久了：自動打開離家模式（燈由插座自己隨機開關）。"""
+        away = self.store.data["settings"].get("away") or {}
+        people = self.people_report()
+        if not people or any(p.get("home") is None for p in people):
+            return
+        home = any(p.get("home") for p in people)
+        since = None if home else max((p.get("since") or 0) for p in people)
+        if routine.away_auto(away, home, since, now) != "on":
+            return
+        away.update(enabled=True, auto_started=now)
+        self.store.data["settings"]["away"] = away
+        self.store.save()
+        self.mark_native()
+        self.notifier.send("已打開離家模式", f"大家出門超過 {float(away.get('auto_h') or routine.AWAY_AUTO_H):g} 小時，"
+                           f"{away.get('start', '18:00')}～{away.get('end', '23:00')} 燈會隨機開關，像有人在家；有人回家就自動關閉")
+
+    def _away_end(self, arrived: list[str]) -> None:
+        """有人回家：離家模式開著的話自動關掉。"""
+        away = self.store.data["settings"].get("away") or {}
+        if not away.get("enabled") or away.get("auto_off", True) is False:
+            return
+        away["enabled"] = False
+        away.pop("auto_started", None)
+        self.store.save()
+        self.mark_native()
+        self.notifier.send("離家模式已關閉", f"{'、'.join(arrived)}回家了，燈不會再隨機開關")
+
+    def plug_health(self) -> list[dict[str, Any]]:
+        plugs = [{"id": p.id, "name": self.name(p), "rssi": p.rssi, "online": p.online,
+                  "ssid": self.dev_info.get(p.device_key, {}).get("ssid")} for p in self.ordered()]
+        return routine.plug_health(self.store.data.get("plug_drops") or {}, plugs, time.time())
 
     def _check_weekly(self) -> None:
         """每週日晚上 8 點後推播這一週的摘要（一週一次）。"""

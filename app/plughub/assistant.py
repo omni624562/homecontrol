@@ -382,7 +382,7 @@ class Assistant:
             """
             days = max(1, min(14, int(days)))
             since = time.time() - days * 86400
-            src = {"app": "App", "matter": "Google Home", "button": "插座按鈕或 Kasa App", "auto": "排程／情境／定時", "motion": "動靜自動化", "restore": "停電後恢復"}
+            src = {"app": "App", "matter": "Google Home", "button": "插座按鈕或 Kasa App", "auto": "排程／情境／定時", "motion": "動靜自動化", "restore": "停電後恢復", "night": "晚安檢查"}
             ev = []
             for ts, pid, on, s in hub.store.energy.switches(since):
                 if plug_id and pid != plug_id or pid not in hub.plugs:

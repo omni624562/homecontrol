@@ -14,12 +14,14 @@ POST /api/scenes            {"name", "icon", "actions", "others"}；PUT/DELETE /
 POST /api/scenes/{id}/run   執行情境（可以 /api/restore 復原）
 POST /api/schedules         新增排程；PUT/DELETE /api/schedules/{id}
 PUT  /api/settings
-PUT  /api/away              離家模式 {"enabled", "start", "end", "plugs"}
+PUT  /api/away              離家模式 {"enabled", "start", "end", "plugs", "auto_on", "auto_h", "auto_off"}
 GET/PUT /api/floorplan      訊號地圖（房間、裝置位置、Wi-Fi 基地台）；POST/GET/DELETE /api/floorplan/image 底圖
 GET/PUT /api/sensing        Wi-Fi 感測（實驗）：訊號擾動、各房間動靜；{"enabled": false} 停止記錄
 GET /api/sensing/replay     動靜回放：最近 24 小時每 5 分鐘一格
 GET /api/sensing/week       一週動靜：每間房「星期幾 × 幾點」有動靜的比例
 GET /api/net/events         斷線紀錄：外網、基地台卡住、Wi-Fi、插座、停電恢復
+GET /api/net/plug-health    插座連線健檢：斷幾次、訊號、建議
+GET /api/report/monthly     每月報告預覽（上個月）
 GET/PUT /api/motion-rules   動靜自動化：{"rules": [{"room","plug","start","end","off_min","need_home","enabled"}]}
 GET /api/locate/{id}         人在哪個房間（實驗）：每個房間教了幾筆、現在的判斷；POST …/train {"room"} 教 2 分鐘、DELETE …/train 停止、DELETE /api/locate/{id}?room= 清掉
 GET  /api/energy             用電（插座自己記錄的開機時間 × 瓦數）
@@ -788,6 +790,18 @@ async def sensing_week(days: int = 28) -> dict[str, Any]:
     return await hub.sensing_week(max(7, min(30, days)))
 
 
+@app.get("/api/net/plug-health")
+def net_plug_health() -> dict[str, Any]:
+    """插座連線健檢：最近 30 天每個插座斷了幾次、訊號多強、建議怎麼做。"""
+    return {"plugs": hub.plug_health()}
+
+
+@app.get("/api/report/monthly")
+def report_monthly() -> dict[str, Any]:
+    """每月報告的內容（設定頁預覽用）：上個月。"""
+    return {"text": hub.monthly_text()}
+
+
 @app.get("/api/net/events")
 async def net_events(days: int = 30) -> dict[str, Any]:
     return hub.net_events_report(max(1, min(90, days)))
@@ -852,6 +866,14 @@ async def set_away(body: dict = Body(...)) -> dict[str, Any]:
             away[key] = hms[:5]
     if "plugs" in body:
         away["plugs"] = [str(x) for x in body["plugs"] if str(x) in hub.plugs]
+    if "auto_on" in body:  # 大家出門超過 auto_h 小時就自動打開
+        away["auto_on"] = bool(body["auto_on"])
+    if "auto_h" in body:
+        away["auto_h"] = min(72.0, max(1.0, float(body["auto_h"])))
+    if "auto_off" in body:  # 有人回家就自動關閉
+        away["auto_off"] = bool(body["auto_off"])
+    if "enabled" in body:
+        away.pop("auto_started", None)
     if away.get("start") == away.get("end"):
         raise HTTPException(400, "開始和結束時間不能一樣")
     store.data["settings"]["away"] = away
@@ -978,9 +1000,23 @@ async def set_settings(body: dict = Body(...)) -> dict[str, Any]:
         settings["new_device_alert"] = bool(body["new_device_alert"])
     if "power_restore" in body:
         settings["power_restore"] = bool(body["power_restore"])
+    if "monthly" in body:  # 每月 1 號推播上個月的摘要
+        settings["monthly"] = bool(body["monthly"])
+    if isinstance(body.get("goodnight"), dict):  # 晚安檢查：{"at": "23:30", "mode": notify/off/none, "keep": [插座 ID…]}
+        gn = settings.setdefault("goodnight", {})
+        g = body["goodnight"]
+        if "at" in g:
+            hms = _hms(g["at"])
+            if not hms:
+                raise HTTPException(400, "時間格式不對")
+            gn["at"] = hms[:5]
+        if g.get("mode") in ("notify", "off", "none"):
+            gn["mode"] = g["mode"]
+        if isinstance(g.get("keep"), list):
+            gn["keep"] = [str(x) for x in g["keep"] if str(x) in hub.plugs]
     if isinstance(body.get("remind"), dict):  # 主動提醒：開太久、早上會下雨、明天停水停電
         rem = settings.setdefault("remind", {})
-        for key in ("long_on", "rain", "outage_eve", "dayoff", "warn", "quake", "power", "air", "anomaly"):
+        for key in ("long_on", "rain", "outage_eve", "dayoff", "warn", "quake", "power", "air", "anomaly", "tier"):
             if key in body["remind"]:
                 rem[key] = bool(body["remind"][key])
     if isinstance(body.get("presence"), dict):

@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { DndContext, KeyboardSensor, PointerSensor, closestCorners, useDroppable, useSensor, useSensors, type DragEndEvent, type DragOverEvent } from "@dnd-kit/core";
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Bike, Bus, DoorOpen, MessageSquareText, Droplets, Gauge, Home as HomeIcon, Loader2, Pencil, Power, Truck, Wifi, WifiOff, Zap } from "lucide-react";
+import { Bike, Bus, DoorOpen, Moon, MessageSquareText, Droplets, Gauge, Home as HomeIcon, Loader2, Pencil, Power, Truck, Wifi, WifiOff, Zap } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -16,7 +16,7 @@ import { DeviceSheet, needsConfirm } from "@/components/device-sheet";
 import { WalkIn, playFx, useFun } from "@/components/fx";
 import { mdiIcon, weatherIcon } from "@/components/icons";
 import { AskPanel, EnergyPanel, NextPanel, PeoplePanel } from "@/components/home-side";
-import { LeaveSheet, MorningCard } from "@/components/leave-check";
+import { LeaveSheet, MorningCard, NightSheet } from "@/components/leave-check";
 import { alertItems } from "@/components/alerts";
 import { LifeSheet, type LifeTopic } from "@/components/life-sheet";
 import { RoomCard, type DragHandle, type Group } from "@/components/room-card";
@@ -133,6 +133,7 @@ export function HomePage() {
   const [allOff, setAllOff] = useState(false);
   const [sheet, setSheet] = useState<"weather" | LifeTopic | null>(null);
   const [leave, setLeave] = useState(false);
+  const [night, setNight] = useState(false);
   const [running, setRunning] = useState<string | null>(null);
   // 有人回家：在家人數變多的時候，小人走進門幾秒
   const fun = useFun();
@@ -467,6 +468,8 @@ export function HomePage() {
       })}
     </div>
   );
+  const hour = new Date().getHours();
+  const isEvening = hour >= 19 || hour < 5; // 晚上才放「晚安」按鈕
   const sep = <span key="sep" data-scene="1" aria-hidden className="ml-auto h-6 w-px shrink-0 bg-border" />;
   const headChips = look === "tech" ? items : chips;
 
@@ -483,6 +486,11 @@ export function HomePage() {
         chips={compact ? <>{sceneBar}{sep}{headChips}</> : headChips}
         chipsClassName={compact ? "xl:justify-start" : look === "tech" ? "xl:justify-start xl:[&>:first-child]:ml-auto" : undefined}
         actions={<>
+          {isEvening && (
+            <Button variant="outline" className="h-9 rounded-full bg-background" onClick={() => setNight(true)} title="晚安：睡前還開著的電器、明天的天氣">
+              <Moon /><span className="max-sm:sr-only">晚安</span>
+            </Button>
+          )}
           <Button variant="outline" className="h-9 rounded-full bg-background" onClick={() => setLeave(true)} title="出門前檢查：還開著的電器、要不要帶傘、垃圾車、停水停電">
             <DoorOpen /><span className="max-sm:sr-only">出門前檢查</span>
           </Button>
@@ -578,6 +586,7 @@ export function HomePage() {
 
       <DeviceSheet id={device} onClose={() => setDevice(null)} />
       <LeaveSheet open={leave} onClose={() => setLeave(false)} />
+      <NightSheet open={night} onClose={() => setNight(false)} />
       <WeatherSheet open={sheet === "weather"} onClose={() => setSheet(null)} />
       <LifeSheet open={!!sheet && sheet !== "weather"} topic={sheet && sheet !== "weather" ? sheet : undefined} onClose={() => setSheet(null)} />
 

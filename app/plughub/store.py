@@ -29,13 +29,17 @@ DEFAULTS: dict[str, Any] = {
         "ntfy_topic": "",  # 有填就用 ntfy 推播通知
         "long_on_hours": 6.0,  # 開超過這麼久就在畫面上提醒（常開的不算）
         # 離家模式：這段時間裡，選的插座由插座自己隨機開關（假裝有人在家）
-        "away": {"enabled": False, "start": "18:00", "end": "23:00", "plugs": []},
+        # auto_on：大家出門超過 auto_h 小時自動打開；auto_off：有人回家就自動關閉
+        "away": {"enabled": False, "start": "18:00", "end": "23:00", "plugs": [], "auto_on": False, "auto_h": 4, "auto_off": True},
         "sensing": True,  # Wi-Fi 感測（實驗）：每 2 秒讀插座的訊號強度
         "habit_dismissed": [],  # 按了「不用」的排程建議
         # 讀路由器的連線裝置清單（SSH 金鑰登入，只讀）；host 空白 = 不用
         "router": {"host": "", "port": 22, "user": ""},
         "new_device_alert": True,  # 沒看過的裝置連上 Wi-Fi 就通知
-        "power_restore": True,  # 停電回來後，插座開關跟停電前不一樣就恢復（高風險電器不自動開）
+        "power_restore": True,
+        "monthly": True,  # 每月 1 號推播上個月的摘要
+        # 晚安檢查：這個時間有人在家、還有電器開著就通知（mode=off 直接關掉，none 不檢查）；keep 是晚上本來就開著的
+        "goodnight": {"at": "23:30", "mode": "notify", "keep": []},  # 停電回來後，插座開關跟停電前不一樣就恢復（高風險電器不自動開）
         # 誰在家：最後一個人離開 / 第一個人回來時執行的情境（None = 不做事）；手機離線多久才算出門
         "presence": {"away_scene": None, "home_scene": None, "grace_min": 10},
     },

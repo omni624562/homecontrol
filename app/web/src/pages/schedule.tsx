@@ -421,8 +421,8 @@ export function SchedulePage() {
               className="mx-2 mb-2 flex items-center gap-3 rounded-xl px-3 py-3 text-left transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:bg-muted"
             >
               <div className="min-w-0 flex-1">
-                <div className="font-medium leading-relaxed">{a?.enabled ? `每天 ${a.start}–${a.end}，${awayN} 個插座隨機開關` : "不在家時讓燈隨機開關"}</div>
-                <div className="text-sm leading-relaxed text-muted-foreground">看起來像有人在家；由插座自己執行，樹莓派離線也照跑</div>
+                <div className="font-medium leading-relaxed">{a?.enabled ? `每天 ${a.start}–${a.end}，${awayN} 個插座隨機開關` : a?.auto_on ? `大家出門 ${a.auto_h || 4} 小時後自動打開` : "不在家時讓燈隨機開關"}</div>
+                <div className="text-sm leading-relaxed text-muted-foreground">看起來像有人在家；由插座自己執行，樹莓派離線也照跑{a?.auto_off !== false && (a?.enabled || a?.auto_on) ? "・有人回家就自動關閉" : ""}</div>
               </div>
               <ChevronRight className="size-5 text-muted-foreground" />
             </button>
