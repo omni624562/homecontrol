@@ -1,21 +1,23 @@
 import { useEffect, useSyncExternalStore, type ReactNode } from "react";
-import { BarChart3, Clock, Home, Map as MapIcon, Menu, MessageSquareText, PanelLeftClose, PanelLeftOpen, Settings, Sun, Wifi } from "lucide-react";
+import { BarChart3, Clock, Home, Map as MapIcon, Menu, MoreHorizontal, MessageSquareText, PanelLeftClose, PanelLeftOpen, Settings, Sun, Wifi } from "lucide-react";
 import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from "@/components/ui/drawer";
 import { useLook } from "@/lib/look";
 import { useAsk } from "@/components/ask-sheet";
 import { useHub } from "@/lib/hub";
+import { useNavStyle } from "@/lib/nav";
 import { cn } from "@/lib/utils";
 
 // 主選單
-// 電腦：左側選單；手機、平板：標題列左上角「☰」打開的側邊選單
+// 電腦：左側選單；手機、平板：標題列左上角「☰」打開的側邊選單，或下方分頁（設定裡選）
+// bar：選下方分頁時直接放在下方的 4 格，其他放進第 5 格「更多」
 export const TABS = [
-  { key: "plugs", label: "首頁", icon: Home },
-  { key: "life", label: "生活", icon: Sun },
-  { key: "map", label: "家中地圖", icon: MapIcon },
-  { key: "schedule", label: "排程", icon: Clock },
-  { key: "energy", label: "用電", icon: BarChart3 },
-  { key: "net", label: "網路裝置", icon: Wifi },
-  { key: "settings", label: "設定", icon: Settings },
+  { key: "plugs", label: "首頁", icon: Home, bar: true },
+  { key: "life", label: "生活", icon: Sun, bar: true },
+  { key: "map", label: "家中地圖", icon: MapIcon, bar: true },
+  { key: "schedule", label: "排程", icon: Clock, bar: false },
+  { key: "energy", label: "用電", icon: BarChart3, bar: true },
+  { key: "net", label: "網路裝置", icon: Wifi, bar: false },
+  { key: "settings", label: "設定", icon: Settings, bar: false },
 ] as const;
 
 const href = (t: (typeof TABS)[number]) => `#${t.key}`;
@@ -110,10 +112,55 @@ function MobileMenu({ tab, status }: { tab: string; status: ReactNode }) {
   );
 }
 
+// 下方分頁：4 格常用頁＋「更多」（從下方滑出其他頁面）
+function BottomTabs({ tab }: { tab: string }) {
+  const open = useMenu();
+  const more = TABS.filter((t) => !t.bar);
+  const inMore = more.some((t) => t.key === tab);
+  const item = "flex h-16 flex-1 flex-col items-center justify-center gap-1 text-xs font-medium text-muted-foreground transition-colors active:bg-muted";
+  return (
+    <>
+      <nav className="fixed inset-x-0 bottom-0 z-30 flex border-t bg-background/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-md lg:hidden" aria-label="主選單">
+        {TABS.filter((t) => t.bar).map((t) => (
+          <a key={t.key} href={href(t)} aria-current={tab === t.key ? "page" : undefined} className={cn(item, tab === t.key && "text-primary")}>
+            <t.icon className="size-6" />
+            {t.label}
+          </a>
+        ))}
+        <button onClick={() => setMenu(true)} aria-expanded={open} className={cn(item, inMore && "text-primary")}>
+          <MoreHorizontal className="size-6" />
+          更多
+        </button>
+      </nav>
+      <Drawer open={open} onOpenChange={setMenu}>
+        <DrawerContent className="pb-[max(1rem,env(safe-area-inset-bottom))] lg:hidden">
+          <DrawerTitle className="sr-only">更多頁面</DrawerTitle>
+          <DrawerDescription className="sr-only">下方分頁放不下的頁面</DrawerDescription>
+          <nav className="flex flex-col gap-1 px-3 pt-3" aria-label="更多頁面">
+            {more.map((t) => (
+              <a
+                key={t.key}
+                href={href(t)}
+                onClick={() => setMenu(false)}
+                aria-current={tab === t.key ? "page" : undefined}
+                className={cn("flex items-center gap-3 rounded-lg px-3 py-3.5 text-base font-medium text-muted-foreground transition-colors active:bg-muted", tab === t.key && "bg-primary/10 text-primary")}
+              >
+                <t.icon className="size-5 shrink-0" />
+                {t.label}
+              </a>
+            ))}
+          </nav>
+        </DrawerContent>
+      </Drawer>
+    </>
+  );
+}
+
 export function AppShell({ tab: raw, children }: { tab: string; children: ReactNode }) {
   const tab = raw === "edit" ? "plugs" : raw;
   const { connected, state } = useHub();
   const mini = useRail();
+  const nav = useNavStyle();
   const connText = connected ? "已連線" : state ? "重新連線中…" : "連線中…";
   const statusEl = (small: boolean) => (
     <div className={cn("flex items-center gap-2 text-sm text-muted-foreground", small && "justify-center")} role="status" title={small ? connText : undefined}>
@@ -172,10 +219,10 @@ export function AppShell({ tab: raw, children }: { tab: string; children: ReactN
         </div>
       </aside>
 
-      <main className={cn("pb-[max(2rem,env(safe-area-inset-bottom))] transition-[padding] duration-200 lg:pb-10", mini ? "lg:pl-16" : "lg:pl-60")}>{children}</main>
+      <main className={cn(nav === "tabs" ? "pb-[calc(5.5rem+env(safe-area-inset-bottom))]" : "pb-[max(2rem,env(safe-area-inset-bottom))]", "transition-[padding] duration-200 lg:pb-10", mini ? "lg:pl-16" : "lg:pl-60")}>{children}</main>
 
 
-      <MobileMenu tab={tab} status={statusEl(false)} />
+      {nav === "tabs" ? <BottomTabs tab={tab} /> : <MobileMenu tab={tab} status={statusEl(false)} />}
 
     </div>
   );
@@ -185,6 +232,7 @@ export function AppShell({ tab: raw, children }: { tab: string; children: ReactN
 export function PageHeader({ title, sub, actions, chips, chipsClassName, hideTitle, lead }: { title: ReactNode; sub?: ReactNode; actions?: ReactNode; chips?: ReactNode; chipsClassName?: string; hideTitle?: boolean; lead?: ReactNode }) {
   const { state } = useHub();
   const ask = useAsk();
+  const nav = useNavStyle();
   // 「問家裡」放在標題列（右下角浮動圓鈕會壓到開關）：手機首頁用 lead 放一條，其他情況在右邊放一顆
   const askBtn = state?.assistant ? (
     <button onClick={ask.open} aria-label="問家裡" title="問家裡"
@@ -196,10 +244,10 @@ export function PageHeader({ title, sub, actions, chips, chipsClassName, hideTit
     <header className="page-header sticky top-0 z-20 bg-neutral-50/85 backdrop-blur-md dark:bg-background/85">
       <div className="mx-auto flex max-w-[112rem] flex-wrap items-center gap-x-4 gap-y-2 px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-3 sm:px-6 lg:px-8 lg:py-4">
         {/* 手機、平板：左上角打開全部頁面的選單 */}
-        <button onClick={() => setMenu(true)} aria-label="全部頁面" title="全部頁面"
+        {nav === "menu" && <button onClick={() => setMenu(true)} aria-label="全部頁面" title="全部頁面"
           className="-ml-1.5 inline-flex size-9 shrink-0 items-center justify-center rounded-full text-foreground transition-colors hover:bg-muted active:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:hidden">
           <Menu className="size-[22px]" />
-        </button>
+        </button>}
         {/* hideTitle：標題只給螢幕閱讀器（首頁：左邊選單已經標出在哪一頁） */}
         {hideTitle && lead && <div className="min-w-0 flex-1 lg:hidden">{lead}</div>}
         {hideTitle ? <h1 className="sr-only">{title}</h1> : (
