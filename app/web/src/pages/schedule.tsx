@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
-import { AlertCircle, CalendarClock, Check, ChevronRight, Clock, Home, Info, Loader2, Moon, Plus, PlugZap, ShieldCheck, SkipForward, Sparkles, Sun, Timer, Trash2, Droplets, X } from "lucide-react";
+import { AlertCircle, CalendarClock, Check, ChevronRight, Clock, Home, Info, Loader2, Moon, Plus, PlugZap, ShieldCheck, SkipForward, History, Sun, Timer, Trash2, Droplets, X } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -219,7 +219,7 @@ export function SchedulePage() {
 
   const habitCard = habits.length > 0 && (
     <Card className="gap-0 overflow-hidden py-0">
-      <CardHead icon={Sparkles} title="建議的排程" end={<Badge variant="secondary">{habits.length}</Badge>} />
+      <CardHead icon={History} title="建議的排程" end={<Badge variant="secondary">{habits.length}</Badge>} />
       <div className="divide-y px-4 sm:px-5">
         {habits.map((x) => {
           const p = plug(x.plug)!;
@@ -377,7 +377,7 @@ export function SchedulePage() {
               </div>
             )}
             {!habits.length && habitDays < 14 && (
-              <Foot icon={Sparkles}>正在記錄你手動開關的習慣{habitDays ? `（已經 ${habitDays} 天）` : ""}；某個插座常在差不多的時間被開關，大約一週後會出現「建議的排程」。</Foot>
+              <Foot icon={History}>正在記錄你手動開關的習慣{habitDays ? `（已經 ${habitDays} 天）` : ""}；某個插座常在差不多的時間被開關，大約一週後會出現「建議的排程」。</Foot>
             )}
             {rows.length > 0 && (
               <Foot icon={ShieldCheck}>家庭中控的排程也會寫進插座，樹莓派離線時照樣執行。標「插座內建」的是用 Kasa App 設的，存在插座裡，在這裡一樣可以開關、修改、刪除。</Foot>

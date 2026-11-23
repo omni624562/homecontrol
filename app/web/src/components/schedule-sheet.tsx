@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { AlertCircle, CalendarClock, CheckCircle2, Clock, Copy, Droplets, Info, Loader2, PlugZap, Power, PowerOff, Sparkles, Trash2, Umbrella } from "lucide-react";
+import { AlertCircle, CalendarClock, CheckCircle2, Clock, Copy, Droplets, Info, Loader2, PlugZap, Power, PowerOff, Layers, Trash2, Umbrella } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -250,7 +250,7 @@ function Body({ id, saved, d, set, onClose, onCopy, isCopy }: { id?: string; sav
           <Segmented label="要做什麼" value={d.action} onChange={(v) => up({ action: v })} options={[
               ["off", <span className="inline-flex items-center gap-1.5"><PowerOff className="size-4" />關閉插座</span>],
               ["on", <span className="inline-flex items-center gap-1.5"><Power className="size-4" />打開插座</span>],
-              ["scene", <span className="inline-flex items-center gap-1.5"><Sparkles className="size-4" />執行情境</span>],
+              ["scene", <span className="inline-flex items-center gap-1.5"><Layers className="size-4" />執行情境</span>],
             ]} />
           {d.action === "scene" ? (
             scenes.length ? (
