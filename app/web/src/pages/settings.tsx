@@ -703,6 +703,7 @@ function CamerasCard() {
                 </AlertDialog>
               </div>
             )}
+            {c.enabled && c.alert && <p className="pl-5.5 text-xs text-muted-foreground">沒人在家時看到人，會先等 3 分鐘：這段時間有家人的手機連上 Wi-Fi，就當作家人回來，不通知。</p>}
             {c.enabled && !c.room && <p className="pl-5.5 text-xs text-muted-foreground">選了區域，才能在「家中地圖 → 動靜」設定「有人就開燈」。</p>}
           </div>
         ))
