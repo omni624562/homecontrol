@@ -221,3 +221,32 @@ def test_anomaly_from_energy_log(hub):
     hub.store.energy.flush()
     found = hub.find_anomalies(today)
     assert found and found[0]["plug"] == "f" and "冰箱" in found[0]["text"]
+
+
+
+def test_discover_survives_bad_sysinfo(app_module, monkeypatch):
+    """插座回的資料少了 relay_state：不能讓啟動整個失敗，先當離線。"""
+    import asyncio
+    import sys
+
+    hub = app_module.hub
+    hub_mod = sys.modules["plughub.hub"]
+
+    class Bad:
+        alias, model, host, mac, children = "壞插座", "HS103", "10.0.0.9", "AA:BB:CC:DD:EE:FF", []
+
+        async def update(self):
+            return None
+
+        @property
+        def is_on(self):
+            raise KeyError("relay_state")
+
+    async def fake_discover(*a, **k):
+        return {"10.0.0.9": Bad()}
+
+    monkeypatch.setattr(hub_mod.Discover, "discover", fake_discover)
+    monkeypatch.setattr(hub_mod, "_is_plug", lambda d: True)
+    asyncio.run(hub.discover())
+    pid = hub_mod._plug_id("AA:BB:CC:DD:EE:FF")
+    assert pid in hub.plugs and hub.plugs[pid].online is False
