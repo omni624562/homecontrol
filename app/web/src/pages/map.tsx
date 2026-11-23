@@ -260,7 +260,7 @@ export function MapPage() {
   const head = (
     <PageHeader
       title="家中地圖"
-      sub={edit ? "拖曳區域和裝置到實際的位置；選了區域可以改形狀；也可以畫牆、放門窗" : "家人在哪、哪裡有動靜、各裝置的 Wi-Fi 訊號；點裝置看詳細、設定高度"}
+      sub={edit ? "拖曳區域和裝置到實際的位置；選了區域可以改形狀；也可以畫牆、放門窗" : "家人在哪、哪裡有動靜、各裝置的 Wi-Fi 訊號；點插座開關，長按看詳細"}
       actions={
         <>
         {!edit && <Button asChild variant="ghost" className="h-10 lg:hidden"><a href="#net"><List />網路裝置</a></Button>}
@@ -535,7 +535,7 @@ export function MapPage() {
     const v = cover.filter((c) => c.room === r.id).map((c) => c.v);
     return { r, min: v.length ? Math.min(...v) : null, avg: v.length ? v.reduce((a, b) => a + b, 0) / v.length : null };
   }).filter((x) => x.min != null).sort((a, b) => a.min! - b.min!) : [];
-  const dflt = layer === "coverage" ? "預估每個角落收到的 Wi-Fi：藍色強、淡藍好、黃色普通、橘色弱（用插座實際量到的訊號校正）" : layer === "signal" ? "滑過裝置看訊號強度" : sense?.enabled === false ? "Wi-Fi 感測已暫停（設定 → Wi-Fi 感測）" : "橘色光圈越大，那附近越可能有人在走動・每 10 秒更新";
+  const dflt = layer === "coverage" ? "預估每個角落收到的 Wi-Fi：藍色強、淡藍好、黃色普通、橘色弱（用插座實際量到的訊號校正）" : layer === "signal" ? "外圈顏色是訊號強弱；滑過或長按插座看數字" : sense?.enabled === false ? "Wi-Fi 感測已暫停（設定 → Wi-Fi 感測）" : "橘色光圈越大，那附近越可能有人在走動・每 10 秒更新";
 
   return (
     <>
@@ -715,7 +715,7 @@ export function MapPage() {
                 ) : (
                   !fp.aps.length && <Note>按右上角「編輯」可以把你的 Wi-Fi 基地台也擺上去，比較容易看出哪裡離基地台太遠。</Note>
                 )}
-                <Note>點裝置或 Wi-Fi 基地台可以設定它放的高度。裝置右上角的小圓鈕可以直接開關插座（實心是開著）；多孔插座每一孔各有一個點，編輯時可以拖到電器的位置；地圖可以兩指放大、拖曳，或按右下角的 ＋／－。裝置周圍的顏色是它的訊號：藍色強（-55 dBm 以上）、淡藍普通、橘色弱（低於 -70，容易斷線）。</Note>
+                <Note>點一下插座就開關（實心是開著）；長按（電腦按右鍵）看詳細、設定放的高度。圓點外圈的顏色是 Wi-Fi 訊號：藍色強、淡藍普通、橘色弱（低於 -70，容易斷線），訊號弱的會直接標出數字。多孔插座每一孔各有一個點，編輯時可以拖到電器的位置；地圖可以兩指放大、拖曳，或按右下角的 ＋／－。</Note>
               </SideCard>
             </>
           )}
