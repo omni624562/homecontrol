@@ -87,7 +87,8 @@ export interface MapSense {
   enabled?: boolean;
   devices?: { key: string; name: string; now: number | null }[];
   net?: { nodes?: NetNode[]; clients?: NetClient[] } | null;
-  rooms?: Record<string, { score: number; cover: number; hot: string[] }>;
+  rooms?: Record<string, { score: number; cover: number; hot: string[]; camera?: string[]; person?: boolean }>;
+  cameras?: { id: string; name: string; room: string | null; person: boolean; ok: boolean | null }[];
 }
 
 // 動靜回放：每 bucket 秒一格

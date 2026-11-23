@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { AlertCircle, Archive, Bell, Plus, ShieldCheck, Trash2, CheckCircle2, CloudSun, KeyRound, MessageCircle, ChevronRight, ExternalLink, Loader2, MessageSquareText, Mic, Moon, Palette, Search, Wifi, WifiOff } from "lucide-react";
+import { AlertCircle, Archive, Bell, Cctv, Plus, ShieldCheck, Trash2, CheckCircle2, CloudSun, KeyRound, MessageCircle, ChevronRight, ExternalLink, Loader2, MessageSquareText, Mic, Moon, Palette, Search, Wifi, WifiOff } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -390,7 +390,7 @@ function NetCheck({ s }: { s: HubState }) {
   );
 }
 
-const SECTIONS: [string, string][] = [["s-look", "外觀"], ["s-notify", "通知"], ["s-night", "晚安"], ["s-life", "天氣生活"], ["s-ask", "問家裡"], ["s-google", "Google Home"], ["s-dev", "裝置"], ["s-sys", "安全與備份"]];
+const SECTIONS: [string, string][] = [["s-look", "外觀"], ["s-notify", "通知"], ["s-night", "晚安"], ["s-life", "天氣生活"], ["s-ask", "問家裡"], ["s-google", "Google Home"], ["s-cam", "攝影機"], ["s-dev", "裝置"], ["s-sys", "安全與備份"]];
 
 const ago = (t: number) => {
   const s = Date.now() / 1000 - t;
@@ -598,6 +598,132 @@ function JumpChips() {
         </button>
       ))}
     </div>
+  );
+}
+
+// 網路攝影機：樹莓派每秒看一張快照認人；看到人 → 那間算有動靜（動靜自動開關、地圖），沒人在家時看到人就通知
+interface Cam { id: string; name: string; host: string; port: number; room: string | null; enabled: boolean; alert: boolean; model?: string; person: boolean; score: number | null; ok: boolean | null; error: string | null }
+
+function CamerasCard() {
+  const [cams, setCams] = useState<Cam[] | null>(null);
+  const [rooms, setRooms] = useState<{ id: string; name: string }[]>([]);
+  const [adding, setAdding] = useState(false);
+  const [form, setForm] = useState({ host: "", user: "", pwd: "" });
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    const load = () => api<{ cameras: Cam[] }>("GET", "/api/cameras").then((r) => alive && setCams(r.cameras)).catch(() => {});
+    load();
+    api<{ rooms?: { id: string; name: string }[] }>("GET", "/api/floorplan").then((f) => alive && setRooms(f.rooms || [])).catch(() => {});
+    const t = setInterval(load, 3000);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
+  const upd = async (id: string, body: object, ok?: string) => {
+    try {
+      const r = await api<{ cameras: Cam[] }>("PUT", `/api/cameras/${id}`, body);
+      setCams(r.cameras);
+      if (ok) toast.success(ok);
+    } catch (e) {
+      toast.error("沒有成功", { description: (e as Error).message });
+    }
+  };
+  const add = async () => {
+    setBusy(true);
+    try {
+      const r = await api<{ camera: Cam }>("POST", "/api/cameras", { host: form.host.trim(), user: form.user, pwd: form.pwd });
+      setCams((c) => [...(c || []), r.camera]);
+      setForm({ host: "", user: "", pwd: "" });
+      setAdding(false);
+      toast.success(`加好了：${r.camera.name}`);
+    } catch (e) {
+      toast.error("加不進去", { description: (e as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const del = async (c: Cam) => {
+    try {
+      const r = await api<{ cameras: Cam[] }>("DELETE", `/api/cameras/${c.id}`);
+      setCams(r.cameras);
+      toast.success(`已移除 ${c.name}`);
+    } catch (e) {
+      toast.error("沒有成功", { description: (e as Error).message });
+    }
+  };
+  return (
+    <SCard id="s-cam" icon={Cctv} title="攝影機">
+      <p className="px-4 pt-3 text-sm leading-relaxed text-muted-foreground sm:px-5">
+        樹莓派每秒看一張快照，只認畫面裡有沒有人：影像不存檔、不上傳。看到人時，攝影機所在的區域算「有人」（家中地圖的動靜、動靜自動開關都會用到）。
+      </p>
+      {cams === null ? <p className="px-4 py-3 text-sm text-muted-foreground sm:px-5">讀取中…</p> : cams.length === 0 && !adding ? (
+        <p className="px-4 py-3 text-sm text-muted-foreground sm:px-5">還沒有攝影機。</p>
+      ) : (
+        cams.map((c) => (
+          <div key={c.id} className="space-y-3 px-4 py-3.5 sm:px-5">
+            <div className="flex items-start gap-3">
+              <span className={cn("mt-1.5 size-2.5 shrink-0 rounded-full", !c.enabled ? "bg-muted-foreground/40" : c.ok === false ? "bg-red-500" : c.person ? "bg-orange-500" : "bg-emerald-500")} aria-hidden />
+              <div className="min-w-0 flex-1">
+                <div className="font-medium">{c.name}<span className="ml-2 text-sm font-normal text-muted-foreground">{c.model ? `${c.model}・` : ""}{c.host}</span></div>
+                <div className={cn("text-sm", c.ok === false ? "text-red-600 dark:text-red-400" : "text-muted-foreground")}>
+                  {!c.enabled ? "已停用" : c.ok === false ? `連不上：${c.error || "沒有回應"}` : c.ok == null ? "連線中…" : c.person ? "現在看到人" : "現在沒看到人"}
+                </div>
+              </div>
+              <Switch checked={c.enabled} onCheckedChange={(v) => upd(c.id, { enabled: v }, v ? `${c.name} 開始認人` : `${c.name} 已停用`)} aria-label={`啟用 ${c.name}`} />
+            </div>
+            {c.enabled && (
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 pl-5.5">
+                <label className="flex items-center gap-2 text-sm">
+                  拍的是
+                  <Select value={c.room || "_none"} onValueChange={(v) => upd(c.id, { room: v === "_none" ? null : v }, v === "_none" ? "不指定區域" : `看到人就算「${rooms.find((r) => r.id === v)?.name}」有人`)}>
+                    <SelectTrigger className="h-8 w-32 bg-background" aria-label={`${c.name} 拍的區域`}><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="_none">不指定</SelectItem>
+                      {rooms.map((r) => <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <Switch checked={c.alert} onCheckedChange={(v) => upd(c.id, { alert: v }, v ? "沒人在家時看到人會通知" : "不會通知")} aria-label={`${c.name} 沒人在家時看到人就通知`} />
+                  沒人在家時看到人就通知
+                </label>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button variant="ghost" size="sm" className="ml-auto text-muted-foreground hover:text-destructive"><Trash2 />移除</Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>移除「{c.name}」？</AlertDialogTitle>
+                      <AlertDialogDescription>樹莓派不會再看這台攝影機，存著的帳密也會刪掉。攝影機本身的設定不會動。</AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>取消</AlertDialogCancel>
+                      <AlertDialogAction variant="destructive" onClick={() => del(c)}>移除</AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </div>
+            )}
+            {c.enabled && !c.room && <p className="pl-5.5 text-xs text-muted-foreground">選了區域，才能在「家中地圖 → 動靜」設定「有人就開燈」。</p>}
+          </div>
+        ))
+      )}
+      {adding ? (
+        <form className="grid gap-2 px-4 py-3.5 sm:grid-cols-[1fr_1fr_1fr_auto] sm:px-5" onSubmit={(e) => { e.preventDefault(); add(); }}>
+          <Input id="cam-host" placeholder="IP，例如 10.0.2.185" value={form.host} onChange={(e) => setForm({ ...form, host: e.target.value })} aria-label="攝影機 IP" />
+          <Input id="cam-user" placeholder="帳號" autoComplete="off" value={form.user} onChange={(e) => setForm({ ...form, user: e.target.value })} aria-label="攝影機帳號" />
+          <Input id="cam-pwd" type="password" placeholder="密碼" autoComplete="new-password" value={form.pwd} onChange={(e) => setForm({ ...form, pwd: e.target.value })} aria-label="攝影機密碼" />
+          <div className="flex gap-2">
+            <Button type="submit" disabled={busy || !form.host.trim()}>{busy && <Loader2 className="animate-spin" />}加入</Button>
+            <Button type="button" variant="ghost" onClick={() => setAdding(false)}>取消</Button>
+          </div>
+          <p className="text-xs text-muted-foreground sm:col-span-4">目前支援 Foscam（HD 系列）。帳密只存在樹莓派上；建議在攝影機另外開一個「訪客」權限的帳號給它用。</p>
+        </form>
+      ) : (
+        <div className="px-4 py-3 sm:px-5">
+          <Button variant="outline" size="sm" onClick={() => setAdding(true)}><Plus />新增攝影機</Button>
+        </div>
+      )}
+    </SCard>
   );
 }
 
@@ -856,6 +982,7 @@ export function SettingsPage() {
             <SRow label="深色、淺色" hint="跟著手機或電腦的系統設定自動切換，兩種風格都有深淺兩套" />
           </SCard>
           <GoogleCard />
+          <CamerasCard />
           <SCard id="s-dev" icon={Search} title="裝置">
             <NetCheck s={state} />
             <SRow label="停電後恢復插座" hint="停電回來，插座開關跟停電前不一樣就改回來（6 小時內）；高風險電器不會自動打開">

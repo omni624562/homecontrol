@@ -21,7 +21,7 @@ from typing import Any, Callable
 
 from kasa import Device, Discover, Module
 
-from . import anomaly, arpprobe, habits, locate, native, netlog, netprobe, roommotion, routine, sun, tariff
+from . import anomaly, arpprobe, camera, habits, locate, native, netlog, netprobe, roommotion, routine, sun, tariff
 from .sensing import INTERVAL as SENSE_INTERVAL, SAVE_EVERY as SENSE_SAVE_EVERY, Sensing
 from .notify import Notifier
 from .daysoff import DaysOff
@@ -43,6 +43,7 @@ SOURCE: contextvars.ContextVar[str] = contextvars.ContextVar("source", default="
 NET_OUTAGE_SECONDS = 90  # 同一個 Wi-Fi 的插座全部斷線多久才算路由器出問題
 
 POLL_SECONDS = 5
+CAMERA_SCORE = 1.5  # 攝影機看到人的房間，動靜分數至少這麼多（> 地圖上的「很明顯」）
 PROBE_EVERY = 60  # 路由器多久沒看到家人的手機，就由樹莓派直接問（ARP）
 PROBE_MAX_AGE = 24 * 3600  # 超過一天沒看到的就不問了
 PRESENCE_LOG_MAX = 50
@@ -140,6 +141,8 @@ class Hub:
         except Exception:  # noqa: BLE001
             pass
         self.sensing = Sensing()
+        self.cameras = camera.Cameras(self.store.dir)
+        self._cam_alert: dict[str, float] = {}  # 攝影機 ID → 上次「沒人在家卻看到人」通知的時間
         self.locator = locate.Locator(self.store.data.setdefault("locate", {}))
         self._sense_path = store.dir / "sensing.json.gz"
         self.sensing.load(self._sense_path)
@@ -332,6 +335,7 @@ class Hub:
             asyncio.create_task(self._loop(self._native_tick, 5)),
             asyncio.create_task(self._loop(self._save_runtime, 60)),
             asyncio.create_task(self._loop(self._sense_tick, SENSE_INTERVAL)),
+            asyncio.create_task(self._loop(self._camera_tick, camera.EVERY)),
             asyncio.create_task(self._loop(self._local_tick, 15)),
             asyncio.create_task(self.router.run()),
             asyncio.create_task(self._loop(self._probe_tick, 120)),
@@ -1336,7 +1340,46 @@ class Hub:
         """現在每個房間的動靜（地圖上有線經過的房間才有）。"""
         now = time.time()
         motion = {k: (b[-1][1] if b and now - b[-1][0] < 10 else None) for k, b in self.sensing.motion.items()}
-        return roommotion.scores(self._room_links(), motion)
+        rm = roommotion.scores(self._room_links(), motion)
+        # 有攝影機的房間：一直算「看得到」；看到人就一定算有動靜（比 Wi-Fi 擾動準）
+        seen = self.cameras.rooms_with_person()
+        for room, names in self.cameras.rooms().items():
+            v = rm.get(room) or {"score": 0.0, "cover": 0.0, "hot": []}
+            rm[room] = {**v, "cover": max(v["cover"], 1.0), "camera": names, "person": room in seen}
+            if room in seen:
+                rm[room]["score"] = max(v["score"], CAMERA_SCORE)
+        return rm
+
+    # ---- 網路攝影機：每秒看一張快照，認畫面裡有沒有人 ----
+
+    async def _camera_tick(self) -> None:
+        cams = [c for c in self.cameras.list if c.get("enabled")]
+        if not cams:
+            return
+        now = time.time()
+        events = await asyncio.gather(*(asyncio.to_thread(self.cameras.check, c, now) for c in cams))
+        for c, ev in zip(cams, events):
+            if ev == "on":
+                self._camera_seen(c, now)
+        rm = self.room_motion()
+        for r, v in rm.items():
+            if v["score"] >= roommotion.ACTIVE:
+                self._room_active[r] = now
+        self._motion_rules(rm, now)
+        if any(events):
+            await self.changed()
+
+    def _camera_seen(self, cam: dict[str, Any], now: float) -> None:
+        """攝影機剛看到人：大家都出門了（而且這台有開通知）就緊急通知。"""
+        name = cam.get("name") or cam["host"]
+        _LOGGER.info("攝影機 %s 看到人", name)
+        people = self.people_report()
+        if not cam.get("alert", True) or not people or any(p.get("home") is not False for p in people):
+            return
+        if now - self._cam_alert.get(cam["id"], 0) < camera.ALERT_GAP:
+            return
+        self._cam_alert[cam["id"]] = now
+        self.notifier.send("⚠️ 沒人在家，但攝影機看到人", f"{name}在 {datetime.now().strftime('%H:%M')} 看到有人。家人的手機都不在家；如果是家人忘了帶手機就不用理會", "urgent")
 
     # ---- 動靜自動化：房間有人走動就開某個插座，沒動靜幾分鐘後關掉 ----
 
@@ -1449,8 +1492,9 @@ class Hub:
                 devs.append({"key": key, "name": names[key], "now": round(cur[-1][1], 2) if cur and now - cur[-1][0] < 10 else None})
             net = self.net_report()
             keep = ("mac", "name", "node", "online", "rssi", "ssid", "map", "plug", "wired")
+            cams = [{k: c[k] for k in ("id", "name", "room", "person", "ok")} for c in self.cameras.public() if c["enabled"]]
             return {"enabled": bool(self.store.data["settings"].get("sensing", True)), "devices": devs, "rooms": self.room_motion(),
-                    "net": {"nodes": net["nodes"], "clients": [{k: c.get(k) for k in keep} for c in net["clients"]]}}
+                    "net": {"nodes": net["nodes"], "clients": [{k: c.get(k) for k in keep} for c in net["clients"]]}, "cameras": cams}
         rep = self.sensing.report(names, minutes)
         rep["devices"] = [d for d in rep["devices"] if d["key"] in names]
         rep["net"] = self.net_report()
