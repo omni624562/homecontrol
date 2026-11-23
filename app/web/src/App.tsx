@@ -7,6 +7,7 @@ import { FxLayer } from "@/components/fx";
 import { Standby } from "@/components/standby";
 import { useLook } from "@/lib/look";
 import { track } from "@/lib/usage";
+import { useAutoUpdate } from "@/lib/auto-update";
 
 // 首頁以外的頁面用到才載入（首頁比較快出現）；首頁出來後趁空檔先載好，切換時就不用等
 const load = {
@@ -46,6 +47,7 @@ export default function App() {
     return () => mq.removeEventListener("change", sync);
   }, [look]);
   useEffect(() => { track(tab); }, [tab]);
+  useAutoUpdate();
   const Page = tab in PAGES ? PAGES[tab as keyof typeof load] : null;
   return (
     <AskProvider>
