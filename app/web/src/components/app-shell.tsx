@@ -7,15 +7,15 @@ import { useHub } from "@/lib/hub";
 import { cn } from "@/lib/utils";
 
 // 主選單
-// mobile: false 的不放手機下方分頁（放不下）；手機從標題列左上角「☰」打開的選單裡有全部
+// 電腦：左側選單；手機、平板：標題列左上角「☰」打開的側邊選單
 export const TABS = [
-  { key: "plugs", label: "首頁", icon: Home, mobile: true },
-  { key: "life", label: "生活", icon: Sun, mobile: true },
-  { key: "map", label: "家中地圖", icon: MapIcon, mobile: true },
-  { key: "schedule", label: "排程", icon: Clock, mobile: false },
-  { key: "energy", label: "用電", icon: BarChart3, mobile: true },
-  { key: "net", label: "網路裝置", icon: Wifi, mobile: false },
-  { key: "settings", label: "設定", icon: Settings, mobile: true },
+  { key: "plugs", label: "首頁", icon: Home },
+  { key: "life", label: "生活", icon: Sun },
+  { key: "map", label: "家中地圖", icon: MapIcon },
+  { key: "schedule", label: "排程", icon: Clock },
+  { key: "energy", label: "用電", icon: BarChart3 },
+  { key: "net", label: "網路裝置", icon: Wifi },
+  { key: "settings", label: "設定", icon: Settings },
 ] as const;
 
 const href = (t: (typeof TABS)[number]) => `#${t.key}`;
@@ -172,31 +172,11 @@ export function AppShell({ tab: raw, children }: { tab: string; children: ReactN
         </div>
       </aside>
 
-      <main className={cn("pb-[calc(5.5rem+env(safe-area-inset-bottom))] transition-[padding] duration-200 lg:pb-10", mini ? "lg:pl-16" : "lg:pl-60")}>{children}</main>
+      <main className={cn("pb-[max(2rem,env(safe-area-inset-bottom))] transition-[padding] duration-200 lg:pb-10", mini ? "lg:pl-16" : "lg:pl-60")}>{children}</main>
 
 
       <MobileMenu tab={tab} status={statusEl(false)} />
 
-      {/* 手機、平板：下方分頁 */}
-      <nav
-        className="fixed inset-x-0 bottom-0 z-30 flex border-t bg-background/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-md lg:hidden"
-        aria-label="主選單"
-      >
-        {TABS.filter((t) => t.mobile).map((t) => (
-          <a
-            key={t.key}
-            href={href(t)}
-            aria-current={tab === t.key ? "page" : undefined}
-            className={cn(
-              "flex h-16 flex-1 flex-col items-center justify-center gap-1 text-xs font-medium text-muted-foreground transition-colors active:bg-muted",
-              tab === t.key && "text-primary",
-            )}
-          >
-            <t.icon className="size-6" />
-            {t.label}
-          </a>
-        ))}
-      </nav>
     </div>
   );
 }

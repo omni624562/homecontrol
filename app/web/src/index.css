@@ -233,8 +233,8 @@
 .crash-flash { opacity: 0; animation: crash-flash 0.45s ease-out 1.15s both; }
 .crash-cracks { opacity: 0; transform-origin: 50% 50%; animation: crash-cracks 3.3s ease-out 1.2s both; }
 .crash-text { opacity: 0; animation: crash-text 3.2s ease-out 1.3s both; }
-/* 不轉整個頁面（固定在畫面上的東西會跑掉），改成內容、側邊選單、下方分頁列、右下角按鈕各自晃 */
-.screen-shake #root :is(main, aside, nav[aria-label="主選單"], button[aria-label="問家裡"]) { animation: screen-shake 0.5s ease-in-out; }
+/* 不轉整個頁面（固定在畫面上的東西會跑掉），改成內容、側邊選單、右下角按鈕各自晃 */
+.screen-shake #root :is(main, aside, button[aria-label="問家裡"]) { animation: screen-shake 0.5s ease-in-out; }
 body:is(.screen-shake, .screen-tilt) { overflow-x: clip; }
 #root main { transform-origin: 50% var(--fx-y, 50%); }
 
@@ -296,7 +296,7 @@ body:is(.screen-shake, .screen-tilt) { overflow-x: clip; }
   78% { transform: rotate(0.7deg); }
   100% { transform: none; }
 }
-.screen-tilt #root :is(main, aside, nav[aria-label="主選單"], button[aria-label="問家裡"]) { animation: screen-tilt 2.6s ease-in-out; }
+.screen-tilt #root :is(main, aside, button[aria-label="問家裡"]) { animation: screen-tilt 2.6s ease-in-out; }
 
 /* 追垃圾車：車子開過去，小人在後面追 */
 @keyframes truck-cruise { from { transform: translateX(-30vw); } to { transform: translateX(112vw); } }
