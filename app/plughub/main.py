@@ -975,6 +975,18 @@ async def cameras_update(cam_id: str, request: Request, body: dict = Body(...)) 
             cam[key] = bool(body[key])
     if body.get("role") in ("entry", "room"):
         cam["role"] = body["role"]
+        if body.get("defaults"):  # 選了門口／房間：常用的功能先幫忙打開
+            cam.update(camera_mod.ROLE_DEFAULTS[body["role"]])
+    if isinstance(body.get("ignore"), list):  # 不要看的地方：[[x, y, w, h], …]（0～1）
+        zones = []
+        for r in body["ignore"][:6]:
+            try:
+                x, y, w, h = (min(1.0, max(0.0, float(v))) for v in r)
+            except (TypeError, ValueError):
+                raise HTTPException(400, "框的位置不對") from None
+            if w >= 0.02 and h >= 0.02:
+                zones.append([round(x, 4), round(y, 4), round(w, 4), round(h, 4)])
+        cam["ignore"] = zones
     if "light" in body:
         cam["light"] = body["light"] if body["light"] in hub.plugs else None
     if "user" in body or "pwd" in body:

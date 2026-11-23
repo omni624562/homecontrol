@@ -14,6 +14,7 @@ const load = {
   edit: () => import("@/pages/edit").then((m) => ({ default: m.EditPage })),
   net: () => import("@/pages/net").then((m) => ({ default: m.NetPage })),
   map: () => import("@/pages/map").then((m) => ({ default: m.MapPage })),
+  cameras: () => import("@/pages/cameras").then((m) => ({ default: m.CamerasPage })),
   life: () => import("@/pages/life").then((m) => ({ default: m.LifePage })),
 };
 const PAGES = Object.fromEntries(Object.entries(load).map(([k, f]) => [k, lazy(f)])) as Record<keyof typeof load, React.LazyExoticComponent<() => React.JSX.Element>>;

@@ -1,5 +1,5 @@
 import { useEffect, useSyncExternalStore, type ReactNode } from "react";
-import { BarChart3, Clock, Home, Map as MapIcon, Menu, MoreHorizontal, MessageSquareText, PanelLeftClose, PanelLeftOpen, Settings, Sun, Wifi } from "lucide-react";
+import { BarChart3, Cctv, Clock, Home, Map as MapIcon, Menu, MoreHorizontal, MessageSquareText, PanelLeftClose, PanelLeftOpen, Settings, Sun, Wifi } from "lucide-react";
 import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from "@/components/ui/drawer";
 import { useLook } from "@/lib/look";
 import { useAsk } from "@/components/ask-sheet";
@@ -13,6 +13,7 @@ export const TABS = [
   { key: "plugs", label: "首頁", icon: Home },
   { key: "life", label: "生活", icon: Sun },
   { key: "map", label: "家中地圖", icon: MapIcon },
+  { key: "cameras", label: "攝影機", icon: Cctv },
   { key: "schedule", label: "排程", icon: Clock },
   { key: "energy", label: "用電", icon: BarChart3 },
   { key: "net", label: "網路裝置", icon: Wifi },
