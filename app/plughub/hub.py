@@ -435,7 +435,12 @@ class Hub:
                 pid = _plug_id(device.mac)
                 entry.plugs.append(pid)
                 self.plugs[pid] = Plug(pid, key, device.alias, device.model, host)
-            self._read(entry)
+            try:
+                self._read(entry)
+            except Exception as err:  # noqa: BLE001  插座回的資料不完整（例如少了 relay_state）：先當離線，下一輪輪詢再讀，不要讓整個程式起不來
+                _LOGGER.warning("讀取插座 %s（%s）失敗，稍後再試：%s", device.alias, host, err)
+                for pid in entry.plugs:
+                    self.plugs[pid].online = False
             added = True
             self._restored.pop(key, None)
             _LOGGER.info("找到插座 %s（%s，%s）", device.alias, device.model, host)
