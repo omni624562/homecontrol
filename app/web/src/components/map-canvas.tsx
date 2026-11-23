@@ -41,7 +41,7 @@ export function MapCanvas({
   onPick: (s: MapSel) => void;
   onTip: (t: string | null) => void;
   // 地圖上直接開關插座：裝置圓點右上角的小電源鈕（看的時候才有）
-  powerOf?: (d: MapDev) => boolean | null;
+  powerOf?: (d: MapDev) => number; // 開著幾孔
   onPower?: (d: MapDev) => void;
 }) {
   const svg = useRef<SVGSVGElement>(null);
@@ -652,18 +652,33 @@ export function MapCanvas({
               {layer === "motion" ? (m == null ? "·" : fmt(m, 1)) : d.rssi ?? "—"}
             </text>
             {!edit && onPower && d.online && d.plugs.length > 0 && (() => {
-              const pw = powerOf?.(d) ?? null;
-              const label = `${d.name}：${pw ? "開著，點一下關閉" : "關著，點一下打開"}`;
+              const n = d.plugs.length;
+              const on = powerOf?.(d) ?? 0;
+              const pw = on > 0;
+              const multi = n > 1;
+              const label = multi ? `${d.name}：${n} 孔開著 ${on} 孔，點一下分別開關` : `${d.name}：${pw ? "開著，點一下關閉" : "關著，點一下打開"}`;
+              const shadow = { filter: "drop-shadow(0 1px 1.5px rgb(15 23 42 / .25))" };
               return (
-                <g transform="translate(13 -13)" className="cursor-pointer" role="button" aria-label={label}
+                <g transform={multi ? "translate(16 -13)" : "translate(13 -13)"} className="cursor-pointer" role="button" aria-label={label}
                   onPointerDown={(e) => e.stopPropagation()}
                   onClick={(e) => { e.stopPropagation(); onPower(d); }}>
                   <title>{label}</title>
-                  <circle r={13} fill="transparent" />
-                  <circle r={8.5} className={pw ? "fill-primary" : "fill-card"} stroke={pw ? "var(--card)" : "var(--muted-foreground)"} strokeWidth={pw ? 2 : 1.5}
-                    style={{ filter: "drop-shadow(0 1px 1.5px rgb(15 23 42 / .25))" }} />
-                  <path d="M0 -4.2 V-0.6 M-2.9 -2.6 A3.9 3.9 0 1 0 2.9 -2.6" fill="none" strokeWidth={1.6} strokeLinecap="round"
-                    stroke={pw ? "var(--primary-foreground)" : "var(--muted-foreground)"} />
+                  <circle r={14} fill="transparent" />
+                  {multi ? (
+                    // 多孔：小膠囊寫「開著幾孔／共幾孔」
+                    <>
+                      <rect x={-12} y={-8.5} width={24} height={17} rx={8.5} className={pw ? "fill-primary" : "fill-card"}
+                        stroke={pw ? "var(--card)" : "var(--muted-foreground)"} strokeWidth={pw ? 2 : 1.5} style={shadow} />
+                      <text y={3.6} textAnchor="middle" className="font-bold tabular-nums" style={{ fontSize: 10 }}
+                        fill={pw ? "var(--primary-foreground)" : "var(--muted-foreground)"}>{on}/{n}</text>
+                    </>
+                  ) : (
+                    <>
+                      <circle r={8.5} className={pw ? "fill-primary" : "fill-card"} stroke={pw ? "var(--card)" : "var(--muted-foreground)"} strokeWidth={pw ? 2 : 1.5} style={shadow} />
+                      <path d="M0 -4.2 V-0.6 M-2.9 -2.6 A3.9 3.9 0 1 0 2.9 -2.6" fill="none" strokeWidth={1.6} strokeLinecap="round"
+                        stroke={pw ? "var(--primary-foreground)" : "var(--muted-foreground)"} />
+                    </>
+                  )}
                 </g>
               );
             })()}
