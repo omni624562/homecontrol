@@ -35,7 +35,7 @@ def test_check_scores_and_errors(tmp_path, monkeypatch):
     cam = {"id": "a", "host": "10.0.0.5", "name": "門口"}
     scores = iter([0.9, 0.9])
     monkeypatch.setattr(camera, "snapshot", lambda c: b"\xff\xd8jpeg")
-    monkeypatch.setattr(cams.detector, "person_score", lambda jpg: next(scores))
+    monkeypatch.setattr(cams.detector, "scores", lambda jpg: {"person": next(scores), "cat": 0.0, "dog": 0.0})
     assert cams.check(cam, 0) is None
     assert cams.check(cam, 1) == "on"
 

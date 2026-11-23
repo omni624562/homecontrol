@@ -29,6 +29,9 @@ EVERY = 1.0  # 秒：每台多久看一次
 PERSON_ON = 0.4  # 「人」的分數到這裡算看到
 PERSON_HITS = 2  # 最近 3 張裡有幾張看到才算有人（避免一張誤判）
 HOLD = 15  # 秒：多久沒看到人才算人走了
+PETS = {16: "cat", 17: "dog"}  # 物件辨識模型裡貓、狗是第幾類
+PET_ON = 0.35  # 貓狗的分數到這裡算看到（比人寬鬆一點：寵物常常只露出一部分）
+PET_HOLD = 60  # 秒：多久沒看到才算走了
 RETRY = 30  # 秒：連不上時多久再試
 ALERT_GAP = 600  # 秒：同一台「沒人在家卻看到人」的通知，至少隔這麼久
 ARRIVE_WAIT = 180  # 秒：沒人在家時看到人，先等這麼久；這段時間有家人的手機連上 Wi-Fi 就是家人回來，不通知
@@ -57,6 +60,22 @@ def track(st: dict[str, Any], score: float, now: float) -> str | None:
     return None
 
 
+def pet_track(st: dict[str, Any], scores: dict[str, float], now: float) -> None:
+    """貓、狗：最近 3 張有 2 張看到就算來了；60 秒沒看到算走了。剛來的放進 st["pet_new"] 給 hub 處理。"""
+    pets = st.setdefault("pets", {})
+    for name in PETS.values():
+        p = pets.setdefault(name, {"recent": [], "here": False, "seen": 0.0})
+        sc = scores.get(name, 0.0)
+        p["recent"] = (p["recent"] + [sc])[-3:]
+        if sc >= PET_ON:
+            p["seen"] = now
+        if not p["here"] and sum(1 for x in p["recent"] if x >= PET_ON) >= 2:
+            p["here"] = True
+            st.setdefault("pet_new", []).append(name)
+        elif p["here"] and now - p["seen"] >= PET_HOLD:
+            p["here"] = False
+
+
 class Detector:
     """樹莓派上的物件辨識（只要「人」的分數）。第一次用到才載入模型。"""
 
@@ -79,6 +98,10 @@ class Detector:
         return self._it
 
     def person_score(self, jpeg: bytes) -> float:
+        return self.scores(jpeg)["person"]
+
+    def scores(self, jpeg: bytes) -> dict[str, float]:
+        """人、貓、狗各自的最高分數。"""
         import numpy as np
         from PIL import Image
 
@@ -90,7 +113,11 @@ class Detector:
             x = np.expand_dims(np.asarray(img.convert("RGB").resize((w, h)), dtype=np.uint8), 0)
             it.set_tensor(self._inp["index"], x)
             it.invoke()
-            return float(it.get_tensor(self._scores)[0][:, 0].max())  # 第 0 類是人
+            s = it.get_tensor(self._scores)[0]
+            out = {"person": float(s[:, 0].max())}  # 第 0 類是人
+            for idx, name in PETS.items():
+                out[name] = float(s[:, idx].max())
+            return out
 
 
 def _cgi(cam: dict[str, Any], cmd: str) -> bytes:
@@ -196,10 +223,14 @@ class Cameras:
             c.setdefault("faces", True)  # 看到人時認臉
             c.setdefault("role", "room")  # entry：門口（認出誰回家、出門、門口的陌生人）；room：房間
             c.setdefault("light", None)  # 門口：半夜看到陌生人時打開的插座
+            c.setdefault("pets", True)  # 認貓、狗
+            c.setdefault("fall", c.get("role") != "entry")  # 跌倒偵測（實驗；預設只有房間的攝影機）
+            c.setdefault("door", None)  # 開門：{"rect": [x,y,w,h], "refs": [樣子…], "notify": away/always/off, "scene": 天黑後開門執行的情境}
 
     def save(self) -> None:
         tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"cameras": self.list, "viewers": self.viewers}, ensure_ascii=False, indent=2), "utf-8")
+        clean = [{**c, "door": {k: v for k, v in c["door"].items() if not k.startswith("_")}} if c.get("door") else c for c in self.list]
+        tmp.write_text(json.dumps({"cameras": clean, "viewers": self.viewers}, ensure_ascii=False, indent=2), "utf-8")
         os.chmod(tmp, 0o600)
         tmp.replace(self.path)
 
@@ -211,7 +242,11 @@ class Cameras:
         out = []
         for c in self.list:
             st = self.state.get(c["id"], {})
-            out.append({k: c.get(k) for k in ("id", "name", "host", "port", "room", "enabled", "alert", "model", "faces", "role", "light")}
+            door = c.get("door") or {}
+            out.append({k: c.get(k) for k in ("id", "name", "host", "port", "room", "enabled", "alert", "model", "faces", "role", "light", "pets", "fall")}
+                       | {"door": {"rect": door.get("rect"), "refs": len(door.get("refs") or []), "notify": door.get("notify", "away"), "scene": door.get("scene"),
+                                   "open": bool((st.get("door") or {}).get("open")), "score": (st.get("door") or {}).get("score")} if door.get("rect") else None,
+                          "pets_here": [n for n, p in (st.get("pets") or {}).items() if p.get("here")]}
                        | {"person": bool(st.get("person")), "since": st.get("since"), "score": (st.get("recent") or [None])[-1],
                           "ok": st.get("ok"), "error": st.get("error"), "at": st.get("at")})
         return out
@@ -223,6 +258,14 @@ class Cameras:
             if c.get("enabled") and c.get("room"):
                 out.setdefault(c["room"], []).append(c.get("name") or c["host"])
         return out
+
+    def pets_in(self, room: str) -> list[str]:
+        """這間現在看到的寵物（cat、dog）。"""
+        out: set[str] = set()
+        for c in self.list:
+            if c.get("enabled") and c.get("room") == room:
+                out |= {n for n, p in (self.state.get(c["id"], {}).get("pets") or {}).items() if p.get("here")}
+        return sorted(out)
 
     def rooms_with_person(self) -> dict[str, list[str]]:
         """房間 ID → 現在在那間看到人的攝影機名稱。"""
@@ -240,7 +283,10 @@ class Cameras:
         try:
             jpeg = snapshot(cam)
             self.frames[cam["id"]] = jpeg
-            score = self.detector.person_score(jpeg)
+            sc = self.detector.scores(jpeg)
+            score = sc["person"]
+            if cam.get("pets", True):
+                pet_track(st, sc, now)
         except Exception as err:  # noqa: BLE001
             msg = str(err) or type(err).__name__
             if st.get("error") != msg:

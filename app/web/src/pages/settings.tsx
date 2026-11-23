@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { AlertCircle, Archive, Bell, Cctv, Eye, EyeOff, Lock, ScanFace, Plus, ShieldCheck, Trash2, CheckCircle2, CloudSun, KeyRound, MessageCircle, ChevronRight, ExternalLink, Loader2, MessageSquareText, Mic, Moon, Palette, Search, Wifi, WifiOff } from "lucide-react";
+import { AlertCircle, Archive, Bell, Cctv, DoorOpen, Eye, EyeOff, Lock, ScanFace, Plus, ShieldCheck, Trash2, CheckCircle2, CloudSun, KeyRound, MessageCircle, ChevronRight, ExternalLink, Loader2, MessageSquareText, Mic, Moon, Palette, Search, Wifi, WifiOff } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -603,7 +603,8 @@ function JumpChips() {
 
 // 網路攝影機：樹莓派每秒看一張快照認人；看到人 → 那間算有動靜（動靜自動開關、地圖），沒人在家時看到人就通知
 interface CamAccess { can_view: boolean; me: string | null; count: number; viewers?: { id: string; name: string }[]; candidates?: { id: string; name: string; kind: string }[] }
-interface Cam { id: string; name: string; host: string; port: number; room: string | null; enabled: boolean; alert: boolean; model?: string; faces?: boolean; role?: "entry" | "room"; light?: string | null; person: boolean; score: number | null; ok: boolean | null; error: string | null }
+interface Cam { id: string; name: string; host: string; port: number; room: string | null; enabled: boolean; alert: boolean; model?: string; faces?: boolean; role?: "entry" | "room"; light?: string | null; pets?: boolean; fall?: boolean; pet_notify?: boolean; pets_here?: string[];
+  door?: { rect: number[]; refs: number; notify: "away" | "always" | "off"; scene: string | null; open: boolean; score: number | null } | null; person: boolean; score: number | null; ok: boolean | null; error: string | null }
 
 // 誰可以看攝影機畫面：沒權限的裝置用手機通知的驗證碼開通；有權限的人勾選其他裝置
 function CamAccessBox({ acc, onChange }: { acc: CamAccess; onChange: (a: CamAccess) => void }) {
@@ -702,6 +703,93 @@ function CamAccessBox({ acc, onChange }: { acc: CamAccess; onChange: (a: CamAcce
   );
 }
 
+// 開門偵測：在畫面上拖出門的位置 → 門關著時按「記住」（白天、晚上各一次）→ 之後跟這個樣子差很多就算門開了
+function DoorSetup({ cam, onChange }: { cam: Cam; onChange: (c: Cam[]) => void }) {
+  const { state } = useHub();
+  const [t, setT] = useState(() => Date.now());
+  const [drag, setDrag] = useState<number[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  const door = cam.door;
+  const rect = drag || door?.rect || null;
+  const put = async (body: object, ok?: string) => {
+    try {
+      const r = await api<{ cameras: Cam[] }>("PUT", `/api/cameras/${cam.id}/door`, body);
+      onChange(r.cameras);
+      if (ok) toast.success(ok);
+    } catch (e) {
+      toast.error("沒有成功", { description: (e as Error).message });
+    }
+  };
+  const pos = (e: React.PointerEvent) => {
+    const r = box.current!.getBoundingClientRect();
+    return [Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), Math.min(1, Math.max(0, (e.clientY - r.top) / r.height))];
+  };
+  const start = useRef<number[] | null>(null);
+  const remember = async () => {
+    setBusy(true);
+    try {
+      const r = await api<{ cameras: Cam[]; refs: number }>("POST", `/api/cameras/${cam.id}/door/ref`);
+      onChange(r.cameras);
+      toast.success(`記住了（第 ${r.refs} 張）`, { description: r.refs < 2 ? "天黑後（攝影機切成黑白）門關著時再記一次，晚上比較準" : undefined });
+    } catch (e) {
+      toast.error("沒有記住", { description: (e as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="space-y-3 rounded-lg border p-3">
+      <p className="text-sm text-muted-foreground">① 在畫面上拖一個框，框住門（門板和門縫）。② 門關著時按「現在門是關的」記住樣子；天黑後再記一次。③ 之後門那一塊跟記住的樣子差很多，就算門開了。</p>
+      <div ref={box} className="relative aspect-video w-full max-w-xl touch-none select-none overflow-hidden rounded-md border bg-muted"
+        onPointerDown={(e) => { (e.target as HTMLElement).setPointerCapture(e.pointerId); start.current = pos(e); setDrag([...start.current, 0, 0]); }}
+        onPointerMove={(e) => { if (!start.current) return; const [x, y] = pos(e); const [sx, sy] = start.current; setDrag([Math.min(sx, x), Math.min(sy, y), Math.abs(x - sx), Math.abs(y - sy)]); }}
+        onPointerUp={() => { const d = drag; start.current = null; setDrag(null); if (d && d[2] > 0.03 && d[3] > 0.03) put({ rect: d.map((v) => Math.round(v * 1e4) / 1e4) }, "框好了，門關著時按「現在門是關的」"); }}>
+        <img src={`/api/cameras/${cam.id}/snapshot.jpg?t=${t}`} alt={`${cam.name} 的畫面`} className="pointer-events-none size-full object-contain" draggable={false} />
+        {rect && (
+          <div className={cn("pointer-events-none absolute border-2", door?.open ? "border-orange-500 bg-orange-500/15" : "border-primary bg-primary/10")}
+            style={{ left: `${rect[0] * 100}%`, top: `${rect[1] * 100}%`, width: `${rect[2] * 100}%`, height: `${rect[3] * 100}%` }} />
+        )}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button variant="ghost" size="sm" onClick={() => setT(Date.now())}>重新拍一張</Button>
+        <Button size="sm" disabled={!door?.rect || busy} onClick={remember}>{busy && <Loader2 className="animate-spin" />}現在門是關的（記住）</Button>
+        {door && <span className="text-sm text-muted-foreground">已記住 {door.refs} 張{door.score != null ? `・現在相似度 ${door.score}（低於 0.45 算開）` : ""}</span>}
+      </div>
+      {door?.rect && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+          <label className="flex items-center gap-2">
+            開門時通知
+            <Select value={door.notify} onValueChange={(v) => put({ notify: v }, "已更新")}>
+              <SelectTrigger className="h-8 w-36 bg-background" aria-label="開門時通知"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="away">沒人在家時</SelectItem>
+                <SelectItem value="always">每次都通知</SelectItem>
+                <SelectItem value="off">不通知</SelectItem>
+              </SelectContent>
+            </Select>
+          </label>
+          <label className="flex items-center gap-2">
+            天黑後開門執行
+            <Select value={door.scene || "_none"} onValueChange={(v) => put({ scene: v === "_none" ? null : v }, "已更新")}>
+              <SelectTrigger className="h-8 w-36 bg-background" aria-label="天黑後開門執行的情境"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="_none">不做事</SelectItem>
+                {(state?.scenes || []).map((sc) => <SelectItem key={sc.id} value={sc.id}>{sc.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </label>
+          <Button variant="ghost" size="sm" className="ml-auto text-muted-foreground hover:text-destructive"
+            onClick={async () => { try { onChange((await api<{ cameras: Cam[] }>("DELETE", `/api/cameras/${cam.id}/door`)).cameras); toast.success("已移除開門偵測"); } catch (e) { toast.error("沒有成功", { description: (e as Error).message }); } }}>
+            <Trash2 />移除
+          </Button>
+        </div>
+      )}
+      {door?.notify === "away" && <p className="text-xs text-muted-foreground">沒人在家時門開了，會先等 3 分鐘：有家人的手機連上 Wi-Fi、或門口認出家人，就不通知。</p>}
+    </div>
+  );
+}
+
 // 攝影機現在的畫面：上一張載完再過 1 秒拿下一張（不會越積越多）；看不到就顯示原因
 function CamLive({ id, name }: { id: string; name: string }) {
   const [t, setT] = useState(() => Date.now());
@@ -729,6 +817,7 @@ function CamerasCard() {
   const [form, setForm] = useState({ host: "", user: "", pwd: "" });
   const [busy, setBusy] = useState(false);
   const [view, setView] = useState<string | null>(null);
+  const [doorCam, setDoorCam] = useState<string | null>(null);
   const plugs = useHub().state?.plugs || [];
   useEffect(() => {
     let alive = true;
@@ -796,6 +885,8 @@ function CamerasCard() {
               <Switch disabled={!can} checked={c.enabled} onCheckedChange={(v) => upd(c.id, { enabled: v }, v ? `${c.name} 開始認人` : `${c.name} 已停用`)} aria-label={`啟用 ${c.name}`} />
             </div>
             {can && view === c.id && <CamLive id={c.id} name={c.name} />}
+            {can && doorCam === c.id && <DoorSetup cam={c} onChange={setCams} />}
+            {c.enabled && !!c.pets_here?.length && <p className="pl-5.5 text-sm text-orange-600 dark:text-orange-400">現在看到{c.pets_here.map((x) => (x === "cat" ? "貓" : "狗")).join("、")}</p>}
             {can && c.enabled && (
               <div className="flex flex-wrap items-center gap-x-4 gap-y-2 pl-5.5">
                 <label className="flex items-center gap-2 text-sm">
@@ -826,6 +917,23 @@ function CamerasCard() {
                   <Switch checked={c.faces !== false} onCheckedChange={(v) => upd(c.id, { faces: v }, v ? "會認臉" : "不認臉，只認有沒有人")} aria-label={`${c.name} 認臉`} />
                   認臉
                 </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <Switch checked={c.pets !== false} onCheckedChange={(v) => upd(c.id, { pets: v }, v ? "會認貓、狗" : "不認貓、狗")} aria-label={`${c.name} 認貓狗`} />
+                  貓狗
+                </label>
+                {c.pets !== false && (
+                  <label className="flex items-center gap-2 text-sm">
+                    <Switch checked={!!c.pet_notify} onCheckedChange={(v) => upd(c.id, { pet_notify: v }, v ? "看到貓狗會通知" : "看到貓狗只記紀錄")} aria-label={`${c.name} 看到貓狗通知`} />
+                    看到貓狗通知
+                  </label>
+                )}
+                <label className="flex items-center gap-2 text-sm">
+                  <Switch checked={!!c.fall} onCheckedChange={(v) => upd(c.id, { fall: v }, v ? "會偵測跌倒" : "不偵測跌倒")} aria-label={`${c.name} 跌倒偵測`} />
+                  跌倒偵測<Badge variant="secondary">實驗</Badge>
+                </label>
+                <Button variant="outline" size="sm" className="bg-background" onClick={() => setDoorCam(doorCam === c.id ? null : c.id)} aria-expanded={doorCam === c.id}>
+                  <DoorOpen />{c.door ? `門：${c.door.refs ? (c.door.open ? "開著" : "關著") : "還沒記住關著的樣子"}` : "設定開門偵測"}
+                </Button>
                 {c.role === "entry" && (
                   <label className="flex items-center gap-2 text-sm">
                     半夜有陌生人開
@@ -882,7 +990,7 @@ function CamerasCard() {
 
 // 認臉：登記家人和訪客、認出家人時做什麼、最近的紀錄（只有「可以看攝影機」的裝置看得到）
 interface FacePerson { id: string; name: string; kind: "family" | "guest"; samples: number; at: number | null; notify?: boolean }
-interface FaceLogItem { id: string; t: number; camera: string; kind: "family" | "guest" | "stranger"; name?: string; sim: number | null; thumb: boolean }
+interface FaceLogItem { id: string; t: number; camera: string; kind: "family" | "guest" | "stranger" | "pet" | "fall" | "door"; name?: string; sim: number | null; thumb: boolean }
 interface FaceAct { day?: string | null; night?: string | null; late?: string | null; notify?: boolean }
 interface FaceRep {
   family: FacePerson[]; guests: FacePerson[]; actions: Record<string, FaceAct>; slot: "day" | "night" | "late";
@@ -1037,16 +1145,16 @@ function FaceCard() {
       )}
 
       <div className="px-4 py-3.5 sm:px-5">
-        <div className="mb-2 font-medium">認臉紀錄（最近 7 天）</div>
+        <div className="mb-2 font-medium">攝影機紀錄（最近 7 天）</div>
         {rep.log.length === 0 ? <p className="text-sm text-muted-foreground">還沒有紀錄。</p> : (
           <ul className="max-h-96 divide-y overflow-y-auto rounded-lg border">
             {rep.log.map((x) => (
               <li key={x.id} className="flex items-center gap-3 px-3 py-2">
-                {x.thumb ? <img src={`/api/faces/log/${x.id}.jpg`} alt="不認得的人" className="size-12 shrink-0 rounded-md object-cover" loading="lazy" />
+                {x.thumb ? <img src={`/api/faces/log/${x.id}.jpg`} alt={x.kind === "fall" ? "可能跌倒" : "不認得的人"} className="size-12 shrink-0 rounded-md object-cover" loading="lazy" />
                   : <span className="flex size-12 shrink-0 items-center justify-center rounded-md bg-muted"><ScanFace className="size-5 text-muted-foreground" /></span>}
                 <div className="min-w-0 flex-1">
-                  <div className={cn("text-sm font-medium", x.kind === "stranger" && "text-orange-600 dark:text-orange-400")}>
-                    {x.kind === "stranger" ? "不認得的人" : x.kind === "guest" ? `${x.name}（訪客）` : x.name}
+                  <div className={cn("text-sm font-medium", (x.kind === "stranger" || x.kind === "fall") && "text-orange-600 dark:text-orange-400")}>
+                    {x.kind === "stranger" ? "不認得的人" : x.kind === "guest" ? `${x.name}（訪客）` : x.kind === "pet" ? `看到${x.name}` : x.kind === "fall" ? "可能有人跌倒" : x.kind === "door" ? "門打開了" : x.name}
                   </div>
                   <div className="text-xs text-muted-foreground tabular-nums">{hhmm(x.t)}・{x.camera}{x.sim != null ? `・相似度 ${x.sim}` : ""}</div>
                 </div>
