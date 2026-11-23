@@ -20,6 +20,9 @@ const WARN = "var(--color-orange-500, #f97316)";
 export const ROOM_ACTIVE = 0.4; // 跟伺服器 roommotion.ACTIVE 一樣
 export const ROOM_STRONG = 1.0;
 
+// 裝置名稱：太長就截短；多孔插座一定留著「+幾孔」（不然看不出是多孔）
+const devName = (d: MapDev) => (d.plugs.length > 1 ? `${shortName(d.plugs[0].name, 4.5)} +${d.plugs.length - 1}` : shortName(d.name, 6));
+
 // 地圖本體：區域、訊號光暈、連線、基地台、裝置；編輯時可以拖曳
 export function MapCanvas({
   fp, devs, links, layer, edit, sel, motion, roomHeat = {}, cover, ghosts = [], people = [], tool = "select", onChange, onDragEnd, onPick, onTip, powerOf, onPower,
@@ -184,7 +187,7 @@ export function MapCanvas({
   const devLabel: Record<string, DevLabel> = {};
   for (const d of placed) {
     const c = pos[d.key];
-    const w = textW(shortName(d.name, 6), 11.5 * k), h = 15 * k;
+    const w = textW(devName(d), 11.5 * k), h = 15 * k;
     const opts: (DevLabel & { b: Box })[] = [
       { dx: 0, dy: 31, anchor: "middle", b: { x0: c.x - w / 2, y0: c.y + 20 * k, x1: c.x + w / 2, y1: c.y + 20 * k + h } },
       { dx: 0, dy: -23, anchor: "middle", b: { x0: c.x - w / 2, y0: c.y - 35 * k, x1: c.x + w / 2, y1: c.y - 35 * k + h } },
@@ -683,7 +686,7 @@ export function MapCanvas({
               );
             })()}
             {(showNames || isSel) && (
-              <text x={devLabel[d.key].dx} y={devLabel[d.key].dy} textAnchor={devLabel[d.key].anchor} className="fill-muted-foreground font-medium" style={{ fontSize: 11.5, paintOrder: "stroke", stroke: "var(--card)", strokeWidth: 3, strokeLinejoin: "round" }}>{shortName(d.name, 6)}</text>
+              <text x={devLabel[d.key].dx} y={devLabel[d.key].dy} textAnchor={devLabel[d.key].anchor} className="fill-muted-foreground font-medium" style={{ fontSize: 11.5, paintOrder: "stroke", stroke: "var(--card)", strokeWidth: 3, strokeLinejoin: "round" }}>{devName(d)}</text>
             )}
           </g>
         );
