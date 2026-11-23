@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlertCircle, AppWindow, List, Check, Pause, Play, Radio, CheckCircle2, DoorOpen, FlipHorizontal2, ImagePlus, LayoutGrid, Minus, MousePointer2, Pencil, Plus, Square, Trash2, Wifi, WifiOff, X } from "lucide-react";
+import { AlertCircle, AppWindow, Cctv, List, Check, Pause, Play, Radio, CheckCircle2, DoorOpen, FlipHorizontal2, ImagePlus, LayoutGrid, Minus, MousePointer2, Pencil, Plus, Square, Trash2, Wifi, WifiOff, X } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -698,7 +698,7 @@ export function MapPage() {
                   </div>
                 )}
                 {layer === "motion" && (
-                  <RoomMotionList rooms={fp.rooms} heat={roomHeat} covered={past != null ? replay!.rooms : roomCover} past={past != null} />
+                  <RoomMotionList rooms={fp.rooms} heat={roomHeat} covered={past != null ? replay!.rooms : roomCover} past={past != null} cams={past != null ? {} : roomCover} />
                 )}
                 {layer === "motion" && past == null && <WeekHeat rooms={fp.rooms} />}
                 {layer === "motion" && past == null && (
@@ -741,7 +741,7 @@ export function MapPage() {
 }
 
 // 各房間的動靜：有人走動／有動靜／安靜／沒有線經過
-function RoomMotionList({ rooms, heat, covered, past }: { rooms: FpRoom[]; heat: Record<string, number | null>; covered: Record<string, unknown>; past: boolean }) {
+function RoomMotionList({ rooms, heat, covered, past, cams }: { rooms: FpRoom[]; heat: Record<string, number | null>; covered: Record<string, unknown>; past: boolean; cams: NonNullable<MapSense["rooms"]> }) {
   const rows = rooms.map((r) => ({ r, h: heat[r.id], has: r.id in covered })).sort((a, b) => (b.h ?? -1) - (a.h ?? -1));
   const none = rows.filter((x) => !x.has);
   return (
@@ -750,8 +750,9 @@ function RoomMotionList({ rooms, heat, covered, past }: { rooms: FpRoom[]; heat:
       <ul className="divide-y rounded-lg border text-sm">
         {rows.filter((x) => x.has).map(({ r, h }) => (
           <li key={r.id} className="flex items-center gap-2 px-3 py-1.5">
-            <span className="flex-1">{r.name}</span>
-            {h == null ? <span className="text-xs text-muted-foreground">沒有讀數</span>
+            <span className="flex flex-1 items-center gap-1.5">{r.name}{cams[r.id]?.camera && <Cctv className="size-3.5 text-muted-foreground" aria-label={`攝影機：${cams[r.id].camera!.join("、")}`} />}</span>
+            {cams[r.id]?.person ? <b className="text-orange-600 dark:text-orange-400">攝影機看到人</b>
+              : h == null ? <span className="text-xs text-muted-foreground">沒有讀數</span>
               : h >= ROOM_STRONG ? <b className="text-orange-600 dark:text-orange-400">有人走動</b>
               : h >= ROOM_ACTIVE ? <span className="text-orange-600 dark:text-orange-400">有動靜</span>
               : <span className="text-muted-foreground">安靜</span>}

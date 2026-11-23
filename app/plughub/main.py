@@ -21,6 +21,7 @@ GET /api/sensing/replay     動靜回放：最近 24 小時每 5 分鐘一格
 GET /api/sensing/week       一週動靜：每間房「星期幾 × 幾點」有動靜的比例
 GET /api/net/events         斷線紀錄：外網、基地台卡住、Wi-Fi、插座、停電恢復
 GET /api/net/plug-health    插座連線健檢：斷幾次、訊號、建議
+GET/POST /api/cameras       網路攝影機（認人）；PUT/DELETE /api/cameras/{id}（room、enabled、alert、帳密）
 GET /api/report/monthly     每月報告預覽（上個月）
 GET/PUT /api/motion-rules   動靜自動化：{"rules": [{"room","plug","start","end","off_min","need_home","enabled"}]}
 GET /api/locate/{id}         人在哪個房間（實驗）：每個房間教了幾筆、現在的判斷；POST …/train {"room"} 教 2 分鐘、DELETE …/train 停止、DELETE /api/locate/{id}?room= 清掉
@@ -66,6 +67,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
 
 from . import auth as authmod
+from . import camera as camera_mod
 from .locate import MIN_SAMPLES as LOCATE_MIN, TRAIN_S as LOCATE_TRAIN_S
 from .assistant import MODELS as ASSISTANT_MODELS, Assistant
 from .hub import APP_VERSION, SOURCE, Hub, Locked
@@ -788,6 +790,75 @@ async def sensing_replay(hours: int = 24) -> dict[str, Any]:
 async def sensing_week(days: int = 28) -> dict[str, Any]:
     """一週動靜：最近 days 天（7～30），每間房每個「星期幾 × 幾點」有動靜的比例。"""
     return await hub.sensing_week(max(7, min(30, days)))
+
+
+# ---- 網路攝影機（認人）----
+
+
+@app.get("/api/cameras")
+def cameras_list() -> dict[str, Any]:
+    """攝影機清單和現在有沒有看到人（不含帳密）。"""
+    return {"cameras": hub.cameras.public()}
+
+
+@app.post("/api/cameras")
+async def cameras_add(body: dict = Body(...)) -> dict[str, Any]:
+    """新增攝影機：{"host", "port", "user", "pwd", "name"}；先登入看看，帳密錯就不加。"""
+    host = str(body.get("host") or "").strip()
+    if not host:
+        raise HTTPException(400, "請填攝影機的 IP")
+    cam = {"host": host, "port": int(body.get("port") or 88), "user": str(body.get("user") or ""), "pwd": str(body.get("pwd") or "")}
+    try:
+        info = await asyncio.to_thread(camera_mod.dev_info, cam)
+    except Exception as err:  # noqa: BLE001
+        raise HTTPException(400, f"連不上攝影機：{err}") from None
+    cam.update(id=uuid.uuid4().hex[:8], name=str(body.get("name") or info["name"] or host), model=info["model"],
+               room=None, enabled=True, alert=True)
+    hub.cameras.list.append(cam)
+    hub.cameras.save()
+    await hub.changed()
+    return {"camera": next(c for c in hub.cameras.public() if c["id"] == cam["id"])}
+
+
+@app.put("/api/cameras/{cam_id}")
+async def cameras_update(cam_id: str, body: dict = Body(...)) -> dict[str, Any]:
+    """改攝影機：{"name", "room"（地圖的區域 ID，null = 不指定）, "enabled", "alert", "user", "pwd"}"""
+    cam = hub.cameras.get(cam_id)
+    if not cam:
+        raise HTTPException(404, "找不到這台攝影機")
+    if "name" in body:
+        cam["name"] = str(body["name"]).strip() or cam["host"]
+    if "room" in body:
+        rooms = {r.get("id") for r in (store.data.get("floorplan") or {}).get("rooms") or []}
+        cam["room"] = body["room"] if body["room"] in rooms else None
+    for key in ("enabled", "alert"):
+        if key in body:
+            cam[key] = bool(body[key])
+    if "user" in body or "pwd" in body:
+        test = {**cam, "user": str(body.get("user", cam.get("user", ""))), "pwd": str(body.get("pwd", cam.get("pwd", "")))}
+        try:
+            await asyncio.to_thread(camera_mod.dev_info, test)
+        except Exception as err:  # noqa: BLE001
+            raise HTTPException(400, f"登入失敗：{err}") from None
+        cam.update(user=test["user"], pwd=test["pwd"])
+        hub.cameras.state.pop(cam_id, None)
+    if not cam.get("enabled"):
+        hub.cameras.state.pop(cam_id, None)
+    hub.cameras.save()
+    await hub.changed()
+    return {"cameras": hub.cameras.public()}
+
+
+@app.delete("/api/cameras/{cam_id}")
+async def cameras_delete(cam_id: str) -> dict[str, Any]:
+    cam = hub.cameras.get(cam_id)
+    if not cam:
+        raise HTTPException(404, "找不到這台攝影機")
+    hub.cameras.list.remove(cam)
+    hub.cameras.state.pop(cam_id, None)
+    hub.cameras.save()
+    await hub.changed()
+    return {"cameras": hub.cameras.public()}
 
 
 @app.get("/api/net/plug-health")

@@ -3,3 +3,7 @@ fastapi==0.115.6
 uvicorn==0.34.0
 segno==1.6.6
 anthropic==2.10.0
+# 攝影機認人（樹莓派上跑 EfficientDet-Lite0）
+ai-edge-litert==2.4.0
+numpy==2.5.5
+pillow==13.0.0
