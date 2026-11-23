@@ -14,7 +14,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 _LOGGER = logging.getLogger(__name__)
 LINE_API = "https://api.line.me/v2/bot"
@@ -54,6 +54,7 @@ class Notifier:
         self._path = secrets_path
         self.error: str | None = None  # 最近一次 LINE 推播失敗的原因
         self._info: tuple[float, dict] | None = None
+        self.on_send: Callable[[str], None] | None = None  # 使用統計：送了哪一種通知
 
     # ---- 權杖 ----
     def _secrets(self) -> dict:
@@ -105,15 +106,24 @@ class Notifier:
         return out
 
     # ---- 送出 ----
+    def _count(self, title: str) -> None:
+        if self.on_send:
+            try:
+                self.on_send(title)
+            except Exception:  # noqa: BLE001
+                pass
+
     def send(self, title: str, message: str, priority: str = "default") -> None:
         """可以從任何執行緒呼叫（垃圾車、停水停電是在背景執行緒裡查的）。"""
         _LOGGER.info("通知：%s｜%s", title, message)
+        self._count(title)
         if self._token():
             threading.Thread(target=self._push, args=(title, message, priority), daemon=True).start()
 
     def send_sync(self, title: str, message: str, priority: str = "high") -> None:
         """在這個執行緒裡送完才回來（程式馬上要結束時用）。"""
         _LOGGER.info("通知：%s｜%s", title, message)
+        self._count(title)
         if self._token():
             self._push(title, message, priority)
 

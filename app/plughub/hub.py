@@ -14,6 +14,7 @@ import contextvars
 import json
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -24,6 +25,7 @@ from kasa import Device, Discover, Module
 from . import anomaly, arpprobe, camera, faces, habits, vision, zones as zonelib, locate, native, netlog, netprobe, roommotion, routine, sun, tariff
 from .sensing import INTERVAL as SENSE_INTERVAL, SAVE_EVERY as SENSE_SAVE_EVERY, Sensing
 from .notify import Notifier
+from .usage import Usage
 from .daysoff import DaysOff
 from .alerts import Alerts, quake_age_h
 from .backup import Backup
@@ -109,10 +111,20 @@ class Locked(Exception):
     """插座鎖定了，不能開關。"""
 
 
+
+def _notify_key(title: str) -> str:
+    """通知標題 → 統計用的分類：「大門口：有人」→「有人」（攝影機名稱、插座名稱不算進去）。"""
+    t = re.sub(r"^[❗🚨\s]+", "", title or "")
+    t = t.split("：")[-1] if "：" in t else t
+    t = re.sub(r"[\s\d]+", "", t)
+    return re.sub(r"[^\w\-]", "", t)[:30] or "其他"
+
 class Hub:
     def __init__(self, store: Store, notifier: Notifier) -> None:
         self.store = store
         self.notifier = notifier
+        self.usage = Usage(store.dir)
+        notifier.on_send = lambda title: self.usage.hit("notify:" + _notify_key(title))
         self.backup = Backup(store.dir, lambda title, msg: notifier.send(title, msg, "high"))
         self.watchdog = Watchdog(store.dir, notifier.send_sync)
         self._home_loc: tuple[float, float] | None = None  # 選定的家裡位置（見 location()）
@@ -2676,6 +2688,7 @@ class Hub:
                     self.sched_skipped[key] = why
                     _LOGGER.info("排程 %s 今天不執行：%s", key, why)
                 else:
+                    self.usage.hit(f"auto:schedule-{sched.get('action') or 'run'}")
                     self._spawn(self._run_one(sched))
             # 關閉之後指定時間再打開：只開被這個排程關掉、現在還關著的
             if sched.get("restore_at") and self._due(f"{key}:restore", sched["restore_at"], now):

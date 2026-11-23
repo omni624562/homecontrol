@@ -1,4 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { track } from "@/lib/usage";
+import { SetupNudge } from "@/components/setup-bits";
 import { DndContext, KeyboardSensor, PointerSensor, closestCorners, useDroppable, useSensor, useSensors, type DragEndEvent, type DragOverEvent } from "@dnd-kit/core";
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -135,6 +137,10 @@ export function HomePage() {
   const [leave, setLeave] = useState(false);
   const [night, setNight] = useState(false);
   const [running, setRunning] = useState<string | null>(null);
+  // 使用統計：出門前檢查、晚安、天氣生活小卡有沒有人在用
+  useEffect(() => { if (leave) track("leave"); }, [leave]);
+  useEffect(() => { if (night) track("night"); }, [night]);
+  useEffect(() => { if (sheet) track(`sheet-${sheet}`); }, [sheet]);
   // 有人回家：在家人數變多的時候，小人走進門幾秒
   const fun = useFun();
   const look = useLook();
@@ -501,6 +507,7 @@ export function HomePage() {
       />
       <div className="mx-auto max-w-[112rem] px-4 pt-2 sm:px-6 lg:px-8">
         <MorningCard onLeave={() => setLeave(true)} onSheet={setSheet} />
+        <SetupNudge />
         {/* 不放進標題列時：在畫面外量情境按鈕要多寬，用來判斷放不放得下 */}
         {!compact && <div aria-hidden className="pointer-events-none invisible fixed top-0 -left-[9999px]">{sceneBar}</div>}
         {!compact && <div className="mb-5 grid grid-cols-4 gap-2 sm:grid-cols-[repeat(auto-fit,minmax(10rem,1fr))] sm:gap-3">

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { AlertCircle, Archive, Bell, Cctv, Download, Lock, Plus, ShieldCheck, Trash2, CheckCircle2, CloudSun, KeyRound, MessageCircle, ChevronRight, ExternalLink, Loader2, MessageSquareText, Mic, Moon, Palette, Search, Wifi, WifiOff } from "lucide-react";
+import { AlertCircle, Archive, BarChart3, ListChecks, Bell, Cctv, Download, Lock, Plus, ShieldCheck, Trash2, CheckCircle2, CloudSun, KeyRound, MessageCircle, ChevronRight, ExternalLink, Loader2, MessageSquareText, Mic, Moon, Palette, Search, Wifi, WifiOff } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -21,6 +21,7 @@ import { LifeSheet } from "@/components/life-sheet";
 import { SettingNumber } from "@/components/settings-bits";
 import { RUSH_STYLES, previewTruckRush } from "@/components/truck-rush";
 import { api } from "@/lib/api";
+import { SetupList, UsageList, useSetup } from "@/components/setup-bits";
 import { pad2 } from "@/lib/format";
 import { useHub } from "@/lib/hub";
 import { setLook, useLook } from "@/lib/look";
@@ -390,7 +391,7 @@ function NetCheck({ s }: { s: HubState }) {
   );
 }
 
-const SECTIONS: [string, string][] = [["s-look", "外觀"], ["s-notify", "通知"], ["s-night", "晚安"], ["s-life", "天氣生活"], ["s-ask", "問家裡"], ["s-google", "Google Home"], ["s-cam", "攝影機"], ["s-dev", "裝置"], ["s-sys", "安全與備份"], ["s-tls", "HTTPS"]];
+const SECTIONS: [string, string][] = [["s-setup", "設定進度"], ["s-look", "外觀"], ["s-notify", "通知"], ["s-night", "晚安"], ["s-life", "天氣生活"], ["s-ask", "問家裡"], ["s-google", "Google Home"], ["s-cam", "攝影機"], ["s-dev", "裝置"], ["s-sys", "安全與備份"], ["s-tls", "HTTPS"], ["s-usage", "使用統計"]];
 
 const ago = (t: number) => {
   const s = Date.now() / 1000 - t;
@@ -652,6 +653,17 @@ function JumpChips() {
   );
 }
 
+// 設定進度：還沒設定完的功能
+function SetupCard() {
+  const s = useSetup();
+  if (!s.items) return null;
+  return (
+    <SCard id="s-setup" icon={ListChecks} title="設定進度" badge={<Badge variant="secondary" className="tabular-nums">{s.done}/{s.total}</Badge>}>
+      <SetupList s={s} />
+    </SCard>
+  );
+}
+
 // 攝影機：搬到主選單的「攝影機」頁
 function CameraLinkCard() {
   return (
@@ -746,6 +758,13 @@ function GoodnightCard({ s }: { s: HubState }) {
 
 export function SettingsPage() {
   const look = useLook();
+  const { state: hubState } = useHub();
+  useEffect(() => {
+    const part = location.hash.split("/")[1];
+    if (!part || !hubState) return;
+    const t = setTimeout(() => document.getElementById(part)?.scrollIntoView({ behavior: "smooth", block: "start" }), 300);
+    return () => clearTimeout(t);
+  }, [!!hubState]); // eslint-disable-line react-hooks/exhaustive-deps
   const navStyle = useNavStyle();
   const standby = useStandbyMin();
   const { state, connected } = useHub();
@@ -772,6 +791,7 @@ export function SettingsPage() {
       <PageHeader title="設定" chips={<JumpChips />} chipsClassName="lg:hidden" />
       <div className="mx-auto grid max-w-[112rem] items-start gap-4 px-4 py-4 sm:px-6 lg:grid-cols-2 lg:px-8">
         <div className="min-w-0 space-y-4">
+          <SetupCard />
           <SCard id="s-notify" icon={Bell} title="提醒與通知">
             <SRow wrap label="開太久提醒" hint="插座開超過這麼久，名稱下方會變橘色（常開的不算）">
               <SettingNumber k="long_on_hours" step={1} unit="小時" label="開太久提醒" />
@@ -949,6 +969,7 @@ export function SettingsPage() {
           </SCard>
           <SystemCard s={state} />
           <TlsCard />
+          <SCard id="s-usage" icon={BarChart3} title="功能使用統計"><UsageList /></SCard>
         </div>
       </div>
       <SenseSheet open={sheet === "sense"} onClose={() => setSheet(null)} />
