@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { fmt } from "@/lib/format";
 import { doorGeom, inRoom, nearSeg, roomPath, roomPts, sigQ, shortName, tidyPts, topEdge, withPts, type Floorplan, type FpRoom, type FpWall, type MapDev, type MapLink, type Pt } from "@/lib/map-model";
+import type { Plug } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { covColor, type CoverCell } from "@/lib/coverage";
 
@@ -20,8 +21,15 @@ const WARN = "var(--color-orange-500, #f97316)";
 export const ROOM_ACTIVE = 0.4; // 跟伺服器 roommotion.ACTIVE 一樣
 export const ROOM_STRONG = 1.0;
 
-// 裝置名稱：太長就截短；多孔插座一定留著「+幾孔」（不然看不出是多孔）
-const devName = (d: MapDev) => (d.plugs.length > 1 ? `${shortName(d.plugs[0].name, 4.5)} +${d.plugs.length - 1}` : shortName(d.name, 6));
+// 裝置名稱：太長就截短；多孔插座的本體寫「排插・幾孔」（每一孔另外有自己的點）
+const devName = (d: MapDev) => (d.plugs.length > 1 ? `排插・${d.plugs.length} 孔` : shortName(d.name, 6));
+
+// 多孔插座每一孔的點：地圖上的代碼「o:插座 ID」；還沒擺過的，先排在本體下方一圈
+const outletKey = (p: Plug) => `o:${p.id}`;
+function outletDefault(at: { x: number; y: number }, i: number, n: number) {
+  const a = Math.PI * (0.25 + (0.5 * (i + 0.5)) / n); // 本體下方 45°～135° 之間平均排開
+  return { x: at.x + Math.cos(a) * 70, y: at.y + Math.sin(a) * 70 };
+}
 
 // 地圖本體：區域、訊號光暈、連線、基地台、裝置；編輯時可以拖曳
 export function MapCanvas({
@@ -44,8 +52,8 @@ export function MapCanvas({
   onPick: (s: MapSel) => void;
   onTip: (t: string | null) => void;
   // 地圖上直接開關插座：裝置圓點右上角的小電源鈕（看的時候才有）
-  powerOf?: (d: MapDev) => number; // 開著幾孔
-  onPower?: (d: MapDev) => void;
+  powerOf?: (p: Plug) => boolean;
+  onPower?: (p: Plug) => void;
 }) {
   const svg = useRef<SVGSVGElement>(null);
   const [px, setPx] = useState(900);
@@ -84,6 +92,12 @@ export function MapCanvas({
   // 看的時候（不是編輯）：疊在一起的裝置稍微推開，數字才看得清楚；Wi-Fi 基地台不動。實際位置不變
   const pos: Record<string, { x: number; y: number }> = {};
   for (const d of placed) pos[d.key] = { x: fp.items[d.key].x, y: fp.items[d.key].y };
+  // 多孔插座的每一孔（本體擺上去了才畫）
+  const outlets = placed.filter((d) => d.plugs.length > 1).flatMap((d) => d.plugs.map((p, i) => {
+    const key = outletKey(p);
+    const at = fp.items[key] || outletDefault(fp.items[d.key], i, d.plugs.length);
+    return { key, p, d, x: at.x, y: at.y };
+  }));
   if (!edit) {
     // 每個裝置連同下面的名字當成一個方框（中心在圓圈下方一點），重疊就往重疊比較少的方向推開
     const bw = (showNames ? 66 : 34) * k, bh = (showNames ? 48 : 34) * k, cy = (showNames ? 9 : 0) * k;
@@ -227,11 +241,12 @@ export function MapCanvas({
     const f0 = fpRef.current;
     const start = point(e);
     if (d.kind === "wall" || d.kind === "wallEnd" || d.kind === "door") return dragWall(d, f0, start);
-    const origItem = d.kind === "item" ? { ...f0.items[d.id] } : null;
+    const origItem = d.kind === "item" ? { ...(f0.items[d.id] || outlets.find((o) => o.key === d.id) || { x: 0, y: 0 }) } : null;
     const origRoom = d.kind === "item" ? null : f0.rooms!.find((r) => r.id === d.id)!;
     const P = origRoom ? roomPts(origRoom) : [];
     const snap = snapper(f0, d.id);
-    onPick(d.kind === "item" ? (d.id.startsWith("ap:") ? { kind: "ap", id: d.id.slice(3) } : { kind: "dev", id: d.id }) : { kind: "room", id: d.id });
+    const parent = d.id.startsWith("o:") ? outlets.find((o) => o.key === d.id)?.d.key : null;
+    onPick(d.kind === "item" ? (d.id.startsWith("ap:") ? { kind: "ap", id: d.id.slice(3) } : { kind: "dev", id: parent || d.id }) : { kind: "room", id: d.id });
     const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
     const setRoom = (f: Floorplan, fn: (r: FpRoom) => FpRoom) => onChange({ ...f, rooms: f.rooms!.map((r) => (r.id === d.id ? fn(r) : r)) });
     const move = (ev: PointerEvent) => {
@@ -240,7 +255,7 @@ export function MapCanvas({
       const dy = pt.y - start.y;
       const f = fpRef.current;
       if (origItem) {
-        onChange({ ...f, items: { ...f.items, [d.id]: { ...f.items[d.id], x: clamp(origItem.x + dx, 0, f.w), y: clamp(origItem.y + dy, 0, f.h) } } });
+        onChange({ ...f, items: { ...f.items, [d.id]: { ...(f.items[d.id] || {}), x: clamp(origItem.x + dx, 0, f.w), y: clamp(origItem.y + dy, 0, f.h) } } });
         return;
       }
       const o = origRoom!;
@@ -624,6 +639,31 @@ export function MapCanvas({
           </g>
         );
       })}
+      {outlets.map((o) => {
+        const at = pos[o.d.key];
+        const on = !!powerOf?.(o.p);
+        const tip = `${o.p.name}（${devName(o.d)}的一孔）：${!o.p.online ? "連不上" : on ? "開著" : "關著"}`;
+        return (
+          <g key={o.key}>
+            <line x1={at.x} y1={at.y} x2={o.x} y2={o.y} stroke="var(--muted-foreground)" strokeOpacity={0.45} strokeWidth={1.2 * k} strokeDasharray={`${3 * k} ${3 * k}`} />
+            <g transform={`translate(${o.x} ${o.y}) scale(${k.toFixed(2)})`} className={edit ? "cursor-grab" : "cursor-pointer"}
+              role={edit ? undefined : "button"} aria-label={edit ? undefined : `${tip}，點一下${on ? "關閉" : "打開"}`}
+              onPointerDown={(e) => startDrag(e, { kind: "item", id: o.key })}
+              onClick={(e) => { if (edit || !onPower || !o.p.online) return; e.stopPropagation(); onPower(o.p); }}
+              onMouseEnter={() => onTip(tip)} onMouseLeave={() => onTip(null)}>
+              <title>{tip}</title>
+              <circle r={14} fill="transparent" />
+              <circle r={10} className={on ? "fill-primary" : "fill-card"} stroke={on ? "var(--card)" : "var(--muted-foreground)"} strokeWidth={on ? 2 : 1.5}
+                strokeDasharray={o.p.online ? undefined : "3 2"} style={{ filter: "drop-shadow(0 1px 1.5px rgb(15 23 42 / .2))" }} />
+              <path d="M0 -5 V-0.7 M-3.4 -3.1 A4.6 4.6 0 1 0 3.4 -3.1" fill="none" strokeWidth={1.7} strokeLinecap="round"
+                stroke={on ? "var(--primary-foreground)" : "var(--muted-foreground)"} />
+              {showNames && (
+                <text y={23} textAnchor="middle" className="fill-muted-foreground font-medium" style={{ fontSize: 10.5, paintOrder: "stroke", stroke: "var(--card)", strokeWidth: 3, strokeLinejoin: "round" }}>{shortName(o.p.name, 6)}</text>
+              )}
+            </g>
+          </g>
+        );
+      })}
       {placed.map((d) => {
         const it = pos[d.key];
         const m = motion[d.key];
@@ -654,34 +694,20 @@ export function MapCanvas({
             <text y={5} textAnchor="middle" className={cn("font-bold tabular-nums", q === "weak" ? "fill-orange-600" : "fill-foreground")} style={{ fontSize: 11 }}>
               {layer === "motion" ? (m == null ? "·" : fmt(m, 1)) : d.rssi ?? "—"}
             </text>
-            {!edit && onPower && d.online && d.plugs.length > 0 && (() => {
-              const n = d.plugs.length;
-              const on = powerOf?.(d) ?? 0;
-              const pw = on > 0;
-              const multi = n > 1;
-              const label = multi ? `${d.name}：${n} 孔開著 ${on} 孔，點一下分別開關` : `${d.name}：${pw ? "開著，點一下關閉" : "關著，點一下打開"}`;
-              const shadow = { filter: "drop-shadow(0 1px 1.5px rgb(15 23 42 / .25))" };
+            {!edit && onPower && d.online && d.plugs.length === 1 && (() => {
+              const pl = d.plugs[0];
+              const pw = !!powerOf?.(pl);
+              const label = `${d.name}：${pw ? "開著，點一下關閉" : "關著，點一下打開"}`;
               return (
-                <g transform={multi ? "translate(16 -13)" : "translate(13 -13)"} className="cursor-pointer" role="button" aria-label={label}
+                <g transform="translate(13 -13)" className="cursor-pointer" role="button" aria-label={label}
                   onPointerDown={(e) => e.stopPropagation()}
-                  onClick={(e) => { e.stopPropagation(); onPower(d); }}>
+                  onClick={(e) => { e.stopPropagation(); onPower(pl); }}>
                   <title>{label}</title>
-                  <circle r={14} fill="transparent" />
-                  {multi ? (
-                    // 多孔：小膠囊寫「開著幾孔／共幾孔」
-                    <>
-                      <rect x={-12} y={-8.5} width={24} height={17} rx={8.5} className={pw ? "fill-primary" : "fill-card"}
-                        stroke={pw ? "var(--card)" : "var(--muted-foreground)"} strokeWidth={pw ? 2 : 1.5} style={shadow} />
-                      <text y={3.6} textAnchor="middle" className="font-bold tabular-nums" style={{ fontSize: 10 }}
-                        fill={pw ? "var(--primary-foreground)" : "var(--muted-foreground)"}>{on}/{n}</text>
-                    </>
-                  ) : (
-                    <>
-                      <circle r={8.5} className={pw ? "fill-primary" : "fill-card"} stroke={pw ? "var(--card)" : "var(--muted-foreground)"} strokeWidth={pw ? 2 : 1.5} style={shadow} />
-                      <path d="M0 -4.2 V-0.6 M-2.9 -2.6 A3.9 3.9 0 1 0 2.9 -2.6" fill="none" strokeWidth={1.6} strokeLinecap="round"
-                        stroke={pw ? "var(--primary-foreground)" : "var(--muted-foreground)"} />
-                    </>
-                  )}
+                  <circle r={13} fill="transparent" />
+                  <circle r={8.5} className={pw ? "fill-primary" : "fill-card"} stroke={pw ? "var(--card)" : "var(--muted-foreground)"} strokeWidth={pw ? 2 : 1.5}
+                    style={{ filter: "drop-shadow(0 1px 1.5px rgb(15 23 42 / .25))" }} />
+                  <path d="M0 -4.2 V-0.6 M-2.9 -2.6 A3.9 3.9 0 1 0 2.9 -2.6" fill="none" strokeWidth={1.6} strokeLinecap="round"
+                    stroke={pw ? "var(--primary-foreground)" : "var(--muted-foreground)"} />
                 </g>
               );
             })()}

@@ -30,7 +30,7 @@ def links(fp: dict[str, Any], node_of: dict[str, str | None]) -> list[dict[str, 
     aps = [(a, items[f"ap:{a['id']}"]) for a in fp.get("aps") or [] if f"ap:{a['id']}" in items and a.get("node")]
     out = []
     for key, it in items.items():
-        if key.startswith("ap:"):
+        if key.startswith(("ap:", "o:")):  # 基地台、多孔插座的每一孔（訊號算在插座本體）
             continue
         node = node_of.get(key)
         ap = next(((a, at) for a, at in aps if a["node"] == node), None) if node else None

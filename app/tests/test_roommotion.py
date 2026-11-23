@@ -49,3 +49,13 @@ def test_in_window():
     assert _in_window(23 * 60 + 30, "23:00", "06:00") and _in_window(5 * 60, "23:00", "06:00")
     assert not _in_window(12 * 60, "23:00", "06:00")
     assert _in_window(12 * 60, "08:00", "18:00") and not _in_window(18 * 60, "08:00", "18:00")
+
+
+def test_links_skip_outlet_points():
+    """多孔插座每一孔的點（o:…）不是 Wi-Fi 裝置，不畫線。"""
+    from plughub import roommotion
+
+    fp = {"w": 1000, "meters": 10, "rooms": [{"id": "r", "name": "客廳", "x": 0, "y": 0, "w": 1000, "h": 700}],
+          "aps": [{"id": "a", "node": "N"}], "items": {"ap:a": {"x": 100, "y": 100}, "DEV": {"x": 500, "y": 300}, "o:DEV-01": {"x": 600, "y": 300}}}
+    keys = [lk["key"] for lk in roommotion.links(fp, {"DEV": "N", "o:DEV-01": "N"})]
+    assert keys == ["DEV"]
