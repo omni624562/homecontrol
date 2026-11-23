@@ -26,7 +26,6 @@ DEFAULTS: dict[str, Any] = {
         "household_monthly_kwh": 300.0,  # 電費單上的每月度數，用來決定電價級距
         "standby_watts": 5.0,  # 開著但低於這個瓦數 = 待機
         "overload_watts": 1500.0,  # 超過這個瓦數持續 1 分鐘就通知
-        "ntfy_topic": "",  # 有填就用 ntfy 推播通知
         "long_on_hours": 6.0,  # 開超過這麼久就在畫面上提醒（常開的不算）
         # 離家模式：這段時間裡，選的插座由插座自己隨機開關（假裝有人在家）
         # auto_on：大家出門超過 auto_h 小時自動打開；auto_off：有人回家就自動關閉
@@ -114,6 +113,7 @@ class Store:
                     self.data[key].update(value)
                 else:
                     self.data[key] = value
+        self.data["settings"].pop("ntfy_topic", None)  # ntfy 通知拿掉了（改用 LINE）
         self.plugs: dict[str, PlugMeta] = {
             pid: PlugMeta.from_dict(meta) for pid, meta in self.data["plugs"].items()
         }

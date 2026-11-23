@@ -3,13 +3,10 @@
 在 LINE Developers 建一個自己的機器人（Messaging API channel），把 Channel access token
 貼到儀表板的「設定 → 提醒與通知」，再用 LINE 加這個機器人好友。加了好友的人都會收到。
 權杖只存在樹莓派（data/secrets.json），不會回傳給瀏覽器。
-
-舊版畫面填的 ntfy 主題還是會送（有填才送）。
 """
 
 from __future__ import annotations
 
-import base64
 import json
 import logging
 import threading
@@ -17,10 +14,9 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 _LOGGER = logging.getLogger(__name__)
-NTFY_SERVER = "https://ntfy.sh"
 LINE_API = "https://api.line.me/v2/bot"
 _MARK = {"high": "❗ ", "urgent": "🚨 "}
 
@@ -54,8 +50,7 @@ def _line(token: str, path: str, body: dict | None = None) -> dict:
 
 
 class Notifier:
-    def __init__(self, topic: Callable[[], str], secrets_path: Path) -> None:
-        self._topic = topic
+    def __init__(self, secrets_path: Path) -> None:
         self._path = secrets_path
         self.error: str | None = None  # 最近一次 LINE 推播失敗的原因
         self._info: tuple[float, dict] | None = None
@@ -113,18 +108,12 @@ class Notifier:
     def send(self, title: str, message: str, priority: str = "default") -> None:
         """可以從任何執行緒呼叫（垃圾車、停水停電是在背景執行緒裡查的）。"""
         _LOGGER.info("通知：%s｜%s", title, message)
-        topic = (self._topic() or "").strip()
-        if topic:
-            threading.Thread(target=_ntfy, args=(topic, title, message, priority), daemon=True).start()
         if self._token():
             threading.Thread(target=self._push, args=(title, message, priority), daemon=True).start()
 
     def send_sync(self, title: str, message: str, priority: str = "high") -> None:
         """在這個執行緒裡送完才回來（程式馬上要結束時用）。"""
         _LOGGER.info("通知：%s｜%s", title, message)
-        topic = (self._topic() or "").strip()
-        if topic:
-            _ntfy(topic, title, message, priority)
         if self._token():
             self._push(title, message, priority)
 
@@ -144,20 +133,3 @@ class Notifier:
             self.error = str(err)
             _LOGGER.warning("LINE 通知失敗：%s", err)
 
-
-def _ntfy(topic: str, title: str, message: str, priority: str) -> None:
-    req = urllib.request.Request(
-        f"{NTFY_SERVER}/{topic}",
-        data=message.encode("utf-8"),
-        headers={
-            # HTTP 標頭只能放 ASCII，中文標題用 RFC 2047 編碼
-            "Title": "=?UTF-8?B?" + base64.b64encode(title.encode()).decode() + "?=",
-            "Priority": priority,
-            "Tags": "electric_plug",
-        },
-        method="POST",
-    )
-    try:
-        urllib.request.urlopen(req, timeout=10).read()
-    except Exception as err:  # noqa: BLE001
-        _LOGGER.warning("ntfy 通知失敗：%s", err)
