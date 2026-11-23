@@ -88,7 +88,7 @@ DATA_DIR = Path(os.environ.get("PLUGHUB_DATA", "/data"))
 STATIC = Path(__file__).parent / "static"
 
 store = Store(DATA_DIR)
-hub = Hub(store, Notifier(lambda: store.data["settings"].get("ntfy_topic", ""), store.dir / "secrets.json"))
+hub = Hub(store, Notifier(store.dir / "secrets.json"))
 assistant = Assistant(hub)
 hub.assistant = assistant
 auth = authmod.Auth(DATA_DIR)
@@ -283,7 +283,7 @@ async def auth_status(request: Request) -> dict[str, Any]:
     return {
         "paired": bool(device) or _is_local(request),
         "device": {"id": device["id"], "name": device["name"]} if device else None,
-        "can_send": bool(hub.notifier.status().get("line") or store.data["settings"].get("ntfy_topic")),
+        "can_send": bool(hub.notifier.status().get("line")),
         "locked_for": auth.locked_for(),
     }
 
@@ -305,7 +305,7 @@ async def auth_pair(request: Request, body: dict = Body(...)) -> Response:
 
 @app.post("/api/auth/send-code")
 async def auth_send_code() -> dict[str, Any]:
-    """配對畫面：把配對碼送到手機通知（LINE／ntfy），也印在伺服器紀錄裡。"""
+    """配對畫面：把配對碼送到手機通知（LINE），也印在伺服器紀錄裡。"""
     global _last_sent
     if _last_sent is not None and time.monotonic() - _last_sent < 60:
         raise HTTPException(429, "剛剛送過了，1 分鐘後再試")
@@ -945,7 +945,7 @@ async def cameras_access(request: Request, body: dict = Body(...)) -> dict[str, 
 
 @app.post("/api/cameras/access/send-code")
 async def cameras_access_code(request: Request) -> dict[str, Any]:
-    """把開通看攝影機的驗證碼送到手機通知（LINE／ntfy），也印在伺服器紀錄裡。"""
+    """把開通看攝影機的驗證碼送到手機通知（LINE），也印在伺服器紀錄裡。"""
     global _cam_code_sent
     if _me(request) is None:
         raise HTTPException(401, "這台裝置還沒配對")
@@ -1548,8 +1548,6 @@ async def set_settings(body: dict = Body(...)) -> dict[str, Any]:
     for key, (lo, hi) in limits.items():
         if key in body:
             settings[key] = min(hi, max(lo, float(body[key])))
-    if "ntfy_topic" in body:
-        settings["ntfy_topic"] = str(body["ntfy_topic"]).strip()
     if "new_device_alert" in body:
         settings["new_device_alert"] = bool(body["new_device_alert"])
     if "power_restore" in body:
@@ -1898,8 +1896,6 @@ async def test_notify() -> dict[str, Any]:
             await asyncio.to_thread(n.push_now, "測試通知", "收到這則訊息，就代表家庭中控的通知設定好了")
         except LineError as err:
             raise HTTPException(502, str(err)) from None
-    elif store.data["settings"].get("ntfy_topic"):
-        n.send("測試通知", "收到這則通知，就代表手機通知設定好了")
     else:
         raise HTTPException(400, "還沒有設定 LINE 通知")
     return {"ok": True}

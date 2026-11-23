@@ -68,7 +68,7 @@ function PairScreen({ canSend, onDone }: { canSend: boolean; onDone: () => void 
   const send = async () => {
     try {
       await api("POST", "/api/auth/send-code");
-      setMsg({ text: "配對碼已經送到手機通知（LINE／ntfy），10 分鐘內有效" });
+      setMsg({ text: "配對碼已經送到手機通知（LINE），10 分鐘內有效" });
     } catch (err) {
       setMsg({ text: (err as Error).message, bad: true });
     }
