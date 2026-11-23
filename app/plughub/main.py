@@ -195,7 +195,14 @@ async def require_pairing(request: Request, call_next):
             if urlsplit(origin).netloc != request.headers.get("host", ""):
                 return JSONResponse({"detail": "不接受其他網站的請求"}, status_code=403)
     if guarded and path not in OPEN_PATHS and not _is_local(request):
-        device = auth.check(_token(request)) or _trusted(request)
+        device = auth.check(_token(request))
+        if device and request.client:
+            mac = _mac_of(request.client.host)
+            mac = hub.router.canon(mac) if mac else None
+            if mac and device.get("mac") != mac:
+                device["mac"] = mac
+                auth.save()
+        device = device or _trusted(request)
         if not device:
             return JSONResponse({"detail": "這台裝置還沒配對", "unpaired": True}, status_code=401)
         request.state.device = device
@@ -810,9 +817,21 @@ def _me(request: Request) -> str | None:
     return device["id"] if device else None
 
 
+def _same(dev_id: str) -> set[str]:
+    """同一台裝置的所有代號：配對的裝置 ID ↔ 它的 MAC（家人手機、信任的裝置用「mac:…」）。"""
+    out = {dev_id}
+    if dev_id.startswith("mac:"):
+        out |= {d["id"] for d in auth.devices if d.get("mac") and f"mac:{d['mac']}" == dev_id}
+    else:
+        mac = next((d.get("mac") for d in auth.devices if d["id"] == dev_id), None)
+        if mac:
+            out.add(f"mac:{mac}")
+    return out
+
+
 def _can_view(request: Request) -> bool:
     me = _me(request)
-    return me == "local" or (me is not None and me in hub.cameras.viewers)
+    return me == "local" or (me is not None and bool(_same(me) & set(hub.cameras.viewers)))
 
 
 def _need_view(request: Request) -> None:
@@ -820,20 +839,35 @@ def _need_view(request: Request) -> None:
         raise HTTPException(403, "這台裝置沒有看攝影機的權限")
 
 
-def _camera_candidates() -> list[dict[str, str]]:
-    """可以給權限的裝置：配對過的、家人的手機和信任的裝置。"""
-    out = [{"id": d["id"], "name": d["name"], "kind": "paired"} for d in auth.devices]
-    out += [{"id": f"mac:{m}", "name": n, "kind": "trusted"} for m, n in trusted_devices().items()]
+def _camera_candidates() -> list[dict[str, Any]]:
+    """可以給權限的裝置：配對過的、家人的手機和信任的裝置。同一支手機（配對時記下的 MAC 一樣）合併成一個。"""
+    trusted = trusted_devices()
+    out: list[dict[str, Any]] = []
+    used: set[str] = set()
+    for d in auth.devices:
+        mac = d.get("mac")
+        if mac and mac in trusted:
+            used.add(mac)
+            out.append({"id": d["id"], "name": f"{d['name']}（{trusted[mac]}）", "kind": "paired", "ids": [d["id"], f"mac:{mac}"]})
+        else:
+            out.append({"id": d["id"], "name": d["name"], "kind": "paired", "ids": [d["id"]]})
+    out += [{"id": f"mac:{m}", "name": n, "kind": "trusted", "ids": [f"mac:{m}"]} for m, n in trusted.items() if m not in used]
     return out
 
 
 def _camera_access(request: Request) -> dict[str, Any]:
     can = _can_view(request)
-    acc: dict[str, Any] = {"can_view": can, "me": _me(request), "count": len(hub.cameras.viewers)}
+    cands = _camera_candidates()
+    me = _me(request)
+    me = next((c["id"] for c in cands if me in c["ids"]), me)  # 合併後的代號（畫面標「這台」用）
+    acc: dict[str, Any] = {"can_view": can, "me": me, "count": len(hub.cameras.viewers)}
     if can:
-        names = {c["id"]: c["name"] for c in _camera_candidates()}
-        acc["viewers"] = [{"id": v, "name": names.get(v, "已移除的裝置")} for v in hub.cameras.viewers]
-        acc["candidates"] = _camera_candidates()
+        viewers = set(hub.cameras.viewers)
+        # 名單用合併後的代號表示：同一台裝置任一個代號有權限就算有
+        acc["viewers"] = [{"id": c["id"], "name": c["name"]} for c in cands if viewers & set(c["ids"])]
+        known = {i for c in cands for i in c["ids"]}
+        acc["viewers"] += [{"id": v, "name": "已移除的裝置"} for v in hub.cameras.viewers if v not in known]
+        acc["candidates"] = [{k: c[k] for k in ("id", "name", "kind")} for c in cands]
     return acc
 
 
@@ -850,8 +884,9 @@ def cameras_list(request: Request) -> dict[str, Any]:
 async def cameras_access(request: Request, body: dict = Body(...)) -> dict[str, Any]:
     """改「可以看攝影機」的名單：{"viewers": [裝置 ID…]}（只有已經有權限的裝置能改）。"""
     _need_view(request)
-    known = {c["id"] for c in _camera_candidates()}
-    hub.cameras.viewers = list(dict.fromkeys(str(v) for v in body.get("viewers") or [] if str(v) in known))
+    ids = {c["id"]: c["ids"] for c in _camera_candidates()}
+    # 選了合併的那一個：同一台裝置的所有代號都算有權限
+    hub.cameras.viewers = list(dict.fromkeys(i for v in body.get("viewers") or [] if str(v) in ids for i in ids[str(v)]))
     hub.cameras.save()
     return {"access": _camera_access(request)}
 
@@ -884,7 +919,7 @@ async def cameras_access_claim(request: Request, body: dict = Body(...)) -> dict
     if me not in hub.cameras.viewers:
         hub.cameras.viewers.append(me)
         hub.cameras.save()
-    name = next((c["name"] for c in _camera_candidates() if c["id"] == me), me)
+    name = next((c["name"] for c in _camera_candidates() if me in c["ids"]), me)
     hub.notifier.send("有裝置開通了攝影機畫面", f"{name} 現在可以看攝影機畫面了。不是你開通的話，到設定 → 攝影機把它拿掉")
     return {"access": _camera_access(request)}
 
