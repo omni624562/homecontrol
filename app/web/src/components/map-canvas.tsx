@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { fmt } from "@/lib/format";
-import { doorGeom, inRoom, nearSeg, roomPath, roomPts, sigQ, shortName, tidyPts, topEdge, withPts, type Floorplan, type FpRoom, type FpWall, type MapDev, type MapLink, type Pt } from "@/lib/map-model";
+import { doorGeom, inRoom, mapShort, nearSeg, roomPath, roomPts, sigQ, shortName, tidyPts, topEdge, withPts, type Floorplan, type FpRoom, type FpWall, type MapDev, type MapLink, type Pt } from "@/lib/map-model";
+import { deviceIcon } from "@/components/icons";
 import type { Plug } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { covColor, type CoverCell } from "@/lib/coverage";
@@ -24,11 +25,37 @@ export const ROOM_STRONG = 1.0;
 // 裝置名稱：太長就截短；多孔插座的本體寫「排插・幾孔」（每一孔另外有自己的點）
 const devName = (d: MapDev) => (d.plugs.length > 1 ? `排插・${d.plugs.length} 孔` : shortName(d.name, 6));
 
-// 多孔插座每一孔的點：地圖上的代碼「o:插座 ID」；還沒擺過的，先排在本體下方一圈
+// 多孔插座每一孔的點：地圖上的代碼「o:插座 ID」
 const outletKey = (p: Plug) => `o:${p.id}`;
-function outletDefault(at: { x: number; y: number }, i: number, n: number) {
-  const a = Math.PI * (0.25 + (0.5 * (i + 0.5)) / n); // 本體下方 45°～135° 之間平均排開
-  return { x: at.x + Math.cos(a) * 70, y: at.y + Math.sin(a) * 70 };
+const OUT_R = 14; // 每孔圓點的半徑（跟裝置圓點差不多大，好按）
+
+type XY = { x: number; y: number };
+
+// 兩條線段有沒有交叉（擺預設位置時，不要隔著牆）
+function crosses(a: XY, b: XY, c: XY, d: XY) {
+  const o = (p: XY, q: XY, r: XY) => (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+  return o(a, b, c) * o(a, b, d) < 0 && o(c, d, a) * o(c, d, b) < 0;
+}
+
+// 還沒擺過的孔：平均排在本體四周，避開牆和地圖邊緣（先選下方，再兩側，最後上方）
+function outletRing(fp: Floorplan, at: XY, n: number): XY[] {
+  const R = 76, M = 30;
+  const order = [90, 45, 135, 0, 180, 315, 225, 270];
+  const ok = (deg: number) => {
+    const q = { x: at.x + Math.cos((deg * Math.PI) / 180) * R, y: at.y + Math.sin((deg * Math.PI) / 180) * R };
+    if (q.x < M || q.y < M || q.x > fp.w - M || q.y > fp.h - M) return false;
+    return !(fp.walls || []).some((w) => crosses(at, q, { x: w.x1, y: w.y1 }, { x: w.x2, y: w.y2 }));
+  };
+  const good = order.filter(ok);
+  const pool = good.length >= n ? good : [...good, ...order.filter((d) => !good.includes(d))];
+  const picked: number[] = [pool[0]];
+  const gap = (a: number, b: number) => Math.min(Math.abs(a - b), 360 - Math.abs(a - b));
+  while (picked.length < n) {
+    let best = pool.find((d) => !picked.includes(d))!;
+    for (const d of pool) if (!picked.includes(d) && Math.min(...picked.map((x) => gap(x, d))) > Math.min(...picked.map((x) => gap(x, best)))) best = d;
+    picked.push(best);
+  }
+  return picked.sort((a, b) => a - b).map((deg) => ({ x: at.x + Math.cos((deg * Math.PI) / 180) * R, y: at.y + Math.sin((deg * Math.PI) / 180) * R }));
 }
 
 // 地圖本體：區域、訊號光暈、連線、基地台、裝置；編輯時可以拖曳
@@ -59,6 +86,9 @@ export function MapCanvas({
   const [px, setPx] = useState(900);
   const fpRef = useRef(fp);
   fpRef.current = fp;
+  const [zoom, setZoom] = useState<{ s: number; cx?: number; cy?: number }>({ s: 1 });
+  const touches = useRef(new Map<number, { x: number; y: number }>());
+  const gesture = useRef<{ d0: number; s0: number; cx: number; cy: number; px0: number; py0: number } | null>(null);
 
   // 標記大小跟著畫面寬度：手機上地圖縮得很小，標記要放大才看得到
   useEffect(() => {
@@ -83,9 +113,15 @@ export function MapCanvas({
     const x1 = Math.min(W, Math.max(...xs) + pad), y1 = Math.min(H, Math.max(...ys) + pad * 1.8);
     return x1 - x0 < W * 0.3 || y1 - y0 < H * 0.3 ? { x: 0, y: 0, w: W, h: H } : { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
   })();
-  // 標記的字在畫面上大約 12px：k = 地圖單位／畫面像素 × 1.1
-  const k = Math.max(1, Math.min(2.6, (vb.w / px) * 1.1));
-  const showNames = k < 2.3;
+  // 放大縮小：zoom.s 倍、以 (cx, cy) 為中心；看的時候兩指縮放、放大後單指拖曳，也可以按 ＋／－
+  const zs = Math.max(1, Math.min(5, zoom.s));
+  const zw = vb.w / zs, zh = vb.h / zs;
+  const zx = Math.max(vb.x, Math.min(vb.x + vb.w - zw, (zoom.cx ?? vb.x + vb.w / 2) - zw / 2));
+  const zy = Math.max(vb.y, Math.min(vb.y + vb.h - zh, (zoom.cy ?? vb.y + vb.h / 2) - zh / 2));
+  const view = { x: zx, y: zy, w: zw, h: zh };
+  // 標記的字在畫面上大約 12px：k = 地圖單位／畫面像素 × 1.1（放大時字不會跟著變大，點之間的距離變大）
+  const k = Math.max(1, Math.min(2.6, (vb.w / px) * 1.1)) / zs;
+  const showNames = k < 2.3; // 手機上整張縮小時只畫圖示，放大一點就出現名字
   const rooms = fp.rooms || [];
   const placed = devs.filter((d) => fp.items[d.key]);
 
@@ -93,11 +129,16 @@ export function MapCanvas({
   const pos: Record<string, { x: number; y: number }> = {};
   for (const d of placed) pos[d.key] = { x: fp.items[d.key].x, y: fp.items[d.key].y };
   // 多孔插座的每一孔（本體擺上去了才畫）
-  const outlets = placed.filter((d) => d.plugs.length > 1).flatMap((d) => d.plugs.map((p, i) => {
-    const key = outletKey(p);
-    const at = fp.items[key] || outletDefault(fp.items[d.key], i, d.plugs.length);
-    return { key, p, d, x: at.x, y: at.y };
-  }));
+  const outlets = placed.filter((d) => d.plugs.length > 1).flatMap((d) => {
+    const ring = outletRing(fp, fp.items[d.key], d.plugs.length);
+    return d.plugs.map((p, i) => {
+      const key = outletKey(p);
+      const at = fp.items[key] || ring[i];
+      return { key, p, d, x: at.x, y: at.y };
+    });
+  });
+  // 看的時候每一孔也一起參加「疊在一起就推開」
+  if (!edit) for (const o of outlets) pos[o.key] = { x: o.x, y: o.y };
   if (!edit) {
     // 每個裝置連同下面的名字當成一個方框（中心在圓圈下方一點），重疊就往重疊比較少的方向推開
     const bw = (showNames ? 66 : 34) * k, bh = (showNames ? 48 : 34) * k, cy = (showNames ? 9 : 0) * k;
@@ -426,14 +467,53 @@ export function MapCanvas({
 
   const showLinks = edit || layer === "motion";
 
+  // 看的時候：兩指縮放、放大後單指拖曳（沒放大時單指留給頁面上下捲）
+  const zoomTo = (s: number, cx?: number, cy?: number) => setZoom((z) => (s <= 1.02 ? { s: 1 } : { s: Math.min(5, s), cx: cx ?? z.cx ?? view.x + view.w / 2, cy: cy ?? z.cy ?? view.y + view.h / 2 }));
+  const gStart = () => {
+    const pts = [...touches.current.values()];
+    const c = pts.length === 2 ? { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 } : pts[0];
+    const m = point({ clientX: c.x, clientY: c.y });
+    gesture.current = { d0: pts.length === 2 ? Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) : 0, s0: zs, cx: view.x + view.w / 2, cy: view.y + view.h / 2, px0: c.x, py0: c.y };
+    return m;
+  };
+  const onDown = (e: React.PointerEvent) => {
+    if (edit || e.pointerType === "mouse" && zs <= 1) return;
+    touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (touches.current.size === 2 || zs > 1) gStart();
+  };
+  const onMove = (e: React.PointerEvent) => {
+    if (edit || !touches.current.has(e.pointerId)) return;
+    touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const g = gesture.current;
+    if (!g) return;
+    const pts = [...touches.current.values()];
+    const upp = view.w / Math.max(1, px); // 地圖單位／畫面像素
+    if (pts.length === 2 && g.d0) {
+      const d = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      const c = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+      setZoom({ s: Math.max(1, Math.min(5, (g.s0 * d) / g.d0)), cx: g.cx - (c.x - g.px0) * upp, cy: g.cy - (c.y - g.py0) * upp });
+    } else if (pts.length === 1 && zs > 1) {
+      setZoom({ s: zs, cx: g.cx - (pts[0].x - g.px0) * upp, cy: g.cy - (pts[0].y - g.py0) * upp });
+    }
+  };
+  const onUp = (e: React.PointerEvent) => {
+    touches.current.delete(e.pointerId);
+    gesture.current = null;
+    if (touches.current.size) gStart();
+    if (zoom.s < 1.05 && zoom.s !== 1) setZoom({ s: 1 });
+  };
+
   return (
+    <div className="relative">
     <svg
       ref={svg}
-      viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`}
+      viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`}
       role="img"
       aria-label="訊號地圖"
-      className={cn("block h-auto w-full min-w-[600px] rounded-xl bg-muted select-none sm:min-w-0", edit && "touch-none")}
+      className={cn("block h-auto w-full rounded-xl bg-muted select-none", edit || zs > 1 ? "touch-none" : "touch-pan-y")}
       onClick={(e) => e.target === e.currentTarget && !edit && onPick(null)}
+      onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}
+      onWheel={(e) => { if (!e.ctrlKey && !e.metaKey) return; e.preventDefault(); const m = point(e); zoomTo(zs * (e.deltaY < 0 ? 1.15 : 1 / 1.15), m.x, m.y); }}
     >
       <defs>
         <filter id="map-cov-blur" x="-5%" y="-5%" width="110%" height="110%"><feGaussianBlur stdDeviation={(cover?.step || 20) * 0.6} /></filter>
@@ -641,24 +721,25 @@ export function MapCanvas({
       })}
       {outlets.map((o) => {
         const at = pos[o.d.key];
+        const me = pos[o.key] || o;
         const on = !!powerOf?.(o.p);
+        const Icon = deviceIcon(o.p.name);
         const tip = `${o.p.name}（${devName(o.d)}的一孔）：${!o.p.online ? "連不上" : on ? "開著" : "關著"}`;
         return (
           <g key={o.key}>
-            <line x1={at.x} y1={at.y} x2={o.x} y2={o.y} stroke="var(--muted-foreground)" strokeOpacity={0.45} strokeWidth={1.2 * k} strokeDasharray={`${3 * k} ${3 * k}`} />
-            <g transform={`translate(${o.x} ${o.y}) scale(${k.toFixed(2)})`} className={edit ? "cursor-grab" : "cursor-pointer"}
+            <line x1={at.x} y1={at.y} x2={me.x} y2={me.y} stroke="var(--muted-foreground)" strokeOpacity={0.45} strokeWidth={1.2 * k} strokeDasharray={`${3 * k} ${3 * k}`} />
+            <g transform={`translate(${me.x} ${me.y}) scale(${k.toFixed(2)})`} className={edit ? "cursor-grab" : "cursor-pointer"}
               role={edit ? undefined : "button"} aria-label={edit ? undefined : `${tip}，點一下${on ? "關閉" : "打開"}`}
               onPointerDown={(e) => startDrag(e, { kind: "item", id: o.key })}
               onClick={(e) => { if (edit || !onPower || !o.p.online) return; e.stopPropagation(); onPower(o.p); }}
               onMouseEnter={() => onTip(tip)} onMouseLeave={() => onTip(null)}>
               <title>{tip}</title>
-              <circle r={14} fill="transparent" />
-              <circle r={10} className={on ? "fill-primary" : "fill-card"} stroke={on ? "var(--card)" : "var(--muted-foreground)"} strokeWidth={on ? 2 : 1.5}
-                strokeDasharray={o.p.online ? undefined : "3 2"} style={{ filter: "drop-shadow(0 1px 1.5px rgb(15 23 42 / .2))" }} />
-              <path d="M0 -5 V-0.7 M-3.4 -3.1 A4.6 4.6 0 1 0 3.4 -3.1" fill="none" strokeWidth={1.7} strokeLinecap="round"
-                stroke={on ? "var(--primary-foreground)" : "var(--muted-foreground)"} />
+              <circle r={OUT_R + 7} fill="transparent" />
+              <circle r={OUT_R} className={on ? "fill-primary" : "fill-card"} stroke={on ? "var(--card)" : "var(--muted-foreground)"} strokeWidth={on ? 2 : 1.5}
+                strokeDasharray={o.p.online ? undefined : "3 2"} style={{ filter: "drop-shadow(0 1px 2px rgb(15 23 42 / .22))" }} />
+              <Icon x={-8} y={-8} width={16} height={16} strokeWidth={2.2} color={on ? "var(--primary-foreground)" : "var(--muted-foreground)"} aria-hidden />
               {showNames && (
-                <text y={23} textAnchor="middle" className="fill-muted-foreground font-medium" style={{ fontSize: 10.5, paintOrder: "stroke", stroke: "var(--card)", strokeWidth: 3, strokeLinejoin: "round" }}>{shortName(o.p.name, 6)}</text>
+                <text y={OUT_R + 14} textAnchor="middle" className="fill-foreground font-semibold" style={{ fontSize: 11, paintOrder: "stroke", stroke: "var(--card)", strokeWidth: 3, strokeLinejoin: "round" }}>{mapShort(o.p)}</text>
               )}
             </g>
           </g>
@@ -760,5 +841,12 @@ export function MapCanvas({
         <rect x={0} y={0} width={W} height={H} fill="transparent" className="cursor-crosshair" onPointerDown={toolDown} />
       )}
     </svg>
+    {/* 放大縮小（手機也可以兩指縮放；電腦按住 Ctrl 滾輪） */}
+    <div className="absolute right-2 bottom-2 flex flex-col overflow-hidden rounded-lg border bg-background/90 shadow-sm backdrop-blur">
+      <button type="button" aria-label="放大地圖" title="放大" onClick={() => zoomTo(zs * 1.5)} className="flex size-9 items-center justify-center text-lg font-semibold hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">＋</button>
+      <button type="button" aria-label="縮小地圖" title="縮小" disabled={zs <= 1} onClick={() => zoomTo(zs / 1.5)} className="flex size-9 items-center justify-center border-t text-lg font-semibold hover:bg-muted disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">－</button>
+      {zs > 1 && <button type="button" aria-label="看全部" title="看全部" onClick={() => setZoom({ s: 1 })} className="flex h-8 items-center justify-center border-t px-1 text-[11px] hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">全部</button>}
+    </div>
+    </div>
   );
 }

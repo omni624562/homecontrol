@@ -90,6 +90,7 @@ class PlugMeta:
     matter: bool = True  # 讓 Google Home（Matter）控制
     # 高風險電器（電暖器、熨斗…）：最後一個人出門就馬上關掉並緊急通知，不等 10 分鐘
     risky: bool = False
+    short: str | None = None  # 地圖上用的短名稱（空白 = 照名稱自動建議）
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "PlugMeta":

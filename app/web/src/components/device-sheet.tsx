@@ -18,6 +18,7 @@ import { api } from "@/lib/api";
 import { fmt, fmtDur, fmtLeft, fmtSec, pad2 } from "@/lib/format";
 import { useHub, useTick } from "@/lib/hub";
 import type { KasaRule, Plug, Protect } from "@/lib/types";
+import { suggestShort } from "@/lib/map-model";
 import { cn } from "@/lib/utils";
 
 const TIMER_OPTIONS = [300, 600, 1800, 3600];
@@ -332,6 +333,7 @@ function DeviceBody({ p }: { p: Plug }) {
               )}
             </div>
           </form>
+          <ShortName p={p} patch={patch} />
           <div className="space-y-1">
             <div className="text-sm font-medium">區域</div>
             <Select value={p.room || "none"} onValueChange={(v) => patch({ room: v === "none" ? null : v })}>
@@ -492,4 +494,20 @@ function DeviceBody({ p }: { p: Plug }) {
 // 設了防呆的插座：開關前先確認
 export function needsConfirm(p: Plug, on: boolean) {
   return p.protect === "confirm" || (p.protect === "confirm_off" && on);
+}
+
+// 地圖上的名字（短一點，地圖上才不會疊字）；空白就用自動建議的
+function ShortName({ p, patch }: { p: Plug; patch: (body: Record<string, unknown>, ok?: string) => Promise<unknown> }) {
+  const [v, setV] = useState(p.short || "");
+  const tip = suggestShort(p.name);
+  const dirty = v.trim() !== (p.short || "");
+  return (
+    <form className="space-y-1" onSubmit={async (e) => { e.preventDefault(); if (dirty) await patch({ short: v.trim() }, v.trim() ? "地圖上的名字改好了" : "地圖上改回自動的名字"); }}>
+      <label htmlFor="dev-short" className="block text-sm font-medium">地圖上的名字</label>
+      <div className="flex gap-2">
+        <Input id="dev-short" value={v} maxLength={8} placeholder={tip} onChange={(e) => setV(e.target.value)} className="h-9 min-w-0 bg-background" />
+        {dirty && <Button type="submit" size="sm" className="h-9 shrink-0">存</Button>}
+      </div>
+    </form>
+  );
 }

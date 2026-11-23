@@ -12,6 +12,7 @@ export interface Plug {
   watts: number | null;
   keep_on: boolean;
   risky?: boolean;
+  short?: string | null; // 地圖上用的短名稱
   protect: Protect;
   max_on_s: number | null;
   on_since: number | null;

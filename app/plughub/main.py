@@ -386,6 +386,8 @@ async def update_plug(plug_id: str, body: dict = Body(...)) -> dict[str, Any]:
     if "name" in body:
         name = (body["name"] or "").strip()
         meta.name = name or None
+    if "short" in body:
+        meta.short = (body["short"] or "").strip()[:8] or None
     if "room" in body:
         room = body["room"]
         if room is not None and not store.room(room):
