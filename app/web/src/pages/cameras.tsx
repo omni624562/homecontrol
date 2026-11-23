@@ -342,6 +342,9 @@ function ViewTab({ cam, rooms, scenes, setCams, upd, onBack }: DetailProps & { u
   return (
     <>
       <Card className="gap-3 p-3">
+        {/* 正在畫、調整時的提示：放在畫面上面，不蓋住畫面 */}
+        {(mode || adj) && <div className="rounded-lg bg-primary/10 px-3 py-2 text-center text-sm font-medium text-primary" aria-live="polite">
+          {adj ? "拖圓點調整形狀，好了按「儲存」" : mode === "line" ? (pts.length ? "再點一下線的終點" : "點一下線的起點（例如樓梯口的一邊）") : pts.length < 3 ? `一點一點點出${mode === "door" ? "門" : mode === "zone" ? "區域" : "不要看的地方"}的角（已點 ${pts.length} 個）` : `繼續點，或點回第一個點／按「完成」（已點 ${pts.length} 個）`}</div>}
         <div className="relative aspect-video w-full select-none overflow-hidden rounded-lg bg-muted">
           <img src={`/api/cameras/${cam.id}/snapshot.jpg?t=${t}`} alt={`${cam.name} 現在的畫面`} className="pointer-events-none size-full object-fill" draggable={false} />
           <svg ref={svgRef} viewBox="0 0 1 1" preserveAspectRatio="none" className={cn("absolute inset-0 size-full", (mode || adj) && "touch-none", mode && "cursor-crosshair")}
@@ -409,9 +412,6 @@ function ViewTab({ cam, rooms, scenes, setCams, upd, onBack }: DetailProps & { u
                 style={{ strokeWidth: 2.5, cursor: "grab" }} onPointerDown={(e) => { e.stopPropagation(); (e.currentTarget.ownerSVGElement as SVGSVGElement).setPointerCapture(e.pointerId); dragging.current = i; }} />
             ))}
           </svg>
-          {mode && <div className="pointer-events-none absolute inset-x-0 top-0 bg-background/85 py-1.5 text-center text-sm font-medium">
-            {mode === "line" ? (pts.length ? "再點一下線的終點" : "點一下線的起點（例如樓梯口的一邊）") : pts.length < 3 ? `一點一點點出${mode === "door" ? "門" : mode === "zone" ? "區域" : "不要看的地方"}的角（已點 ${pts.length} 個）` : "繼續點，或點回第一個點／按「完成」"}</div>}
-          {adj && <div className="pointer-events-none absolute inset-x-0 top-0 bg-background/85 py-1.5 text-center text-sm font-medium">拖圓點調整形狀，好了按「儲存」</div>}
         </div>
 
         {mode ? (
