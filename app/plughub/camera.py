@@ -38,6 +38,13 @@ ARRIVE_WAIT = 180  # 秒：沒人在家時看到人，先等這麼久；這段�
 TIMEOUT = 5
 
 
+# 選了「門口」或「房間裡」時先幫忙打開的功能（之後可以自己改）
+ROLE_DEFAULTS = {
+    "entry": {"faces": True, "alert": True, "fall": False, "pets": True},
+    "room": {"faces": True, "alert": True, "fall": True, "pets": True},
+}
+
+
 def track(st: dict[str, Any], score: float, now: float) -> str | None:
     """更新一台攝影機的狀態，回傳 "on"（剛看到人）、"off"（人走了）或 None。
 
@@ -125,6 +132,20 @@ def _cgi(cam: dict[str, Any], cmd: str) -> bytes:
     url = f"http://{cam['host']}:{int(cam.get('port') or 88)}/cgi-bin/CGIProxy.fcgi?{q}"
     with urllib.request.urlopen(url, timeout=TIMEOUT) as r:  # noqa: S310  只連家裡網路的攝影機
         return r.read()
+
+
+def mask(jpeg: bytes, rects: list[list[float]]) -> bytes:
+    """把「不要看的地方」塗成灰色（認人、認臉、姿勢、門都不會看那裡）。rects 是 0～1 的 [x, y, w, h]。"""
+    from PIL import Image, ImageDraw
+
+    img = Image.open(io.BytesIO(jpeg)).convert("RGB")
+    W, H = img.size
+    draw = ImageDraw.Draw(img)
+    for x, y, w, h in rects:
+        draw.rectangle([x * W, y * H, (x + w) * W, (y + h) * H], fill=(128, 128, 128))
+    out = io.BytesIO()
+    img.save(out, "JPEG", quality=85)
+    return out.getvalue()
 
 
 def snapshot(cam: dict[str, Any]) -> bytes:
@@ -225,6 +246,7 @@ class Cameras:
             c.setdefault("light", None)  # 門口：半夜看到陌生人時打開的插座
             c.setdefault("pets", True)  # 認貓、狗
             c.setdefault("fall", c.get("role") != "entry")  # 跌倒偵測（實驗；預設只有房間的攝影機）
+            c.setdefault("ignore", [])  # 不要看的地方（例如路邊）：[[x, y, w, h], …]，0～1
             c.setdefault("door", None)  # 開門：{"rect": [x,y,w,h], "refs": [樣子…], "notify": away/always/off, "scene": 天黑後開門執行的情境}
 
     def save(self) -> None:
@@ -243,7 +265,7 @@ class Cameras:
         for c in self.list:
             st = self.state.get(c["id"], {})
             door = c.get("door") or {}
-            out.append({k: c.get(k) for k in ("id", "name", "host", "port", "room", "enabled", "alert", "model", "faces", "role", "light", "pets", "fall")}
+            out.append({k: c.get(k) for k in ("id", "name", "host", "port", "room", "enabled", "alert", "model", "faces", "role", "light", "pets", "fall", "pet_notify", "ignore")}
                        | {"door": {"rect": door.get("rect"), "refs": len(door.get("refs") or []), "notify": door.get("notify", "away"), "scene": door.get("scene"),
                                    "open": bool((st.get("door") or {}).get("open")), "score": (st.get("door") or {}).get("score")} if door.get("rect") else None,
                           "pets_here": [n for n, p in (st.get("pets") or {}).items() if p.get("here")]}
@@ -282,6 +304,8 @@ class Cameras:
             return None
         try:
             jpeg = snapshot(cam)
+            if cam.get("ignore"):
+                jpeg = mask(jpeg, cam["ignore"])
             self.frames[cam["id"]] = jpeg
             sc = self.detector.scores(jpeg)
             score = sc["person"]

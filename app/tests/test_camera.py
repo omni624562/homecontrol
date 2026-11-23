@@ -200,3 +200,26 @@ def test_same_phone_paired_and_trusted_is_merged(app_module):
     # 勾選合併的那一個：兩個代號都進名單
     acc = c.put("/api/cameras/access", json={"viewers": [dev["id"]]}).json()["access"]
     assert set(main.hub.cameras.viewers) == {dev["id"], "mac:EA:1C:F4:0C:26:B4"}
+
+
+def test_mask_and_role_defaults(app_module, monkeypatch):
+    import io
+
+    from fastapi.testclient import TestClient
+    from PIL import Image
+
+    img = Image.new("RGB", (100, 50), (255, 0, 0))
+    buf = io.BytesIO()
+    img.save(buf, "JPEG")
+    out = Image.open(io.BytesIO(camera.mask(buf.getvalue(), [[0, 0, 0.5, 1]])))
+    left, right = out.getpixel((10, 25)), out.getpixel((90, 25))
+    assert abs(left[0] - 128) < 20 and right[0] > 200  # 左半邊塗灰、右半邊不動
+
+    c = TestClient(app_module.app, base_url="http://hub:8100")
+    token, dev = app_module.auth.pair(app_module.auth.new_code())
+    c.cookies.set("plughub_token", token)
+    app_module.hub.cameras.viewers = [dev["id"]]
+    app_module.hub.cameras.list = [{"id": "g", "name": "大門口", "host": "x", "enabled": True, "fall": True}]
+    got = c.put("/api/cameras/g", json={"role": "entry", "defaults": True, "ignore": [[0.6, 0.3, 0.4, 0.5], [0, 0, 0.01, 0.5]]}).json()["cameras"][0]
+    assert got["role"] == "entry" and got["fall"] is False and got["faces"] is True
+    assert got["ignore"] == [[0.6, 0.3, 0.4, 0.5]]  # 太小的框不收
