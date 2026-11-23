@@ -179,3 +179,24 @@ def test_access_code_locks_after_fails():
     code = ac.new()
     now[0] += camera.AccessCode.TTL + 1
     assert not ac.claim(code)  # 過期
+
+
+def test_same_phone_paired_and_trusted_is_merged(app_module):
+    """同一支手機有通行證（配對）、又是「誰在家」登記的家人手機：權限名單只列一次，兩個代號都有權限。"""
+    from fastapi.testclient import TestClient
+
+    main = app_module
+    c = TestClient(main.app, base_url="http://hub:8100")
+    token, dev = main.auth.pair(main.auth.new_code(), name="ERIC PHONE")
+    c.cookies.set("plughub_token", token)
+    dev["mac"] = "EA:1C:F4:0C:26:B4"
+    main.store.data["people"] = [{"id": "e", "name": "ERIC", "macs": ["EA:1C:F4:0C:26:B4"]}]
+    main.hub.cameras.viewers = [dev["id"]]
+    acc = c.get("/api/cameras").json()["access"]
+    names = [x["name"] for x in acc["candidates"]]
+    assert "ERIC PHONE（ERIC的手機）" in names and "ERIC的手機" not in names
+    assert acc["me"] == dev["id"] and [v["id"] for v in acc["viewers"]] == [dev["id"]]
+    assert main._same("mac:EA:1C:F4:0C:26:B4") == {"mac:EA:1C:F4:0C:26:B4", dev["id"]}
+    # 勾選合併的那一個：兩個代號都進名單
+    acc = c.put("/api/cameras/access", json={"viewers": [dev["id"]]}).json()["access"]
+    assert set(main.hub.cameras.viewers) == {dev["id"], "mac:EA:1C:F4:0C:26:B4"}

@@ -149,7 +149,7 @@ class Auth:
 
     def public(self, current: str | None = None) -> list[dict[str, Any]]:
         return [
-            {"id": d["id"], "name": d["name"], "created": d["created"], "last_seen": d["last_seen"], "current": d["id"] == current}
+            {"id": d["id"], "name": d["name"], "created": d["created"], "last_seen": d["last_seen"], "current": d["id"] == current, "mac": d.get("mac")}
             for d in self.devices
         ]
 
