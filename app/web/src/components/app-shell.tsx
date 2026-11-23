@@ -4,20 +4,19 @@ import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from "@/compone
 import { useLook } from "@/lib/look";
 import { useAsk } from "@/components/ask-sheet";
 import { useHub } from "@/lib/hub";
-import { useNavStyle } from "@/lib/nav";
+import { useBarTabs, useNavStyle } from "@/lib/nav";
 import { cn } from "@/lib/utils";
 
 // 主選單
 // 電腦：左側選單；手機、平板：標題列左上角「☰」打開的側邊選單，或下方分頁（設定裡選）
-// bar：選下方分頁時直接放在下方的 4 格，其他放進第 5 格「更多」
 export const TABS = [
-  { key: "plugs", label: "首頁", icon: Home, bar: true },
-  { key: "life", label: "生活", icon: Sun, bar: true },
-  { key: "map", label: "家中地圖", icon: MapIcon, bar: true },
-  { key: "schedule", label: "排程", icon: Clock, bar: false },
-  { key: "energy", label: "用電", icon: BarChart3, bar: true },
-  { key: "net", label: "網路裝置", icon: Wifi, bar: false },
-  { key: "settings", label: "設定", icon: Settings, bar: false },
+  { key: "plugs", label: "首頁", icon: Home },
+  { key: "life", label: "生活", icon: Sun },
+  { key: "map", label: "家中地圖", icon: MapIcon },
+  { key: "schedule", label: "排程", icon: Clock },
+  { key: "energy", label: "用電", icon: BarChart3 },
+  { key: "net", label: "網路裝置", icon: Wifi },
+  { key: "settings", label: "設定", icon: Settings },
 ] as const;
 
 const href = (t: (typeof TABS)[number]) => `#${t.key}`;
@@ -115,13 +114,15 @@ function MobileMenu({ tab, status }: { tab: string; status: ReactNode }) {
 // 下方分頁：4 格常用頁＋「更多」（從下方滑出其他頁面）
 function BottomTabs({ tab }: { tab: string }) {
   const open = useMenu();
-  const more = TABS.filter((t) => !t.bar);
+  const chosen = useBarTabs();
+  const bar = TABS.filter((t) => chosen.includes(t.key));
+  const more = TABS.filter((t) => !chosen.includes(t.key));
   const inMore = more.some((t) => t.key === tab);
   const item = "flex h-16 flex-1 flex-col items-center justify-center gap-1 text-xs font-medium text-muted-foreground transition-colors active:bg-muted";
   return (
     <>
       <nav className="fixed inset-x-0 bottom-0 z-30 flex border-t bg-background/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-md lg:hidden" aria-label="主選單">
-        {TABS.filter((t) => t.bar).map((t) => (
+        {bar.map((t) => (
           <a key={t.key} href={href(t)} aria-current={tab === t.key ? "page" : undefined} className={cn(item, tab === t.key && "text-primary")}>
             <t.icon className="size-6" />
             {t.label}

@@ -3,6 +3,8 @@ import { ArrowRight, CalendarClock, ChartColumn, GripVertical, MapPin, Sparkles,
 import { Card } from "@/components/ui/card";
 import { useAsk } from "@/components/ask-sheet";
 import type { DragHandle } from "@/components/room-card";
+import { CollapseBtn } from "@/components/collapse-btn";
+import { useCollapsed } from "@/lib/collapse";
 import { fmt, fmtDur, fmtLeft } from "@/lib/format";
 import { useHub } from "@/lib/hub";
 import type { HubState } from "@/lib/types";
@@ -11,14 +13,15 @@ import { cn } from "@/lib/utils";
 const ASKS = ["現在誰開著？", "出門前幫我檢查", "今天比昨天多用在哪"];
 
 // handle：首頁拖拉排列時，標題列當握把
-function Head({ icon: I, title, right, accent, handle }: { icon: React.ElementType; title: string; right?: React.ReactNode; accent?: boolean; handle?: DragHandle }) {
+function Head({ icon: I, title, right, accent, handle, shut, onToggle }: { icon: React.ElementType; title: string; right?: React.ReactNode; accent?: boolean; handle?: DragHandle; shut?: boolean; onToggle?: () => void }) {
   return (
     <div ref={handle?.ref} {...handle?.props}
-      className={cn("group/head relative flex items-center gap-2 border-b px-4 py-3", handle && "cursor-grab touch-none select-none active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring")}>
+      className={cn("group/head relative flex items-center gap-2 px-4 py-3", !shut && "border-b", handle && "cursor-grab touch-none select-none active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring")}>
       {handle && <GripVertical aria-hidden className="absolute top-1/2 left-0.5 size-4 -translate-y-1/2 text-muted-foreground opacity-0 transition-opacity group-hover/head:opacity-100" />}
       <I className={cn("size-4.5", accent ? "text-primary" : "text-muted-foreground")} />
       <h2 className={cn("font-semibold", accent && "text-primary")}>{title}</h2>
-      <span className="ml-auto text-xs text-muted-foreground" onPointerDown={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>{right}</span>
+      <span className="ml-auto truncate text-xs text-muted-foreground" onPointerDown={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>{right}</span>
+      {onToggle && <CollapseBtn shut={!!shut} onToggle={onToggle} label={title} />}
     </div>
   );
 }
@@ -73,10 +76,13 @@ export function EnergyPanel({ state, className, handle }: { state: HubState; cla
   const hist = (s.history || []).slice(-14);
   const max = Math.max(0.1, ...hist.map((h) => h.kwh));
   const prev = hist.length >= 2 ? hist[hist.length - 2].kwh : 0;
+  const [shut, toggle] = useCollapsed("side:energy");
+  const brief = `${fmt(s.energy_today, 1)} 度・$${fmt(s.cost_today)} ›`;
   return (
     <Card className={cn("gap-0 overflow-hidden py-0", className)}>
-      <Head icon={ChartColumn} title="今天用電" handle={handle} right={<a href="#energy" className="hover:text-foreground">看明細 ›</a>} />
-      <div className="p-4">
+      <Head icon={ChartColumn} title="今天用電" handle={handle} shut={shut} onToggle={toggle}
+        right={<a href="#energy" className="hover:text-foreground">{shut ? brief : "看明細 ›"}</a>} />
+      {!shut && <div className="p-4">
         <div className="flex items-end justify-between gap-3">
           <div className="text-[28px] leading-none font-semibold tabular-nums">
             {fmt(s.energy_today, 1)}
@@ -100,7 +106,7 @@ export function EnergyPanel({ state, className, handle }: { state: HubState; cla
             </div>
           </>
         )}
-      </div>
+      </div>}
     </Card>
   );
 }
@@ -133,10 +139,12 @@ export function NextPanel({ state, now, className, handle }: { state: HubState; 
     items.push({ key: s.id, at, time: `${at >= sec + 86400 ? "明 " : ""}${t.slice(0, 5)}`, text: what, tag: s.action === "on" ? "開" : s.action === "off" ? "關" : "情境", on: s.action === "on" });
   }
   items.sort((a, b) => a.at - b.at);
+  const [shut, toggle] = useCollapsed("side:next");
   return (
     <Card className={cn("gap-0 overflow-hidden py-0", className)}>
-      <Head icon={CalendarClock} title="接下來" handle={handle} right={<a href="#schedule" className="hover:text-foreground">排程 ›</a>} />
-      {items.length ? (
+      <Head icon={CalendarClock} title="接下來" handle={handle} shut={shut} onToggle={toggle}
+        right={<a href="#schedule" className="hover:text-foreground">{shut && items[0] ? `${items[0].time} ${items[0].text} ›` : "排程 ›"}</a>} />
+      {shut ? null : items.length ? (
         <ul className="divide-y px-4">
           {items.slice(0, 5).map((x) => (
             <li key={x.key} className="flex items-center gap-3 py-2.5">
@@ -158,12 +166,13 @@ export function NextPanel({ state, now, className, handle }: { state: HubState; 
 // 誰在家：每個人在不在家、多久了；教過房間的再加上在哪個房間
 export function PeoplePanel({ state, now, className, handle }: { state: HubState; now: number; className?: string; handle?: DragHandle }) {
   const people = [...(state.people || [])].sort((a, b) => Number(!!b.home) - Number(!!a.home));
+  const [shut, toggle] = useCollapsed("side:people");
   if (!people.length) return null;
   const home = people.filter((x) => x.home).length;
   return (
     <Card className={cn("gap-0 overflow-hidden py-0", className)}>
-      <Head icon={Users} title="誰在家" handle={handle} right={<a href="#map" className="hover:text-foreground">{home ? `${home}／${people.length} 人在家` : "都出門了"} ›</a>} />
-      <ul className="divide-y px-4">
+      <Head icon={Users} title="誰在家" handle={handle} shut={shut} onToggle={toggle} right={<a href="#map" className="hover:text-foreground">{home ? `${home}／${people.length} 人在家` : "都出門了"} ›</a>} />
+      {!shut && <ul className="divide-y px-4">
         {people.map((x) => {
           const w = x.home ? x.where : null;
           const room = w ? (w.room ? w.name : w.top[0] ? `可能在${w.top[0].name}` : null) : null;
@@ -191,7 +200,7 @@ export function PeoplePanel({ state, now, className, handle }: { state: HubState
             </li>
           );
         })}
-      </ul>
+      </ul>}
     </Card>
   );
 }

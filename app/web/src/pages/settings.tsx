@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { AlertCircle, Archive, Bell, Plus, ShieldCheck, Trash2, CheckCircle2, CloudSun, KeyRound, MessageCircle, ChevronRight, ExternalLink, Loader2, MessageSquareText, Mic, Palette, Search, Wifi, WifiOff } from "lucide-react";
+import { AlertCircle, Archive, Bell, Plus, ShieldCheck, Trash2, CheckCircle2, CloudSun, KeyRound, MessageCircle, ChevronRight, ExternalLink, Loader2, MessageSquareText, Mic, Moon, Palette, Search, Wifi, WifiOff } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { PageHeader } from "@/components/app-shell";
+import { PageHeader, TABS } from "@/components/app-shell";
 import { AskSetup, fmtUsd, useAsk } from "@/components/ask-sheet";
 import { CloudSheet, cloudBound } from "@/components/cloud-sheet";
 import { Sheet } from "@/components/responsive-sheet";
@@ -24,7 +24,7 @@ import { api } from "@/lib/api";
 import { pad2 } from "@/lib/format";
 import { useHub } from "@/lib/hub";
 import { setLook, useLook } from "@/lib/look";
-import { setNavStyle, useNavStyle } from "@/lib/nav";
+import { BAR_MAX, setBarTabs, setNavStyle, useBarTabs, useNavStyle } from "@/lib/nav";
 import { previewStandby, setStandbyMin, useStandbyMin } from "@/components/standby";
 import { Segmented } from "@/components/schedule-bits";
 import type { HubState, PairedDevice } from "@/lib/types";
@@ -196,7 +196,7 @@ function LineSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   );
 }
 
-function WeeklyPreview() {
+function ReportPreview({ url, title, empty }: { url: string; title: string; empty: string }) {
   const [text, setText] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   return (
@@ -208,8 +208,8 @@ function WeeklyPreview() {
           setText(null);
           setOpen(true);
           try {
-            const r = await api<{ text: string }>("GET", "/api/weekly");
-            setText(r.text || "這週還沒有資料");
+            const r = await api<{ text: string }>("GET", url);
+            setText(r.text || empty);
           } catch (e) {
             setText(`讀不到：${(e as Error).message}`);
           }
@@ -219,7 +219,7 @@ function WeeklyPreview() {
       </Button>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>這週的家（預覽）</AlertDialogTitle>
+          <AlertDialogTitle>{title}（預覽）</AlertDialogTitle>
           <AlertDialogDescription asChild>
             <div className="max-h-[60vh] overflow-y-auto leading-relaxed whitespace-pre-wrap text-foreground">{text ?? <Loader2 className="mx-auto my-6 size-6 animate-spin text-muted-foreground" />}</div>
           </AlertDialogDescription>
@@ -390,7 +390,7 @@ function NetCheck({ s }: { s: HubState }) {
   );
 }
 
-const SECTIONS: [string, string][] = [["s-look", "外觀"], ["s-notify", "通知"], ["s-life", "天氣生活"], ["s-ask", "問家裡"], ["s-google", "Google Home"], ["s-dev", "裝置"], ["s-sys", "安全與備份"]];
+const SECTIONS: [string, string][] = [["s-look", "外觀"], ["s-notify", "通知"], ["s-night", "晚安"], ["s-life", "天氣生活"], ["s-ask", "問家裡"], ["s-google", "Google Home"], ["s-dev", "裝置"], ["s-sys", "安全與備份"]];
 
 const ago = (t: number) => {
   const s = Date.now() / 1000 - t;
@@ -601,6 +601,89 @@ function JumpChips() {
   );
 }
 
+// 下方分頁放哪幾頁：點一下加入／拿掉，最多 4 個，其他在「更多」
+function BarTabsPicker() {
+  const chosen = useBarTabs();
+  const toggle = (key: string) => {
+    if (chosen.includes(key)) {
+      if (chosen.length <= 1) return toast("至少要放一頁");
+      setBarTabs(chosen.filter((k) => k !== key));
+    } else {
+      if (chosen.length >= BAR_MAX) return toast(`最多放 ${BAR_MAX} 頁`, { description: "先點一個已選的拿掉" });
+      setBarTabs(TABS.map((t) => t.key).filter((k) => k === key || chosen.includes(k)));
+    }
+  };
+  return (
+    <div className="border-t px-4 py-3.5 sm:px-5">
+      <div className="font-medium leading-snug">下方放哪幾頁</div>
+      <div className="mb-2.5 text-sm leading-relaxed text-muted-foreground">最多 {BAR_MAX} 頁，沒選的放在「更多」裡；只換這台裝置</div>
+      <div className="flex flex-wrap gap-2">
+        {TABS.map((t) => {
+          const on = chosen.includes(t.key);
+          return (
+            <button key={t.key} aria-pressed={on} onClick={() => toggle(t.key)}
+              className={cn("flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", on ? "border-primary bg-primary/10 font-medium text-primary" : "bg-background text-muted-foreground hover:bg-muted")}>
+              <t.icon className="size-4" />{t.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// 晚安檢查：幾點檢查、通知還是直接關、哪些電器晚上本來就開著
+function GoodnightCard({ s }: { s: HubState }) {
+  const gn = (s.settings.goodnight || {}) as { at?: string; mode?: "notify" | "off" | "none"; keep?: string[] };
+  const mode = gn.mode || "notify";
+  const keep = new Set(gn.keep || []);
+  const times = ["21:30", "22:00", "22:30", "23:00", "23:30", "00:00", "00:30", "01:00"];
+  const at = gn.at || "23:30";
+  const cands = s.plugs.filter((p) => !p.keep_on);
+  return (
+    <SCard id="s-night" icon={Moon} title="晚安檢查">
+      <SRow wrap label="睡前還開著的電器" hint="到了這個時間、有人在家，還有電器開著就通知或直接關掉（沒人在家時交給「出門」的檢查）；首頁晚上也有「晚安」按鈕可以自己檢查">
+        <div className="flex flex-wrap items-center gap-2">
+          <Select value={mode} onValueChange={(v) => put({ goodnight: { mode: v } }, v === "none" ? "不做晚安檢查" : v === "off" ? "晚安時會自動關掉" : "晚安時會通知")}>
+            <SelectTrigger className="w-28 bg-background" aria-label="晚安檢查要做什麼"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="notify">通知</SelectItem>
+              <SelectItem value="off">自動關掉</SelectItem>
+              <SelectItem value="none">不檢查</SelectItem>
+            </SelectContent>
+          </Select>
+          {mode !== "none" && (
+            <Select value={at} onValueChange={(v) => put({ goodnight: { at: v } }, `每天 ${v} 檢查`)}>
+              <SelectTrigger className="w-24 bg-background" aria-label="晚安檢查時間"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {(times.includes(at) ? times : [at, ...times]).map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          )}
+        </div>
+      </SRow>
+      {mode !== "none" && cands.length > 0 && (
+        <div className="px-4 py-3.5 sm:px-5">
+          <div className="font-medium leading-snug">晚上本來就開著的</div>
+          <div className="mb-2.5 text-sm leading-relaxed text-muted-foreground">點一下選起來，晚安檢查就不會管它（例如電扇、除濕機）；設成「常開」的本來就不算</div>
+          <div className="flex flex-wrap gap-2">
+            {cands.map((p) => {
+              const on = keep.has(p.id);
+              return (
+                <button key={p.id} aria-pressed={on}
+                  onClick={() => { const next = new Set(keep); if (on) next.delete(p.id); else next.add(p.id); put({ goodnight: { keep: [...next] } }); }}
+                  className={cn("rounded-full border px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", on ? "border-primary bg-primary/10 font-medium text-primary" : "bg-background text-muted-foreground hover:bg-muted")}>
+                  {p.name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </SCard>
+  );
+}
+
 export function SettingsPage() {
   const look = useLook();
   const navStyle = useNavStyle();
@@ -621,7 +704,7 @@ export function SettingsPage() {
   const metered = state.plugs.some((p) => p.mode === "metered");
   const bound = cloudBound(state.plugs).length;
   const weekly = set.weekly !== false;
-  const remind = (set.remind || {}) as { long_on?: boolean; rain?: boolean; outage_eve?: boolean; dayoff?: boolean; warn?: boolean; quake?: boolean; power?: boolean; air?: boolean; anomaly?: boolean };
+  const remind = (set.remind || {}) as { long_on?: boolean; rain?: boolean; outage_eve?: boolean; dayoff?: boolean; warn?: boolean; quake?: boolean; power?: boolean; air?: boolean; anomaly?: boolean; tier?: boolean };
   const putRemind = (k: keyof typeof remind, v: boolean, label: string) => put({ remind: { [k]: v } }, `${label}${v ? "已打開" : "已關閉"}`);
 
   return (
@@ -660,6 +743,9 @@ export function SettingsPage() {
             <SRow label="用電和平常不一樣" hint="某個電器最近 3 天比它自己平常用得多（冰箱變耗電、開得比平常久），或待機功率變高；每天早上 9 點檢查">
               <Switch checked={remind.anomaly !== false} onCheckedChange={(v) => putRemind("anomaly", v, "用電異常通知")} aria-label="用電異常通知" />
             </SRow>
+            <SRow label="電費可能跳級" hint={`插座這個月用得比上個月多，照這個速度電費單會超過下一級電價的度數就通知（一個月一次；用「用電」頁的每月度數 ${set.household_monthly_kwh ?? 300} 度估算）`}>
+              <Switch checked={remind.tier !== false} onCheckedChange={(v) => putRemind("tier", v, "電費跳級提醒")} aria-label="電費可能跳級" />
+            </SRow>
             {metered && (
               <SRow wrap label="功率過高通知" hint="有計量的插座超過這個瓦數 1 分鐘就通知">
                 <SettingNumber k="overload_watts" step={50} unit="W" label="功率過高通知" />
@@ -677,11 +763,18 @@ export function SettingsPage() {
             />
             <SRow wrap label="每週摘要" hint="每週日晚上 8 點，用通知傳這週的電費、用電和網路狀況">
               <div className="flex items-center gap-3">
-                <WeeklyPreview />
+                <ReportPreview url="/api/weekly" title="這週的家" empty="這週還沒有資料" />
                 <Switch checked={weekly} onCheckedChange={(v) => put({ weekly: v }, v ? "每週摘要已打開" : "每週摘要已關閉")} aria-label="每週摘要" />
               </div>
             </SRow>
+            <SRow wrap label="每月報告" hint="每月 1 號早上 9 點，傳上個月的電費、用最多的電器、網路斷線和常斷線的插座">
+              <div className="flex items-center gap-3">
+                <ReportPreview url="/api/report/monthly" title="上個月的家" empty="上個月還沒有資料" />
+                <Switch checked={set.monthly !== false} onCheckedChange={(v) => put({ monthly: v }, v ? "每月報告已打開" : "每月報告已關閉")} aria-label="每月報告" />
+              </div>
+            </SRow>
           </SCard>
+          <GoodnightCard s={state} />
           <SCard id="s-life" icon={CloudSun} title="天氣與生活資訊">
             <LinkRow
               label="天氣"
@@ -748,6 +841,7 @@ export function SettingsPage() {
               <SRow wrap label="手機選單" hint="左上角「☰」打開全部頁面，或放在畫面下方（排程、網路裝置、設定在「更多」裡）；只換這台裝置">
                 <div className="w-56"><Segmented label="手機選單" value={navStyle} onChange={setNavStyle} options={[["menu", "左上角 ☰"], ["tabs", "下方分頁"]]} /></div>
               </SRow>
+              {navStyle === "tabs" && <BarTabsPicker />}
             </div>
             <SRow wrap label="待機畫面" hint="這台裝置沒人碰這麼久，就換成大時鐘和公車、垃圾車這些當下有用的事；碰一下回來。適合牆上的平板">
               <Select value={String(standby)} onValueChange={(v) => setStandbyMin(Number(v))}>

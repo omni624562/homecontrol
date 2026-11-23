@@ -22,7 +22,7 @@ export const ROOM_STRONG = 1.0;
 
 // 地圖本體：區域、訊號光暈、連線、基地台、裝置；編輯時可以拖曳
 export function MapCanvas({
-  fp, devs, links, layer, edit, sel, motion, roomHeat = {}, cover, ghosts = [], people = [], tool = "select", onChange, onDragEnd, onPick, onTip,
+  fp, devs, links, layer, edit, sel, motion, roomHeat = {}, cover, ghosts = [], people = [], tool = "select", onChange, onDragEnd, onPick, onTip, powerOf, onPower,
 }: {
   fp: Floorplan;
   devs: MapDev[];
@@ -40,6 +40,9 @@ export function MapCanvas({
   onDragEnd: () => void;
   onPick: (s: MapSel) => void;
   onTip: (t: string | null) => void;
+  // 地圖上直接開關插座：裝置圓點右上角的小電源鈕（看的時候才有）
+  powerOf?: (d: MapDev) => boolean | null;
+  onPower?: (d: MapDev) => void;
 }) {
   const svg = useRef<SVGSVGElement>(null);
   const [px, setPx] = useState(900);
@@ -648,6 +651,22 @@ export function MapCanvas({
             <text y={5} textAnchor="middle" className={cn("font-bold tabular-nums", q === "weak" ? "fill-orange-600" : "fill-foreground")} style={{ fontSize: 11 }}>
               {layer === "motion" ? (m == null ? "·" : fmt(m, 1)) : d.rssi ?? "—"}
             </text>
+            {!edit && onPower && d.online && d.plugs.length > 0 && (() => {
+              const pw = powerOf?.(d) ?? null;
+              const label = `${d.name}：${pw ? "開著，點一下關閉" : "關著，點一下打開"}`;
+              return (
+                <g transform="translate(13 -13)" className="cursor-pointer" role="button" aria-label={label}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => { e.stopPropagation(); onPower(d); }}>
+                  <title>{label}</title>
+                  <circle r={13} fill="transparent" />
+                  <circle r={8.5} className={pw ? "fill-primary" : "fill-card"} stroke={pw ? "var(--card)" : "var(--muted-foreground)"} strokeWidth={pw ? 2 : 1.5}
+                    style={{ filter: "drop-shadow(0 1px 1.5px rgb(15 23 42 / .25))" }} />
+                  <path d="M0 -4.2 V-0.6 M-2.9 -2.6 A3.9 3.9 0 1 0 2.9 -2.6" fill="none" strokeWidth={1.6} strokeLinecap="round"
+                    stroke={pw ? "var(--primary-foreground)" : "var(--muted-foreground)"} />
+                </g>
+              );
+            })()}
             {(showNames || isSel) && (
               <text x={devLabel[d.key].dx} y={devLabel[d.key].dy} textAnchor={devLabel[d.key].anchor} className="fill-muted-foreground font-medium" style={{ fontSize: 11.5, paintOrder: "stroke", stroke: "var(--card)", strokeWidth: 3, strokeLinejoin: "round" }}>{shortName(d.name, 6)}</text>
             )}
