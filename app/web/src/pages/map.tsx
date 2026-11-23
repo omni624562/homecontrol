@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlertCircle, AppWindow, Cctv, List, Check, Pause, Play, Radio, CheckCircle2, DoorOpen, FlipHorizontal2, ImagePlus, LayoutGrid, Minus, MousePointer2, Pencil, Plus, Square, Trash2, Wifi, WifiOff, X } from "lucide-react";
+import { AlertCircle, AppWindow, Cctv, List, Check, Pause, Play, Radio, CheckCircle2, DoorOpen, FlipHorizontal2, ImagePlus, LayoutGrid, Minus, MousePointer2, Pencil, Plus, Power, Square, Trash2, Wifi, WifiOff, X } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -9,6 +9,8 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
+import { Sheet } from "@/components/responsive-sheet";
 import { PageHeader } from "@/components/app-shell";
 import { MotionRules } from "@/components/motion-rules";
 import { MapCanvas, ROOM_ACTIVE, ROOM_STRONG, type MapGhost, type MapLayer, type MapPerson, type MapSel, type MapTool } from "@/components/map-canvas";
@@ -20,7 +22,7 @@ import { api } from "@/lib/api";
 import { fmt } from "@/lib/format";
 import { useHub, useMedia } from "@/lib/hub";
 import {
-  AP_HEIGHTS, AP_Z, DEV_HEIGHTS, DEV_Z, autoAps, autoLayout, fpPayload, mapDevices, mapLinks, type Floorplan, type FpAp, type MapSense, type MapReplay, type FpRoom,
+  AP_HEIGHTS, AP_Z, DEV_HEIGHTS, DEV_Z, autoAps, autoLayout, fpPayload, mapDevices, mapLinks, type Floorplan, type FpAp, type MapSense, type MapReplay, type FpRoom, type MapDev,
 } from "@/lib/map-model";
 import type { Plug } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -100,6 +102,7 @@ function Confirm({ trigger, title, text, ok, onOk, safe }: { trigger: ReactNode;
 export function MapPage() {
   const { state, isOn, setPower } = useHub();
   const [confirmPw, setConfirmPw] = useState<Plug | null>(null);
+  const [outlets, setOutlets] = useState<string | null>(null); // 正在分別開關的多孔插座（裝置代碼）
   const narrow = !useMedia("(min-width: 1024px)");
   const [fp, setFpState] = useState<Floorplan | null>(null);
   const [failed, setFailed] = useState(false);
@@ -617,10 +620,10 @@ export function MapPage() {
             <MapCanvas
               fp={fp} devs={devs} links={links} layer={layer} edit={edit} sel={sel} motion={motion} roomHeat={roomHeat} cover={cover ? { cells: cover, step: covStep } : null} ghosts={ghosts} people={past != null ? [] : people} tool={tool}
               onChange={setFp} onDragEnd={save} onPick={pick} onTip={setTip}
-              powerOf={(d) => d.plugs.some((p) => isOn(p))}
+              powerOf={(d) => d.plugs.filter((p) => isOn(p)).length}
               onPower={(d) => {
-                // 一台裝置多個插座（延長線）：選起來，到旁邊的詳細一個一個開關
-                if (d.plugs.length !== 1) return pick({ kind: "dev", id: d.key });
+                // 多孔插座：跳出清單，每一孔分別開關
+                if (d.plugs.length !== 1) return setOutlets(d.key);
                 const p = d.plugs[0];
                 if (p.protect === "lock") return toast("這個插座已鎖定", { description: "要先在裝置詳細解鎖" });
                 if (needsConfirm(p, isOn(p))) return setConfirmPw(p);
@@ -724,6 +727,7 @@ export function MapPage() {
           )}
         </div>
       </div>
+      <OutletSheet dev={devs.find((d) => d.key === outlets) || null} onClose={() => setOutlets(null)} onConfirm={setConfirmPw} />
       <AlertDialog open={!!confirmPw} onOpenChange={(v) => !v && setConfirmPw(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -832,5 +836,46 @@ function CoveragePanel({ model, rooms, aps, sug, onFind }: {
         {sug != null && <p className="text-xs text-muted-foreground">一次只移一台、另一台不動的估計。真的搬了之後，地圖上的基地台也要拖到新位置，預估才會跟著更新。</p>}
       </div>
     </div>
+  );
+}
+
+// 多孔插座：每一孔分別開關（需要確認的先問、鎖定的不能動），也可以全開、全關
+function OutletSheet({ dev, onClose, onConfirm }: { dev: MapDev | null; onClose: () => void; onConfirm: (p: Plug) => void }) {
+  const { state, isOn, setPower } = useHub();
+  const plugs = dev ? dev.plugs.map((p) => state?.plugs.find((x) => x.id === p.id) || p) : [];
+  const flip = (p: Plug) => {
+    if (p.protect === "lock") return toast("這一孔已鎖定", { description: "要先在裝置詳細解鎖" });
+    if (needsConfirm(p, isOn(p))) return onConfirm(p);
+    setPower(p, !isOn(p));
+  };
+  const all = (on: boolean) => {
+    const todo = plugs.filter((p) => p.online && isOn(p) !== on && p.protect !== "lock" && !needsConfirm(p, isOn(p)) && !(p.keep_on && !on));
+    todo.forEach((p) => setPower(p, on));
+    const skipped = plugs.filter((p) => p.online && isOn(p) !== on).length - todo.length;
+    if (skipped) toast(`有 ${skipped} 孔要自己確認或已鎖定，沒有一起${on ? "開" : "關"}`);
+  };
+  return (
+    <Sheet open={!!dev} onOpenChange={(v) => !v && onClose()} title={dev?.full || "插座"} description={`${plugs.length} 孔，開著 ${plugs.filter((p) => isOn(p)).length} 孔`} icon={<Power className="size-5" />}>
+      <div className="space-y-4">
+        <ul className="divide-y rounded-lg border">
+          {plugs.map((p, i) => (
+            <li key={p.id} className="flex items-center gap-3 px-3 py-2.5">
+              <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted text-xs font-semibold tabular-nums text-muted-foreground">{i + 1}</span>
+              <div className="min-w-0 flex-1">
+                <div className="truncate font-medium">{p.name}</div>
+                {(!p.online || p.protect === "lock" || p.keep_on) && (
+                  <div className="text-xs text-muted-foreground">{!p.online ? "連不上" : p.protect === "lock" ? "已鎖定" : "常開"}</div>
+                )}
+              </div>
+              <Switch checked={isOn(p)} disabled={!p.online || p.protect === "lock"} onCheckedChange={() => flip(p)} aria-label={`${p.name} ${isOn(p) ? "關閉" : "打開"}`} />
+            </li>
+          ))}
+        </ul>
+        <div className="flex gap-2">
+          <Button variant="outline" className="h-10 flex-1" onClick={() => all(true)}>全開</Button>
+          <Button variant="outline" className="h-10 flex-1" onClick={() => all(false)}>全關</Button>
+        </div>
+      </div>
+    </Sheet>
   );
 }
