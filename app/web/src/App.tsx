@@ -6,6 +6,7 @@ import { TruckRush } from "@/components/truck-rush";
 import { FxLayer } from "@/components/fx";
 import { Standby } from "@/components/standby";
 import { useLook } from "@/lib/look";
+import { track } from "@/lib/usage";
 
 // 首頁以外的頁面用到才載入（首頁比較快出現）；首頁出來後趁空檔先載好，切換時就不用等
 const load = {
@@ -21,9 +22,10 @@ const load = {
 const PAGES = Object.fromEntries(Object.entries(load).map(([k, f]) => [k, lazy(f)])) as Record<keyof typeof load, React.LazyExoticComponent<() => React.JSX.Element>>;
 
 export default function App() {
-  const [tab, setTab] = useState(() => location.hash.slice(1) || "plugs");
+  // 網址 #頁名 或 #頁名/段落（例如 #settings/s-notify：打開設定頁並捲到通知）
+  const [tab, setTab] = useState(() => location.hash.slice(1).split("/")[0] || "plugs");
   useEffect(() => {
-    const on = () => setTab(location.hash.slice(1) || "plugs");
+    const on = () => setTab(location.hash.slice(1).split("/")[0] || "plugs");
     addEventListener("hashchange", on);
     return () => removeEventListener("hashchange", on);
   }, []);
@@ -43,6 +45,7 @@ export default function App() {
     mq.addEventListener("change", sync);
     return () => mq.removeEventListener("change", sync);
   }, [look]);
+  useEffect(() => { track(tab); }, [tab]);
   const Page = tab in PAGES ? PAGES[tab as keyof typeof load] : null;
   return (
     <AskProvider>

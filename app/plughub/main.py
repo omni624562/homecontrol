@@ -147,6 +147,7 @@ async def lifespan(app_: FastAPI):
         except Exception:  # noqa: BLE001
             pass
     await hub.stop()
+    hub.usage.save()
 
 
 app = FastAPI(title="插座", lifespan=lifespan, docs_url=None, redoc_url=None)
@@ -258,7 +259,14 @@ async def require_pairing(request: Request, call_next):
         if not device:
             return JSONResponse({"detail": "這台裝置還沒配對", "unpaired": True}, status_code=401)
         request.state.device = device
-    return await call_next(request)
+    response = await call_next(request)
+    # 使用統計：會改東西的操作，用處理它的函式名稱記一次（不記內容、不記是誰）
+    if guarded and request.method in ("POST", "PUT", "PATCH", "DELETE") and response.status_code < 400:
+        endpoint = request.scope.get("endpoint")
+        name = getattr(endpoint, "__name__", "")
+        if name and name not in USAGE_SKIP:
+            hub.usage.hit(f"api:{name}")
+    return response
 
 
 def _plug(plug_id: str):
@@ -1003,6 +1011,7 @@ async def cameras_snapshot(cam_id: str, request: Request) -> Response:
     cam = hub.cameras.get(cam_id)
     if not cam:
         raise HTTPException(404, "找不到這台攝影機")
+    hub.usage.hit("view:camera", every=300)  # 即時畫面一直抓圖：5 分鐘內算一次
     try:
         data = await asyncio.to_thread(camera_mod.snapshot, cam)
     except Exception as err:  # noqa: BLE001
@@ -2046,3 +2055,77 @@ if (WEB / "assets").is_dir():
     app.mount("/assets", _Immutable(directory=WEB / "assets"), name="web")
 
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+
+# ---- 功能使用統計、設定進度 ----
+
+USAGE_SKIP = {"usage_hit", "setup_skip"}  # 統計本身不算
+
+
+@app.post("/api/usage")
+async def usage_hit(body: dict = Body(...)) -> dict[str, Any]:
+    """畫面回報看了哪些頁：{"keys": ["page:map", …]}（只收 page: 開頭，一次最多 20 個）。"""
+    n = 0
+    for key in list(body.get("keys") or [])[:20]:
+        if isinstance(key, str) and key.startswith("page:") and hub.usage.hit(key):
+            n += 1
+    return {"ok": True, "count": n}
+
+
+@app.get("/api/usage")
+async def usage_get() -> dict[str, Any]:
+    return hub.usage.summary()
+
+
+def _setup_items() -> list[dict[str, Any]]:
+    """還沒設定完的功能：做好了沒、去哪裡設定。畫面另外加「這台裝置用 HTTPS」。"""
+    data = store.data
+    live = [pid for pid in hub.plugs]
+    fp = data["floorplan"]
+    placed = {k.replace(":", "").lower() for k in (fp.get("items") or {})}
+    placed |= {k[2:].lower() for k in (fp.get("items") or {}) if k.startswith("o:")}
+    cams = [c for c in hub.cameras.list if c.get("enabled", True)]
+    rooms_cams = [c for c in cams if c.get("role", "room") == "room"]
+    entry_cams = [c for c in cams if c.get("role") == "entry"]
+    b = hub.backup.report()
+    items = [
+        {"id": "line", "title": "LINE 通知", "hint": "提醒、攝影機、異常都靠它送到手機", "done": hub.notifier.status()["line"], "href": "#settings/s-notify"},
+        {"id": "people", "title": "登記家人的手機", "hint": "知道誰在家：出門自動關、回家開燈、沒人在家時的通知", "done": any(p.get("macs") for p in data["people"]), "href": "#net"},
+        {"id": "rooms", "title": "每個插座分好房間", "hint": f"還有 {sum(1 for pid in live if not store.meta(pid).room)} 個沒分", "done": all(store.meta(pid).room for pid in live), "href": "#edit"},
+        {"id": "map", "title": "畫家中地圖", "hint": "畫房間、把插座放上去，地圖上就能直接開關", "done": bool(fp.get("rooms")) and all(pid.split("-")[0].lower() in placed or pid.lower() in placed for pid in live), "href": "#map"},
+        {"id": "scene", "title": "建一個情境", "hint": "例如「睡覺」一次關掉好幾個插座", "done": bool(data["scenes"]), "href": "#edit"},
+        {"id": "schedule", "title": "建一個排程", "hint": "固定時間、日出日落自動開關", "done": bool(store.schedules), "href": "#schedule"},
+        {"id": "backup", "title": "自動備份", "hint": "設定壞掉、換樹莓派時可以還原", "done": bool(b.get("configured")) and bool(b.get("count")), "href": "#settings/s-sys"},
+    ]
+    if cams:
+        items.append({"id": "cam_view", "title": "設定誰可以看攝影機", "hint": "只有勾選的裝置能看畫面", "done": bool(hub.cameras.viewers), "href": "#cameras"})
+    if rooms_cams:
+        left = [c["name"] for c in rooms_cams if not c.get("room")]
+        items.append({"id": "cam_room", "title": "攝影機選房間", "hint": f"還沒選：{'、'.join(left)}" if left else "有人就開燈、地圖上顯示有人", "done": not left, "href": "#cameras"})
+    if entry_cams:
+        left = [c["name"] for c in entry_cams if not ((c.get("door") or {}).get("rect") and len((c.get("door") or {}).get("refs") or []) >= 2)]
+        items.append({"id": "cam_door", "title": "門口攝影機：圈出門、記住關門的樣子", "hint": f"{'、'.join(left)}：圈好門之後，白天、晚上各按一次「記住現在的樣子」" if left else "開門偵測已經可以用", "done": not left, "href": "#cameras"})
+    if cams:
+        items.append({"id": "faces", "title": "登錄家人的臉", "hint": "認出家人就做對應的事，陌生人才通知", "done": any(p.get("kind") == "family" for p in hub.gallery.people.values()), "href": "#cameras"})
+    skip = set(data["settings"].get("setup_skip") or [])
+    for it in items:
+        it["skipped"] = it["id"] in skip and not it["done"]
+    return items
+
+
+@app.get("/api/setup")
+async def setup_get() -> dict[str, Any]:
+    return {"items": _setup_items()}
+
+
+@app.put("/api/setup/skip")
+async def setup_skip(body: dict = Body(...)) -> dict[str, Any]:
+    """{"id": 項目, "skip": true/false}：這項不需要（不再算進進度）。"""
+    sid = str(body.get("id") or "")[:20]
+    skip = [x for x in store.data["settings"].get("setup_skip") or [] if x != sid]
+    if body.get("skip"):
+        skip.append(sid)
+    store.data["settings"]["setup_skip"] = skip
+    store.save()
+    return {"items": _setup_items()}
+
