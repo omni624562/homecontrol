@@ -612,8 +612,8 @@ export function MapPage() {
           <div className="min-h-6 text-sm tabular-nums text-muted-foreground" aria-live="polite">
             <span className={cn(tip && "font-medium text-foreground")}>{tip || dflt}</span>
           </div>
-          {/* 手機：地圖放大到 600px 寬，可以左右滑 */}
-          <div className="-mx-4 overflow-x-auto px-4 pb-1 sm:mx-0 sm:overflow-visible sm:px-0 sm:pb-0">
+          {/* 地圖一律縮到放得下（不用左右滑）；要看細節就放大 */}
+          <div>
             <MapCanvas
               fp={fp} devs={devs} links={links} layer={layer} edit={edit} sel={sel} motion={motion} roomHeat={roomHeat} cover={cover ? { cells: cover, step: covStep } : null} ghosts={ghosts} people={past != null ? [] : people} tool={tool}
               onChange={setFp} onDragEnd={save} onPick={pick} onTip={setTip}
@@ -715,7 +715,7 @@ export function MapPage() {
                 ) : (
                   !fp.aps.length && <Note>按右上角「編輯」可以把你的 Wi-Fi 基地台也擺上去，比較容易看出哪裡離基地台太遠。</Note>
                 )}
-                <Note>點裝置或 Wi-Fi 基地台可以設定它放的高度。裝置右上角的小圓鈕可以直接開關插座（實心是開著）；多孔插座每一孔各有一個小點，編輯時可以拖到電器的位置。裝置周圍的顏色是它的訊號：藍色強（-55 dBm 以上）、淡藍普通、橘色弱（低於 -70，容易斷線）。</Note>
+                <Note>點裝置或 Wi-Fi 基地台可以設定它放的高度。裝置右上角的小圓鈕可以直接開關插座（實心是開著）；多孔插座每一孔各有一個點，編輯時可以拖到電器的位置；地圖可以兩指放大、拖曳，或按右下角的 ＋／－。裝置周圍的顏色是它的訊號：藍色強（-55 dBm 以上）、淡藍普通、橘色弱（低於 -70，容易斷線）。</Note>
               </SideCard>
             </>
           )}

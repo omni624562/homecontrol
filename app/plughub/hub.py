@@ -2983,6 +2983,7 @@ class Hub:
                 "protect": meta.protect,
                 "matter": meta.matter,
                 "risky": meta.risky,
+                "short": meta.short,
                 "max_on_s": meta.max_on_s,
                 "night": meta.night,
                 "standby": self.is_standby(plug),

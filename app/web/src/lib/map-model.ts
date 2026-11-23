@@ -338,3 +338,18 @@ export function roomsAlong(fp: Floorplan, x1: number, y1: number, x2: number, y2
   }
   return out;
 }
+
+// 地圖上用的短名稱：自己取的優先；沒取就從名稱猜（Standing Lamp → 立燈、Screen Socket → 螢幕）
+const SHORT: [RegExp, string][] = [
+  [/standing\s*lamp|floor\s*lamp/i, "立燈"], [/desk\s*lamp|table\s*lamp/i, "檯燈"], [/lamp|light/i, "燈"],
+  [/screen|monitor|display/i, "螢幕"], [/laptop|notebook/i, "筆電"], [/\bpc\b|computer|desktop/i, "電腦"],
+  [/\btv\b|television/i, "電視"], [/fan/i, "電扇"], [/heater/i, "暖氣"], [/router|wifi/i, "路由器"],
+  [/kettle/i, "熱水壺"], [/charger/i, "充電"], [/speaker|audio/i, "音響"], [/printer/i, "印表機"],
+];
+export function suggestShort(name: string): string {
+  const n = name.trim();
+  for (const [re, word] of SHORT) if (re.test(n)) return word;
+  const zh = n.replace(/[（(].*?[)）]/g, "").replace(/電源|插座|socket|plug/gi, "").trim();
+  return shortName(zh || n, 4);
+}
+export const mapShort = (p: { name: string; short?: string | null }) => p.short || suggestShort(p.name);
