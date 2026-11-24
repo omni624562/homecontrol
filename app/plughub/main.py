@@ -1144,14 +1144,35 @@ async def cameras_segment(cam_id: str, request: Request, body: dict = Body(...))
         raise HTTPException(400, "要給點的位置 x、y") from None
     t = time.monotonic()
     try:
-        if body.get("fresh") or not segmenter.has_frame(cam_id):
-            jpeg = await asyncio.to_thread(camera_mod.snapshot, cam)
-            await asyncio.to_thread(segmenter.encode, cam_id, jpeg)
-        shapes = await asyncio.to_thread(segmenter.segment, cam_id, x, y)
+        shapes = await _segment_gpu(cam, x, y, bool(body.get("fresh")))  # 先問 Jetson（GPU）
+        if shapes is None:  # 沒設定、連不上：樹莓派自己算
+            if body.get("fresh") or not segmenter.has_frame(cam_id):
+                jpeg = await asyncio.to_thread(camera_mod.snapshot, cam)
+                await asyncio.to_thread(segmenter.encode, cam_id, jpeg)
+            shapes = await asyncio.to_thread(segmenter.segment, cam_id, x, y)
+            asyncio.get_running_loop().call_later(segment_mod.IDLE_FREE + 5, segmenter.free_if_idle)
     except Exception as err:  # noqa: BLE001
         raise HTTPException(502, f"找不到邊：{err}") from None
-    asyncio.get_running_loop().call_later(segment_mod.IDLE_FREE + 5, segmenter.free_if_idle)
     return {"shapes": shapes, "ms": round((time.monotonic() - t) * 1000)}
+
+
+_seg_sent: dict[str, float] = {}  # 攝影機 → 上次把畫面送給 Jetson 編碼的時間
+
+
+async def _segment_gpu(cam: dict[str, Any], x: float, y: float, fresh: bool) -> list[dict[str, Any]] | None:
+    if not hub.gpu.url:
+        return None
+    cid = cam["id"]
+    jpeg = None
+    if fresh or time.time() - _seg_sent.get(cid, 0) > segment_mod.KEEP_EMB - 10:
+        jpeg = await asyncio.to_thread(camera_mod.snapshot, cam)
+    r = await asyncio.to_thread(hub.gpu.segment, cid, x, y, jpeg)
+    if r == "need":  # Jetson 那邊的編碼過期了：送新畫面
+        jpeg = await asyncio.to_thread(camera_mod.snapshot, cam)
+        r = await asyncio.to_thread(hub.gpu.segment, cid, x, y, jpeg)
+    if isinstance(r, list) and jpeg:
+        _seg_sent[cid] = time.time()
+    return r if isinstance(r, list) else None
 
 
 CLIP_DIR = Path("/tmp/plughub-clips")

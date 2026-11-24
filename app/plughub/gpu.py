@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 import logging
 import time
+import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any, Callable
 
@@ -46,30 +48,70 @@ class GpuVision:
     def url(self) -> str:
         return (self._settings().get("vision_url") or "").rstrip("/")
 
-    def detect(self, jpeg: bytes) -> dict[str, Any] | None:
-        """{"scores": {...}, "objects": [...]}；沒設定、連不上 → None（呼叫的人改用樹莓派的模型）。"""
+    def _post(self, path: str, body: bytes, timeout: float = TIMEOUT, soft: tuple[int, ...] = ()) -> dict[str, Any] | None:
+        """送一張畫面給影像模型服務；沒設定、連不上 → None（呼叫的人改用樹莓派的模型）。soft：這些狀態碼不算連不上。"""
         if not self.url or time.time() - self._fail_at < RETRY:
             return None
         t = time.monotonic()
         try:
-            req = urllib.request.Request(self.url + "/detect", data=jpeg, method="POST",
+            req = urllib.request.Request(self.url + path, data=body, method="POST",
                                          headers={"Authorization": f"Bearer {self._token()}", "Content-Type": "image/jpeg"})
-            with urllib.request.urlopen(req, timeout=TIMEOUT) as r:  # noqa: S310  只連家裡網路的主機
+            with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310  只連家裡網路的主機
                 res = json.loads(r.read())
+        except urllib.error.HTTPError as err:
+            if err.code in soft:
+                return {"_status": err.code}
+            return self._failed(err)
         except Exception as err:  # noqa: BLE001
-            if not self.error:
-                _LOGGER.warning("GPU 辨識連不上，先用樹莓派自己的模型：%s", err)
-            self.error = str(getattr(err, "reason", None) or err)[:200]
-            self._fail_at = time.time()
-            return None
+            return self._failed(err)
         if self.error:
             _LOGGER.info("GPU 辨識恢復了")
         self.error = None
         self.count += 1
         self.total_ms += (time.monotonic() - t) * 1000
         self.last_ok = time.time()
+        return res
+
+    def _failed(self, err: Exception) -> None:
+        if not self.error:
+            _LOGGER.warning("影像模型服務連不上，先用樹莓派自己的模型：%s", err)
+        self.error = str(getattr(err, "reason", None) or err)[:200]
+        self._fail_at = time.time()
+        return None
+
+    def detect(self, jpeg: bytes) -> dict[str, Any] | None:
+        """{"scores": {...}, "objects": [...]}"""
+        res = self._post("/detect", jpeg)
+        if res is None:
+            return None
         objs = [o for o in res.get("objects") or [] if float(o.get("score") or 0) >= KEEP]
         return {"scores": normalize(objs), "objects": objs[:20]}
+
+    def pose(self, jpeg: bytes) -> list[dict[str, Any]] | None:
+        """跟 vision.Pose.analyze 一樣的格式。"""
+        res = self._post("/pose", jpeg)
+        if res is None:
+            return None
+        return [{**p, "box": tuple(p["box"]), "foot": tuple(p["foot"])} for p in res.get("people") or []]
+
+    def faces(self, jpeg: bytes) -> list[dict[str, Any]] | None:
+        """跟 faces.Engine.analyze 一樣的格式（feat 換回 numpy）。"""
+        import numpy as np
+
+        res = self._post("/faces", jpeg)
+        if res is None:
+            return None
+        return [{**f, "box": tuple(f["box"]), "feat": np.asarray(f["feat"], np.float32)} for f in res.get("faces") or []]
+
+    def segment(self, key: str, x: float, y: float, jpeg: bytes | None) -> list[dict[str, Any]] | None:
+        """點一下就框。jpeg=None：用 60 秒內編碼過的畫面（服務那邊沒有 → 回傳 "need"）。"""
+        q = urllib.parse.urlencode({"key": key, "x": f"{x:.4f}", "y": f"{y:.4f}"})
+        res = self._post(f"/segment?{q}", jpeg or b"", timeout=20, soft=(409,))
+        if res is None:
+            return None
+        if res.get("_status") == 409:
+            return "need"  # type: ignore[return-value]
+        return res.get("shapes") or []
 
     def public(self) -> dict[str, Any]:
         if not self.url:
