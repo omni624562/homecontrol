@@ -21,7 +21,7 @@ GET /api/sensing/replay     動靜回放：最近 24 小時每 5 分鐘一格
 GET /api/sensing/week       一週動靜：每間房「星期幾 × 幾點」有動靜的比例
 GET /api/net/events         斷線紀錄：外網、基地台卡住、Wi-Fi、插座、停電恢復
 GET /api/net/plug-health    插座連線健檢：斷幾次、訊號、建議
-GET/POST /api/cameras       網路攝影機（認人）；PUT/DELETE /api/cameras/{id}（room、enabled、alert、帳密）；GET …/{id}/snapshot.jpg 現在的畫面
+GET/POST /api/cameras       網路攝影機（認人）；PUT/DELETE /api/cameras/{id}（room、enabled、alert、帳密）；GET …/{id}/snapshot.jpg 現在的畫面；POST …/{id}/segment 點一下就框
 GET /api/faces              認臉：認得的人、動作、登記（POST/DELETE /api/faces/enroll）、紀錄；PUT /api/faces/actions、PUT/DELETE /api/faces/{id}
 PUT /api/cameras/access     誰可以看攝影機；POST …/access/send-code 驗證碼送到手機、POST …/access/claim 開通這台
 GET /api/report/monthly     每月報告預覽（上個月）
@@ -74,6 +74,7 @@ from starlette.middleware.gzip import GZipMiddleware
 from . import auth as authmod
 from . import camera as camera_mod
 from . import vision as vision_mod
+from . import segment as segment_mod
 from . import tls as tlsmod
 from .locate import MIN_SAMPLES as LOCATE_MIN, TRAIN_S as LOCATE_TRAIN_S
 from .assistant import MODELS as ASSISTANT_MODELS, Assistant
@@ -1123,6 +1124,34 @@ async def cameras_zone_ref(cam_id: str, zid: str, request: Request) -> dict[str,
     hub.cameras.save()
     z = next(x for x in cam["zones"] if x["id"] == zid)
     return {"cameras": hub.cameras.public(), "refs": n, "is_night": bool(hub.cameras.state.get(cam_id, {}).get("night")), **camera_mod.ref_counts(z)}
+
+
+segmenter = segment_mod.Segmenter()
+
+
+@app.post("/api/cameras/{cam_id}/segment")
+async def cameras_segment(cam_id: str, request: Request, body: dict = Body(...)) -> dict[str, Any]:
+    """點一下就框：{"x", "y"}（0～1）→ {"shapes": [{"poly", "area", "score"}]}（由小到大）。第一次約 4 秒，60 秒內再點很快。"""
+    _need_view(request)
+    cam = hub.cameras.get(cam_id)
+    if not cam:
+        raise HTTPException(404, "找不到這台攝影機")
+    if not segment_mod.available():
+        raise HTTPException(503, "還沒有找邊的模型（要重新建置）")
+    try:
+        x, y = (min(1.0, max(0.0, float(body[k]))) for k in ("x", "y"))
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(400, "要給點的位置 x、y") from None
+    t = time.monotonic()
+    try:
+        if body.get("fresh") or not segmenter.has_frame(cam_id):
+            jpeg = await asyncio.to_thread(camera_mod.snapshot, cam)
+            await asyncio.to_thread(segmenter.encode, cam_id, jpeg)
+        shapes = await asyncio.to_thread(segmenter.segment, cam_id, x, y)
+    except Exception as err:  # noqa: BLE001
+        raise HTTPException(502, f"找不到邊：{err}") from None
+    asyncio.get_running_loop().call_later(segment_mod.IDLE_FREE + 5, segmenter.free_if_idle)
+    return {"shapes": shapes, "ms": round((time.monotonic() - t) * 1000)}
 
 
 @app.put("/api/cameras/{cam_id}/lines")

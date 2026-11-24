@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Ban, ChevronLeft, DoorOpen, Loader2, Minus, Moon, Package, Plus, Sun, Trash2, UserRound } from "lucide-react";
+import { Ban, ChevronLeft, DoorOpen, Loader2, Minus, MousePointerClick, Moon, Package, Plus, Sun, Trash2, UserRound } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,7 +12,7 @@ import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 // 攝影機的偵測：門、有人進來、東西多了／少了、經過的線、不要看的地方，全部在同一個清單。
-// 「新增偵測」一步一步做：選種類 → 點出形狀 → 取名字 → （門、東西）記住正常的樣子 → 要做什麼。
+// 「新增偵測」一步一步做：選種類 → 點一下那個東西自動框（或自己點角）→ 取名字 → （門、東西）記住正常的樣子 → 要做什麼。
 // 點畫面上的形狀＝選它：拖圓點調整形狀，下面出現它的設定。
 
 async function call<T>(method: string, path: string, body?: unknown, ok?: string): Promise<T | null> {
@@ -67,7 +67,9 @@ export function DetectEditor({ cam, scenes, setCams, upd }: Props) {
   const [t, setT] = useState(() => Date.now());
   const [sel, setSel] = useState<Sel | null>(null);
   const [draft, setDraft] = useState<P[] | null>(null); // 選到的形狀，拖過圓點之後的樣子（還沒存）
-  const [wiz, setWiz] = useState<{ step: number; kind: Kind; pts: P[]; name: string; id?: string } | null>(null);
+  const [wiz, setWiz] = useState<{ step: number; kind: Kind; pts: P[]; name: string; id?: string; manual?: boolean } | null>(null);
+  const [seg, setSeg] = useState<{ cands: P[][]; i: number; at: P } | null>(null); // 點一下就框：候選形狀（由小到大）
+  const [segBusy, setSegBusy] = useState(false);
   const [hover, setHover] = useState<P | null>(null);
   const [busy, setBusy] = useState(false);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -100,7 +102,31 @@ export function DetectEditor({ cam, scenes, setCams, upd }: Props) {
 
   // ---- 新增偵測 ----
   const startWiz = () => { setSel(null); setWiz({ step: 1, kind: "door", pts: [], name: "" }); };
-  const pickKind = (k: Kind) => setWiz({ step: 2, kind: k, pts: [], name: NAMES[k][0] || "" });
+  const pickKind = (k: Kind) => { setSeg(null); setWiz({ step: 2, kind: k, pts: [], name: NAMES[k][0] || "" }); };
+  const auto = wiz?.step === 2 && wiz.kind !== "line" && !wiz.manual;
+  // 點一下就框：樹莓派找出點到的那個東西的邊（第一次約 5 秒，之後很快）
+  const tapSegment = async (q: P) => {
+    if (!wiz || segBusy) return;
+    setSegBusy(true);
+    try {
+      const r = await api<{ shapes: { poly: P[]; score: number }[] }>("POST", `/api/cameras/${cam.id}/segment`, { x: q[0], y: q[1] });
+      if (!r.shapes.length) { toast("這裡找不到明顯的邊", { description: "點那個東西的正中間試試，或按「自己點角」" }); return; }
+      const best = r.shapes.reduce((b, x, i) => (x.score > r.shapes[b].score ? i : b), 0);
+      setSeg({ cands: r.shapes.map((x) => x.poly), i: best, at: q });
+      setWiz((w) => (w ? { ...w, pts: r.shapes[best].poly } : w));
+    } catch (e) {
+      toast.error("沒辦法自動框", { description: `${(e as Error).message}；改成自己點角` });
+      setWiz((w) => (w ? { ...w, manual: true, pts: [] } : w));
+    } finally {
+      setSegBusy(false);
+    }
+  };
+  const segSize = (d: number) => {
+    if (!seg || !wiz) return;
+    const i = Math.min(seg.cands.length - 1, Math.max(0, seg.i + d));
+    setSeg({ ...seg, i });
+    setWiz({ ...wiz, pts: seg.cands[i] });
+  };
   const drawDone = async () => {
     if (!wiz) return;
     if (wiz.kind === "ignore") {
@@ -132,6 +158,7 @@ export function DetectEditor({ cam, scenes, setCams, upd }: Props) {
   const onTap = (e: React.MouseEvent) => {
     if (wiz?.step === 2) {
       const q = pos(e);
+      if (auto) { tapSegment(q); return; }
       if (wiz.kind === "line") {
         const pts = [...wiz.pts, q].slice(0, 2);
         setWiz({ ...wiz, pts });
@@ -179,7 +206,10 @@ export function DetectEditor({ cam, scenes, setCams, upd }: Props) {
   const drawing = wiz?.step === 2;
   const doorsNeedNight = cam.night ? zones.filter((z) => z.kind === "door" && !z.night) : [];
 
-  const hint = wiz?.step === 2
+  const what = wiz?.kind === "door" ? "門" : wiz?.kind === "ignore" ? "不要看的地方" : wiz?.kind === "object" ? "那個東西" : "這一區";
+  const hint = auto
+    ? (segBusy ? (seg ? "正在找邊…" : "正在找邊…第一次大約 5 秒") : !wiz.pts.length ? `點一下${what}的正中間，會自動框出來` : "框對了按「下一步」；不對就按「大一點／小一點」，或點別的地方")
+    : wiz?.step === 2
     ? (wiz.kind === "line" ? (wiz.pts.length === 0 ? "點一下線的起點（例如樓梯口的一邊）" : wiz.pts.length === 1 ? "再點一下線的終點" : "好了按「下一步」；點錯可以「復原上一點」")
       : wiz.pts.length < 3 ? `點出${wiz.kind === "door" ? "門" : wiz.kind === "ignore" ? "不要看的地方" : "這一區"}的角（已點 ${wiz.pts.length} 個）` : `繼續點，或點回第一個點／按「下一步」（已點 ${wiz.pts.length} 個）`)
     : sel && !wiz && selPts ? "拖圓點調整形狀" : null;
@@ -242,16 +272,18 @@ export function DetectEditor({ cam, scenes, setCams, upd }: Props) {
               );
             })}
             <defs><marker id="det-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill={C_ZONE} /></marker></defs>
+            {auto && seg && !segBusy && <ellipse cx={seg.at[0]} cy={seg.at[1]} rx={0.008} ry={0.014} fill="#fff" stroke={C_DOOR} vectorEffect="non-scaling-stroke" style={{ strokeWidth: 2, pointerEvents: "none" }} />}
             {drawing && wiz && wiz.pts.length > 0 && (() => {
               const col = wiz.kind === "door" ? C_DOOR : wiz.kind === "ignore" ? C_IGN : C_ZONE;
-              const live = hover && !(wiz.kind === "line" && wiz.pts.length >= 2) ? [...wiz.pts, hover] : wiz.pts;
+              const live = hover && !auto && !(wiz.kind === "line" && wiz.pts.length >= 2) ? [...wiz.pts, hover] : wiz.pts;
               return (
                 <g style={{ pointerEvents: "none" }}>
                   {wiz.kind === "line"
                     ? <polyline points={path(live)} fill="none" stroke={col} strokeDasharray={wiz.pts.length < 2 ? "6 4" : undefined} vectorEffect="non-scaling-stroke" style={{ strokeWidth: 3 }} />
+                    : auto ? <polygon points={path(live)} fill={col} fillOpacity={0.22} stroke={col} vectorEffect="non-scaling-stroke" style={{ strokeWidth: 3 }} />
                     : <polyline points={path(live)} fill={col} fillOpacity={0.14} stroke={col} vectorEffect="non-scaling-stroke" style={{ strokeWidth: 2 }} />}
                   {wiz.pts.map((p, i) => {
-                    const first = i === 0 && wiz.kind !== "line" && wiz.pts.length >= 3;
+                    const first = i === 0 && !auto && wiz.kind !== "line" && wiz.pts.length >= 3;
                     return <ellipse key={i} cx={p[0]} cy={p[1]} rx={first ? 0.018 : 0.011} ry={(first ? 0.018 : 0.011) * 1.78} fill={first ? "var(--card)" : col} stroke={col} vectorEffect="non-scaling-stroke" style={{ strokeWidth: 2 }} />;
                   })}
                 </g>
@@ -263,6 +295,7 @@ export function DetectEditor({ cam, scenes, setCams, upd }: Props) {
                 onPointerDown={(e) => { e.stopPropagation(); (e.currentTarget.ownerSVGElement as SVGSVGElement).setPointerCapture(e.pointerId); dragging.current = i; }} />
             ))}
           </svg>
+          {segBusy && <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-background/30"><span className="flex items-center gap-2 rounded-full bg-card px-4 py-2 text-sm font-medium shadow"><Loader2 className="size-4 animate-spin" />找邊中</span></div>}
         </div>
 
         {wiz ? Wizard() : (
@@ -344,13 +377,34 @@ export function DetectEditor({ cam, scenes, setCams, upd }: Props) {
           <div className="flex">{cancel}</div>
         </div>
       );
+    if (wiz.step === 2 && auto) {
+      return (
+        <div className="space-y-3">
+          {bar}
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" onClick={() => { setSeg(null); setWiz({ ...wiz, step: 1, pts: [] }); }}><ChevronLeft />上一步</Button>
+            {seg && seg.cands.length > 1 && (
+              <>
+                <Button variant="outline" size="sm" disabled={seg.i === 0 || segBusy} onClick={() => segSize(-1)}><Minus />小一點</Button>
+                <Button variant="outline" size="sm" disabled={seg.i === seg.cands.length - 1 || segBusy} onClick={() => segSize(1)}><Plus />大一點</Button>
+              </>
+            )}
+            <Button variant="ghost" size="sm" onClick={() => { setSeg(null); setWiz({ ...wiz, manual: true, pts: [] }); }}>自己點角</Button>
+            {cancel}
+            <Button size="sm" className="ml-auto" disabled={wiz.pts.length < 3 || segBusy} onClick={drawDone}>{wiz.kind === "ignore" ? "完成" : "下一步"}</Button>
+          </div>
+          <p className="flex items-start gap-1.5 text-xs text-muted-foreground"><MousePointerClick className="mt-0.5 size-3.5 shrink-0" />樹莓派會找出點到的那一塊的邊（影像不存檔）。差一點沒關係，存好後點它就能拖圓點微調。</p>
+        </div>
+      );
+    }
     if (wiz.step === 2) {
       const ready = wiz.kind === "line" ? wiz.pts.length === 2 : wiz.pts.length >= 3;
       return (
         <div className="space-y-3">
           {bar}
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" size="sm" onClick={() => setWiz({ ...wiz, step: 1, pts: [] })}><ChevronLeft />上一步</Button>
+            <Button variant="outline" size="sm" onClick={() => setWiz({ ...wiz, step: 1, pts: [], manual: false })}><ChevronLeft />上一步</Button>
+            {wiz.kind !== "line" && <Button variant="ghost" size="sm" onClick={() => setWiz({ ...wiz, pts: [], manual: false })}><MousePointerClick />點一下自動框</Button>}
             <Button variant="outline" size="sm" disabled={!wiz.pts.length} onClick={() => setWiz({ ...wiz, pts: wiz.pts.slice(0, -1) })}>復原上一點</Button>
             {cancel}
             <Button size="sm" className="ml-auto" disabled={!ready} onClick={drawDone}>{wiz.kind === "ignore" ? "完成" : "下一步"}</Button>
