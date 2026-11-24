@@ -107,3 +107,39 @@ def test_service_segments_and_auth(tmp_path, monkeypatch):
         assert call("GET", "/clip?cam=g&start=0&end=1000", "sekret")[0] == 400  # 太長
     finally:
         srv.shutdown()
+
+
+def test_gpu_normalize_and_fallback(app_module, monkeypatch, tmp_path):
+    from plughub import camera, gpu
+
+    sc = gpu.normalize([{"name": "person", "score": gpu.GPU_PERSON_ON}, {"name": "cat", "score": 0.9}, {"name": "bench", "score": 0.8}])
+    assert abs(sc["person"] - camera.PERSON_ON) < 1e-9 and sc["cat"] == 0.7 and sc["dog"] == 0.0
+    settings = {}
+    g = gpu.GpuVision(lambda: settings, lambda: "tok")
+    assert g.detect(b"j") is None and g.public() == {"configured": False}
+    settings["vision_url"] = "http://127.0.0.1:9"  # 沒人聽：失敗、1 分鐘內不再試
+    assert g.detect(b"j") is None and g.error
+    t0 = g._fail_at
+    assert g.detect(b"j") is None and g._fail_at == t0
+
+    # 攝影機：GPU 有回就用 GPU 的分數，沒有就用樹莓派的模型
+    cams = camera.Cameras(tmp_path)
+    cam = {"id": "c", "host": "x", "enabled": True}
+    monkeypatch.setattr(camera, "snapshot", lambda c: b"jpeg")
+    monkeypatch.setattr(cams.detector, "scores", lambda j: {"person": 0.0, "cat": 0.0, "dog": 0.0})
+    cams.remote = lambda j: {"scores": {"person": 0.9, "cat": 0, "dog": 0}, "objects": [{"name": "person", "score": 0.95}]}
+    cams.check(cam, 1)
+    assert cams.state["c"]["engine"] == "gpu" and cams.state["c"]["recent"] == [0.9]
+    cams.remote = lambda j: None
+    cams.check(cam, 2)
+    assert cams.state["c"]["engine"] == "cpu" and cams.state["c"]["recent"][-1] == 0.0
+
+
+def test_vision_api(app_module):
+    hub = app_module.hub
+    c, dev = _client(app_module)
+    hub.cameras.viewers = [dev["id"]]
+    assert c.get("/api/vision").json()["configured"] is False
+    assert c.put("/api/vision", json={"url": "http://example.com:1"}).status_code == 400
+    assert c.put("/api/vision", json={"url": "http://10.0.2.99:8210"}).json()["url"] == "http://10.0.2.99:8210"
+    assert c.put("/api/vision", json={"url": ""}).json()["configured"] is False
