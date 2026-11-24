@@ -409,3 +409,48 @@ def test_event_windows_and_keep_api(app_module, monkeypatch):
     monkeypatch.setattr(hub.recorder, "refresh", lambda cams, windows=None: None)
     r = c.put("/api/recorder", json={"keep_all": 7, "keep_event": 5}).json()
     assert r["keep"] == {"all": 7, "event": 7}
+
+
+def test_empty_off(app_module, monkeypatch):
+    import asyncio
+
+    hub = app_module.hub
+    sent, switched = [], []
+    monkeypatch.setattr(hub.notifier, "send", lambda *a, **k: sent.append(a))
+
+    async def sw(pid):
+        switched.append(pid)
+
+    monkeypatch.setattr(hub, "_empty_switch", sw)
+    monkeypatch.setattr(hub, "_spawn", lambda coro: asyncio.run(coro))
+    plug = type("P", (), {"id": "tv", "online": True, "is_on": True})()
+    monkeypatch.setattr(hub, "plugs", {"tv": plug})
+    monkeypatch.setattr(hub, "name", lambda p: "電視")
+    cam = {"id": "r", "name": "客廳", "empty_off": {"on": True, "plugs": ["tv"], "min": 30, "quiet": "", "ask": False}}
+    hub.cameras.state["r"] = {"person": False, "seen": 1000.0, "ok": True}
+    hub._empty_off(cam, 1000.0 + 29 * 60)
+    assert not switched
+    hub._empty_off(cam, 1000.0 + 31 * 60)
+    assert switched == ["tv"] and "關掉了電視" in hub.face_log.items[-1]["name"] and not sent
+    hub._empty_off(cam, 1000.0 + 40 * 60)
+    assert switched == ["tv"]  # 只關一次（手動再打開不會馬上又被關）
+    hub.cameras.state["r"]["person"] = True  # 有人回來：重新算
+    hub._empty_off(cam, 1000.0 + 41 * 60)
+    hub.cameras.state["r"].update(person=False, seen=5000.0)
+    # 先問：先傳 LINE，5 分鐘後才關；按了不要關就不關
+    cam["empty_off"]["ask"] = True
+    hub._empty_off(cam, 5000.0 + 31 * 60)
+    assert len(sent) == 1 and "5 分鐘後" in sent[0][0] and switched == ["tv"]
+    hub.empty_cancel("r")
+    hub._empty_off(cam, 5000.0 + 40 * 60)
+    assert switched == ["tv"]
+
+
+def test_empty_off_api(app_module):
+    hub = app_module.hub
+    hub.cameras.list = [{"id": "r", "name": "客廳", "host": "x", "enabled": True}]
+    c, dev = _client(app_module)
+    hub.cameras.viewers = [dev["id"]]
+    r = c.put("/api/cameras/r", json={"empty_off": {"on": True, "plugs": ["nope"], "min": 1, "quiet": "bad", "ask": 1}}).json()["cameras"][0]
+    assert r["empty_off"] == {"on": True, "plugs": [], "min": 5, "ask": True, "quiet": ""}
+    assert c.post("/api/cameras/r/empty-off/cancel").status_code == 200

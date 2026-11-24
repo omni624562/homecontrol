@@ -1048,6 +1048,12 @@ async def cameras_update(cam_id: str, request: Request, body: dict = Body(...)) 
         cam["ignore"] = zones
     if "light" in body:
         cam["light"] = body["light"] if body["light"] in hub.plugs else None
+    if isinstance(body.get("empty_off"), dict):  # 沒人一陣子就關掉：{"on", "plugs": [插座 ID], "min": 分鐘, "quiet": "23:00-07:00", "ask": 先問}
+        e = body["empty_off"]
+        quiet = str(e.get("quiet") or "")
+        cam["empty_off"] = {"on": bool(e.get("on")), "plugs": [p for p in (e.get("plugs") or []) if p in hub.plugs][:8],
+                            "min": int(_num(e.get("min") or 30, 5, 240)), "ask": bool(e.get("ask")),
+                            "quiet": quiet if re.fullmatch(r"\d{2}:\d{2}-\d{2}:\d{2}", quiet) else ""}
     if "user" in body or "pwd" in body:
         test = {**cam, "user": str(body.get("user", cam.get("user", ""))), "pwd": str(body.get("pwd", cam.get("pwd", "")))}
         try:
@@ -1194,6 +1200,16 @@ def _lan_url(raw: Any) -> str:
         if not ok:
             raise HTTPException(400, "要是家裡網路的位址，例如 http://10.0.2.99:8200")
     return url
+
+
+@app.post("/api/cameras/{cam_id}/empty-off/cancel")
+async def cameras_empty_cancel(cam_id: str, request: Request) -> dict[str, Any]:
+    """「沒人一陣子就關掉」先問的時候按「不要關」：這次不關（有人再出現、再離開才會重新算）。"""
+    _need_view(request)
+    if not hub.cameras.get(cam_id):
+        raise HTTPException(404, "找不到這台攝影機")
+    hub.empty_cancel(cam_id)
+    return {"cameras": hub.cameras.public()}
 
 
 @app.get("/api/recorder")

@@ -194,6 +194,7 @@ class Hub:
         self.cameras = camera.Cameras(self.store.dir)
         self.cameras.remote = self.gpu.detect
         self.cameras.stream = self.gpu.stream
+        self._cam_started = time.time()  # 剛開機還沒看到人：從這時候開始算「沒人多久」
         self._cam_alert: dict[str, float] = {}  # 攝影機 ID → 上次「沒人在家卻看到人」通知的時間
         self._cam_pending: dict[str, float] = {}  # 攝影機 ID → 沒人在家時看到人的時間（等家人的手機連上 Wi-Fi）
         # 認臉
@@ -1436,6 +1437,9 @@ class Hub:
             if v["score"] >= roommotion.ACTIVE:
                 self._room_active[r] = now
         self._motion_rules(rm, now)
+        for c in cams:
+            if (c.get("empty_off") or {}).get("on"):
+                self._empty_off(c, now)
         if getattr(self, "_dirty_cams", False):
             self._dirty_cams = False
             self.cameras.save()
@@ -2007,6 +2011,52 @@ class Hub:
                 st["muted"] = False
             if hot and not plug.is_on and _in_window(hm, r.get("start") or "", r.get("end") or "") and (anyone_home or not r.get("need_home", True)):
                 self._spawn(self._motion_switch(r, st, plug.id, True))
+
+    def _empty_off(self, cam: dict[str, Any], now: float) -> None:
+        """沒人一陣子就關掉：攝影機最後看到人之後超過設定的時間（不在睡覺時段），關掉選的插座裡還開著的。
+        關過（或按了不要關）就不再關，等有人再出現才重新算；所以手動再打開不會馬上又被關掉。"""
+        cfg = cam["empty_off"]
+        cs = self.cameras.state.setdefault(cam["id"], {})
+        e = cs.setdefault("empty", {"done": False, "pending": None})
+        if cs.get("person"):
+            e.update(done=False, pending=None)
+            return
+        if e["done"] or cs.get("ok") is False:
+            return
+        last = cs.get("seen") or self._cam_started
+        local = datetime.now()
+        if now - last < cfg.get("min", 30) * 60 or (cfg.get("quiet") and _in_window(local.hour * 60 + local.minute, *cfg["quiet"].split("-"))):
+            return
+        plugs = [self.plugs[p] for p in cfg.get("plugs") or [] if p in self.plugs and self.plugs[p].online and self.plugs[p].is_on]
+        if not plugs:
+            e["done"] = True
+            return
+        names = "、".join(self.name(p) for p in plugs)
+        where = cam.get("name") or cam["id"]
+        mins = cfg.get("min", 30)
+        if cfg.get("ask") and e["pending"] is None:
+            e["pending"] = now
+            self.notifier.send(f"{where}沒人 {mins} 分鐘，5 分鐘後關掉{names}", "不要關的話，打開 App 的攝影機頁按「不要關」")
+            return
+        if cfg.get("ask") and now - e["pending"] < 300:
+            return
+        e.update(done=True, pending=None)
+        for p in plugs:
+            self._spawn(self._empty_switch(p.id))
+        self.face_log.add({"camera": where, "kind": "zone", "name": f"沒人 {mins} 分鐘，關掉了{names}", "sim": None})
+        if cfg.get("ask"):
+            self.notifier.send(f"{where}沒人 {mins} 分鐘，已經關掉{names}", "有人回來時「有人就開燈」照常開燈")
+
+    async def _empty_switch(self, plug_id: str) -> None:
+        try:
+            SOURCE.set("empty")
+            await self.set_power(plug_id, False)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("沒人自動關沒有關掉 %s：%s", plug_id, err)
+
+    def empty_cancel(self, cid: str) -> None:
+        e = self.cameras.state.setdefault(cid, {}).setdefault("empty", {"done": False, "pending": None})
+        e.update(done=True, pending=None)
 
     async def _motion_switch(self, rule: dict[str, Any], st: dict[str, Any], plug_id: str, on: bool) -> None:
         st["busy"] = True
