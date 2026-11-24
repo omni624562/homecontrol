@@ -1329,6 +1329,8 @@ async def claude_vision_put(request: Request, body: dict = Body(...)) -> dict[st
     if isinstance(body.get("cams"), list):
         ids = {c["id"] for c in hub.cameras.list}
         cfg["cams"] = [c for c in body["cams"] if c in ids]
+    if cfg.get("on") and not cfg.get("cams"):  # 剛打開、還沒選：先開門口的攝影機
+        cfg["cams"] = [c["id"] for c in hub.cameras.list if c.get("role") == "entry"]
     store.data["settings"]["claude_vision"] = cfg
     store.save()
     return hub.claude.status()

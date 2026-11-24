@@ -128,7 +128,7 @@ class Assistant:
         kwargs: dict[str, Any] = {
             "model": model,
             "max_tokens": 4000,
-            "system": SYSTEM,
+            "system": SYSTEM + self._camera_note(),
             "tools": tools,
             "messages": messages,
             "output_config": {"effort": "low"},
@@ -547,7 +547,30 @@ class Assistant:
         cv = getattr(hub, "claude", None)
         if cv is not None and cv.allowed("ask"):
             tools += self._camera_tools(actions)
+        elif cv is not None and hub.cameras.list:
+
+            @beta_async_tool
+            async def propose_camera_vision() -> str:
+                """使用者想讓你看攝影機畫面（或問了要看畫面才答得出來的事）、但「讓 Claude 看攝影機畫面」還關著時用：
+                畫面上會出現「打開」按鈕，他按了才會開（畫面會送到 Anthropic 處理，所以一定要他自己按）。"""
+                pend("vision_on", "打開「讓 Claude 看攝影機畫面」：門口的攝影機，事件和你問的時候把畫面（縮小）送到 Anthropic；設定 → 問家裡 可以再改或關掉")
+                return "已經放了「打開」按鈕；跟他說按了之後再問一次"
+
+            tools.append(propose_camera_vision)
         return tools
+
+    def _camera_note(self) -> str:
+        """攝影機的狀況（每次對話附在最後，讓你知道看不看得到畫面）。"""
+        cams = self.hub.cameras.list
+        cv = getattr(self.hub, "claude", None)
+        if not cams or cv is None:
+            return ""
+        names = "、".join(c.get("name") or c["id"] for c in cams)
+        if cv.allowed("ask"):
+            return f"\n\n家裡的攝影機：{names}。可以用攝影機的工具看現在的畫面、錄影、紀錄（只看得到開放的那幾台）。描述畫面只說看得到的，不要猜身分。"
+        return (f"\n\n家裡有攝影機（{names}），都接在家庭中控上，但現在你看不到畫面：「讓 Claude 看攝影機畫面」還沒打開。"
+                "使用者想看畫面、或問的事要看畫面才知道時，用 propose_camera_vision 放一個「打開」按鈕，簡短說明畫面會送到 Anthropic；"
+                "不要叫他去用別的 App。攝影機記下的事（有沒有人、門開了）家庭中控的攝影機頁就看得到。")
 
     def _camera_tools(self, actions: list[dict[str, Any]]) -> list[Any]:
         """「Claude 看影像 → 問家裡看得到畫面」開著才有：只看得到「可以送」的攝影機；看了什麼都記在 actions（畫面上會標出來）。"""

@@ -778,3 +778,23 @@ def test_visit_end_uses_named_regular(app_module, monkeypatch):
     hub.visitors.named = []
     hub._visit_end("g", {"start": 1795488100.0, "known": set(), "maybe": set(), "app": [e, e]}, 1795488130.0)
     assert len(hub.visitors.visits) == 1  # 沒取名字：記下來等分群
+
+
+def test_ask_offers_enable_button_when_off(app_module, monkeypatch):
+    import asyncio
+
+    hub = app_module.hub
+    hub.cameras.list = [{"id": "g", "name": "大門口", "host": "x", "enabled": True, "role": "entry"}]
+    monkeypatch.setattr(type(hub.assistant), "configured", property(lambda self: True))
+    monkeypatch.setattr(hub.assistant, "status", lambda: {"cap": 5.0, "month_usd": 0.0, "model": "claude-haiku-5-5"})
+    hub.store.data["settings"]["claude_vision"] = {"on": False}
+    actions = []
+    tools = {t.name: t for t in hub.assistant._tools(actions)}
+    assert "propose_camera_vision" in tools and "look_camera" not in tools
+    assert "還沒打開" in hub.assistant._camera_note() and "大門口" in hub.assistant._camera_note()
+    asyncio.run(tools["propose_camera_vision"].call({}))
+    assert actions[0]["kind"] == "vision_on"
+    c, dev = _client(app_module)
+    hub.cameras.viewers = [dev["id"]]
+    r = c.put("/api/claude-vision", json={"on": True}).json()
+    assert r["on"] and r["cams"] == ["g"]  # 按了「打開」：先開門口的
