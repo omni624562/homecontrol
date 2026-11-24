@@ -22,6 +22,7 @@ PERSON_MIN = 0.55  # 追蹤的人至少要這個分數（YOLOX-m；跟樹莓派�
 MATCH_IOU = 0.25  # 跟上一張的框重疊這麼多算同一個人
 LOST_S = 2.0  # 秒：多久沒看到就當作走了
 SAMPLES_KEEP = 20  # 秒：腳的位置的紀錄留多久
+POSE_EVERY = 0.4  # 秒：開了跌倒偵測、又有人時，多久算一次姿勢（每秒 2.5 次）
 JPEG_Q = 85
 
 
@@ -85,9 +86,13 @@ def mask(img: np.ndarray, polys: list[list[list[float]]]) -> np.ndarray:
 
 
 class Cam:
-    def __init__(self, cid: str, url: str, ignore: list, detect: Callable[[np.ndarray], list[dict[str, Any]]]) -> None:
+    def __init__(self, cid: str, url: str, ignore: list, detect: Callable[[np.ndarray], list[dict[str, Any]]],
+                 pose: Callable[[np.ndarray], list[dict[str, Any]] | None] | None = None, pose_on: bool = False) -> None:
         self.id, self.url, self.ignore = cid, url, ignore
         self.detect = detect
+        self.pose, self.pose_on = pose, pose_on
+        self.poses: deque = deque()  # (t, [姿勢])：跌倒偵測用
+        self.pose_t = 0.0
         self.stop = False
         self.lock = threading.Lock()
         self.frame: np.ndarray | None = None
@@ -141,7 +146,15 @@ class Cam:
         objs = self.detect(mask(img, self.ignore))
         people = [o for o in objs if o["name"] == "person" and o["score"] >= PERSON_MIN]
         tracks = self.tracker.update(people, now)
+        pose = None
+        if self.pose_on and self.pose and tracks and now - self.pose_t >= POSE_EVERY:
+            self.pose_t = now
+            pose = self.pose(img)
         with self.lock:
+            if pose is not None:
+                self.poses.append((round(now, 2), pose))
+            while self.poses and now - self.poses[0][0] > SAMPLES_KEEP:
+                self.poses.popleft()
             self.frame, self.frame_t = img, now
             self.objects = objs
             self.tracks = tracks
@@ -154,7 +167,7 @@ class Cam:
         with self.lock:
             return {"t": round(self.frame_t, 2), "ok": self.error is None and time.time() - self.frame_t < 5, "error": self.error, "fps": self.fps,
                     "person": round(self.person, 3), "objects": self.objects, "tracks": self.tracks,
-                    "samples": [s for s in self.samples if s[0] > since]}
+                    "samples": [s for s in self.samples if s[0] > since], "poses": [p for p in self.poses if p[0] > since]}
 
     def jpeg(self) -> bytes | None:
         with self.lock:
@@ -169,8 +182,9 @@ class Cam:
 
 
 class Streams:
-    def __init__(self, detect: Callable[[np.ndarray], list[dict[str, Any]]]) -> None:
+    def __init__(self, detect: Callable[[np.ndarray], list[dict[str, Any]]], pose: Callable[[np.ndarray], list[dict[str, Any]] | None] | None = None) -> None:
         self.detect = detect
+        self.pose = pose
         self.cams: dict[str, Cam] = {}
         self.lock = threading.Lock()
 
@@ -185,11 +199,12 @@ class Streams:
                 c = want.get(cid)
                 if not c or c["url"] != self.cams[cid].url:
                     self.cams.pop(cid).close()
-                elif c.get("ignore") != self.cams[cid].ignore:
+                else:
                     self.cams[cid].ignore = c.get("ignore") or []
+                    self.cams[cid].pose_on = bool(c.get("pose"))
             for cid, c in want.items():
                 if cid not in self.cams:
-                    self.cams[cid] = Cam(cid, c["url"], c.get("ignore") or [], self.detect)
+                    self.cams[cid] = Cam(cid, c["url"], c.get("ignore") or [], self.detect, self.pose, bool(c.get("pose")))
             return sorted(self.cams)
 
     def get(self, cid: str) -> Cam | None:
