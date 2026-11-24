@@ -365,7 +365,7 @@ export interface Assistant {
 
 export interface AskAction {
   id: string;
-  kind: "power" | "all_off" | "schedule" | "scene";
+  kind: "power" | "all_off" | "schedule" | "scene" | "look";
   label: string;
   plug?: string;
   on?: boolean;

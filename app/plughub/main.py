@@ -60,7 +60,7 @@ import secrets
 import time
 import uuid
 from contextlib import asynccontextmanager
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -78,6 +78,7 @@ from . import segment as segment_mod
 from . import tls as tlsmod
 from .locate import MIN_SAMPLES as LOCATE_MIN, TRAIN_S as LOCATE_TRAIN_S
 from .assistant import MODELS as ASSISTANT_MODELS, Assistant
+from .claude_vision import FEATURES as CV_FEATURES, ClaudeVision
 from .hub import APP_VERSION, SOURCE, Hub, Locked
 from .summary import build_summary
 from .notify import LineError, Notifier
@@ -91,6 +92,8 @@ STATIC = Path(__file__).parent / "static"
 store = Store(DATA_DIR)
 hub = Hub(store, Notifier(store.dir / "secrets.json"))
 assistant = Assistant(hub)
+hub.assistant = assistant
+hub.claude = ClaudeVision(hub)  # Claude 看影像（預設關）
 hub.assistant = assistant
 auth = authmod.Auth(DATA_DIR)
 _LOGGER = logging.getLogger(__name__)
@@ -1245,6 +1248,29 @@ async def gestures_put(request: Request, body: dict = Body(...)) -> dict[str, An
     return await gestures_get(request)
 
 
+@app.get("/api/claude-vision")
+async def claude_vision_get(request: Request) -> dict[str, Any]:
+    """Claude 看影像的設定和這個月看了幾次。"""
+    _need_view(request)
+    return hub.claude.status()
+
+
+@app.put("/api/claude-vision")
+async def claude_vision_put(request: Request, body: dict = Body(...)) -> dict[str, Any]:
+    """{"on": 總開關, "describe"|"ask"|"second"|"story"|"classify": 每一項, "cams": [可以送的攝影機 ID]}（只改有給的）"""
+    _need_view(request)
+    cfg = dict(store.data["settings"].get("claude_vision") or {})
+    for k in ("on", *CV_FEATURES):
+        if k in body:
+            cfg[k] = bool(body[k])
+    if isinstance(body.get("cams"), list):
+        ids = {c["id"] for c in hub.cameras.list}
+        cfg["cams"] = [c for c in body["cams"] if c in ids]
+    store.data["settings"]["claude_vision"] = cfg
+    store.save()
+    return hub.claude.status()
+
+
 @app.get("/api/recorder")
 async def recorder_get(request: Request) -> dict[str, Any]:
     """錄影機（另一台主機全天錄影）的狀態。"""
@@ -1337,7 +1363,47 @@ async def summary_get(request: Request, day: str | None = None) -> dict[str, Any
     except ValueError:
         raise HTTPException(400, "日期格式是 YYYY-MM-DD") from None
     vis = await asyncio.to_thread(hub.gpu.summary, d.isoformat())
-    return build_summary(d, hub.cameras.list, hub.face_log.items, vis)
+    out = build_summary(d, hub.cameras.list, hub.face_log.items, vis)
+    stories = store.data.setdefault("summary_story", {})
+    out["story"] = stories.get(d.isoformat())
+    out["story_pending"] = False
+    if out["story"] is None and d < date.today() and hub.claude.allowed("story"):
+        out["story_pending"] = True
+        if d.isoformat() not in _story_busy:
+            _story_busy.add(d.isoformat())
+            asyncio.get_running_loop().create_task(_write_story(d, out))
+    return out
+
+
+_story_busy: set[str] = set()
+
+
+async def _write_story(d: date, summary: dict[str, Any]) -> None:
+    """Claude 把那天的摘要寫成一段話（只用「可以送」的攝影機；值得看的事件各附一張錄影畫面）。存起來，一天只寫一次。"""
+    try:
+        cv = hub.claude
+        cams = [c for c in summary["cams"] if c["id"] in (cv.cfg.get("cams") or [])]
+        if not cams:
+            return
+        lines, frames = [], []
+        for c in cams:
+            hl = "、".join(f"{datetime.fromtimestamp(h['t']).strftime('%H:%M')} {h['text']}" for h in c["highlights"]) or "沒有特別的事"
+            lines.append(f"{c['name']}：次數 {json.dumps(c['counts'], ensure_ascii=False)}；值得看的：{hl}")
+            for h in c["highlights"][:2]:
+                if len(frames) < 4 and hub.recorder.url:
+                    with contextlib.suppress(Exception):
+                        frames.append(await asyncio.to_thread(hub.recorder.frame, c["id"], h["t"], 640))
+        prompt = (f"這是 {d.month}/{d.day} 家裡攝影機的紀錄（附的照片依序是值得看的事件那一刻）：\n" + "\n".join(lines) +
+                  "\n用 2～3 句話寫成給家人看的當天摘要（像家人在講，先講重要的；平常的進出用一句帶過）。")
+        text = await cv.look("story", None, frames, prompt, 400)  # 沒有錄影畫面就只用文字
+        if text:
+            stories = store.data.setdefault("summary_story", {})
+            stories[d.isoformat()] = text[:500]
+            for k in sorted(stories)[:-14]:
+                del stories[k]
+            store.save()
+    finally:
+        _story_busy.discard(d.isoformat())
 
 
 @app.get("/api/cameras/{cam_id}/clip.mp4")

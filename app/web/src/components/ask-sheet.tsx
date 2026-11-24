@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { CalendarClock, Check, Loader2, MessageSquareText, Mic, Power, Send, Star } from "lucide-react";
+import { CalendarClock, Check, Loader2, MessageSquareText, Mic, Power, Send, Star, Eye } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -196,7 +196,10 @@ function AskSheet({ open, onClose, msgs, setMsgs, seed, clearSeed }: { open: boo
                 >
                   {m.content}
                 </div>
-                {m.actions?.map((x) => {
+                {m.actions?.filter((x) => x.kind === "look").map((x, k) => (
+                  <span key={`look${k}`} className="flex items-center gap-1.5 text-xs text-muted-foreground"><Eye className="size-3.5" />{x.label}</span>
+                ))}
+                {m.actions?.filter((x) => x.kind !== "look").map((x) => {
                   const I = ActIcon(x.kind);
                   const btn = x.kind === "schedule" || x.kind === "scene" ? "建立" : "確認";
                   return (

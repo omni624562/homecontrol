@@ -110,7 +110,7 @@ export function ClipPlayer({ target, onClose }: { target: ClipTarget | null; onC
 // ---- 摘要 ----
 interface Highlight { t: number; kind: "object" | "stranger" | "fall" | "night" | "linger"; text: string; id?: string; thumb?: boolean; end?: number }
 interface CamSummary { id: string; name: string; role?: string; counts: Record<string, number>; hours: number[]; highlights: Highlight[]; more: number; indexed: boolean }
-interface Summary { day: string; cams: CamSummary[]; indexed: boolean }
+interface Summary { day: string; cams: CamSummary[]; indexed: boolean; story?: string | null; story_pending?: boolean }
 const TONE: Record<Highlight["kind"], string> = { object: "bg-amber-500", stranger: "bg-red-500", fall: "bg-red-500", night: "bg-red-500", linger: "bg-primary" };
 
 function tiles(c: CamSummary): [string, number][] {
@@ -129,7 +129,16 @@ const short = (label: string, cam: string) => label.replace(new RegExp(`^${cam}`
 export function SummaryCard() {
   const [s, setS] = useState<Summary | null>(null);
   const [play, setPlay] = useState<ClipTarget | null>(null);
-  useEffect(() => { api<Summary>("GET", "/api/summary").then(setS).catch(() => setS(null)); }, []);
+  useEffect(() => {
+    let n = 0;
+    let t: ReturnType<typeof setTimeout>;
+    const load = () => api<Summary>("GET", "/api/summary").then((r) => {
+      setS(r);
+      if (r.story_pending && n++ < 6) t = setTimeout(load, 15000); // Claude 正在寫一段話：等一下再拿
+    }).catch(() => setS(null));
+    load();
+    return () => clearTimeout(t);
+  }, []);
   const cams = (s?.cams || []).filter((c) => c.role === "entry" && Object.keys(c.counts).length);
   if (!cams.length) return null;
   return (
@@ -148,6 +157,7 @@ export function SummaryCard() {
               </div>
             ))}
           </div>
+          {s?.story && c === cams[0] && <p className="border-l-2 border-orange-500 pl-2.5 text-sm leading-relaxed">{s.story}</p>}
           {c.highlights.length ? (
             <ul className="divide-y">
               {c.highlights.map((h) => (

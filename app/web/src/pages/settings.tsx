@@ -292,6 +292,7 @@ function AskCard() {
           </Sheet>
         </>
       )}
+      {st.configured && <ClaudeVisionRows />}
     </SCard>
   );
 }
@@ -609,6 +610,63 @@ function CameraLinkCard() {
       <RecordingRows />
       <GestureRows />
     </SCard>
+  );
+}
+
+// Claude 看影像：總開關＋每一項＋可以送的攝影機（會把事件畫面送到 Anthropic；預設全關）
+interface CVInfo { on: boolean; describe: boolean; ask: boolean; second: boolean; story: boolean; classify: boolean; cams: string[]; looks: number; month_usd: number; model: string; error: string | null }
+const CV_ITEMS: [keyof CVInfo, string, string][] = [
+  ["describe", "一句話說發生什麼事", "通知、紀錄寫成「穿藍外套的人把紙箱放在門口」"],
+  ["ask", "問家裡看得到畫面", "「門口現在有包裹嗎？」「下午誰來過？」"],
+  ["second", "緊急通知加上 Claude 的看法", "跌倒、很久沒動、陌生人；只是多傳一則，通知照常送"],
+  ["story", "每日摘要寫成一段話", "首頁「昨天門口」多一段"],
+  ["classify", "看不出多了什麼時問 Claude", "包裹辨識比較準"],
+];
+function ClaudeVisionRows() {
+  const [c, setC] = useState<CVInfo | null>(null);
+  const [cams, setCams] = useState<{ id: string; name: string; role?: string }[]>([]);
+  useEffect(() => {
+    api<CVInfo>("GET", "/api/claude-vision").then(setC).catch(() => setC(null));
+    api<{ cameras: { id: string; name: string; role?: string }[] }>("GET", "/api/cameras").then((r) => setCams(r.cameras)).catch(() => {});
+  }, []);
+  if (!c) return null;
+  const put = async (body: Partial<CVInfo>, ok = "已更新") => {
+    try {
+      setC(await api<CVInfo>("PUT", "/api/claude-vision", body));
+      toast.success(ok);
+    } catch (e) {
+      toast.error("沒有成功", { description: (e as Error).message });
+    }
+  };
+  return (
+    <div className="border-t">
+      <div className="m-4 flex items-center gap-3 rounded-xl border border-orange-500/60 bg-orange-500/5 p-3 sm:mx-5">
+        <span className="min-w-0 flex-1"><span className="block font-medium">讓 Claude 看攝影機畫面</span>
+          <span className="text-sm text-muted-foreground">事件發生時把那幾張畫面（縮小）送到 Anthropic 處理；關掉＝完全不送，問家裡也看不到攝影機</span></span>
+        <Switch checked={c.on} onCheckedChange={(v) => put({ on: v, cams: c.cams.length ? c.cams : cams.filter((x) => x.role === "entry").map((x) => x.id) }, v ? "Claude 看影像打開了" : "Claude 看影像關了：不會再送任何畫面")} aria-label="讓 Claude 看攝影機畫面" />
+      </div>
+      {c.on && (
+        <>
+          {CV_ITEMS.map(([k, label, hint]) => (
+            <SRow key={k} label={label} hint={hint}>
+              <Switch checked={!!c[k]} onCheckedChange={(v) => put({ [k]: v })} aria-label={label} />
+            </SRow>
+          ))}
+          <SRow wrap label="哪些攝影機可以送" hint="房間裡的攝影機比較私密，可以只開門口">
+            <div className="flex flex-wrap gap-1.5">
+              {cams.map((x) => {
+                const on = c.cams.includes(x.id);
+                return <button key={x.id} type="button" aria-pressed={on} onClick={() => put({ cams: on ? c.cams.filter((y) => y !== x.id) : [...c.cams, x.id] })}
+                  className={cn("rounded-full border px-2.5 py-0.5 text-sm", on ? "border-primary bg-primary/10 text-primary" : "bg-background text-muted-foreground hover:bg-muted")}>{on ? "✓ " : ""}{x.name}</button>;
+              })}
+            </div>
+          </SRow>
+          <SRow label="這個月" hint={`模型跟問家裡一樣；跟問家裡共用每月上限，到了就自動停${c.error ? `・最近一次失敗：${c.error}` : ""}`}>
+            <span className="text-sm tabular-nums text-muted-foreground">看了 {c.looks} 次・問家裡＋看影像共 US${c.month_usd.toFixed(2)}</span>
+          </SRow>
+        </>
+      )}
+    </div>
   );
 }
 

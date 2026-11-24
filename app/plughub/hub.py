@@ -1534,6 +1534,7 @@ class Hub:
         if self._face_once(f"{cam['id']}:fall", camera.ALERT_GAP, now):
             self.notifier.send("⚠️ 可能有人跌倒", f"{cam.get('name')} {datetime.now().strftime('%H:%M')} 看到有人站著突然倒下，"
                                f"超過 {vision.FALL_HOLD} 秒沒起來。請確認一下；照片在「設定 → 認臉 → 攝影機紀錄」", "urgent")
+            self._second_opinion(cam, "可能有人跌倒（站著突然倒下、一直沒起來）", jpeg)
 
     # ---- 區域和線 ----
 
@@ -1580,6 +1581,12 @@ class Hub:
                 item = s.pop("item", None) if ev != "more" else None
                 if ev == "more":  # 問 Jetson 多的是什麼（包裹、袋子、鞋子…）；看不出來就照舊
                     what = await asyncio.to_thread(self.gpu.classify, jpeg, vision.poly_bbox(z["poly"]))
+                    cv = getattr(self, "claude", None)
+                    if not what and cv is not None and cv.allowed("classify", cam["id"]):  # GPU 看不出來：問 Claude
+                        ans = await cv.look("classify", cam["id"], [self._zone_frame(jpeg, z)],
+                                            "黃框裡原本是空的，現在多了一樣東西。是什麼？只回答 2～6 個字的名稱（例如：紙箱、塑膠袋、鞋子、外送餐點）；看不出來就回答：不確定", 50)
+                        ans = (ans or "").strip().strip("。.「」\"' ")
+                        what = ans if ans and "不確定" not in ans and len(ans) <= 8 else None
                     if what:
                         s["item"] = {"label": what, "t": now}
                         label = f"{z['name']}多了{'一個' if what in ITEM_ONE else ''}{what}"
@@ -1670,16 +1677,37 @@ class Hub:
         except Exception:  # noqa: BLE001
             return b""
 
-    async def _zone_clip(self, cam: dict[str, Any], entry: dict[str, Any], item: dict[str, Any]) -> None:
-        """偵測到之後再拍幾張（門開了，人通常過幾秒才出現）。"""
-        for _ in range(CLIP_MORE):
-            await asyncio.sleep(CLIP_GAP)
-            try:
-                jpeg = await asyncio.to_thread(camera.snapshot, cam)
-                frame = await asyncio.to_thread(self._zone_frame, jpeg, item)
-            except Exception:  # noqa: BLE001
-                return
-            self.face_log.add_frame(entry, frame)
+    async def _zone_clip(self, cam: dict[str, Any], entry: dict[str, Any], item: dict[str, Any], notify: tuple[str, str] | None = None) -> None:
+        """偵測到之後再拍幾張（門開了，人通常過幾秒才出現）；拍完請 Claude 寫一句話（有開的話），再送等著的通知。"""
+        try:
+            for _ in range(CLIP_MORE):
+                await asyncio.sleep(CLIP_GAP)
+                try:
+                    jpeg = await asyncio.to_thread(camera.snapshot, cam)
+                    frame = await asyncio.to_thread(self._zone_frame, jpeg, item)
+                except Exception:  # noqa: BLE001
+                    break
+                self.face_log.add_frame(entry, frame)
+        finally:
+            await self._describe_entry(cam, entry, notify)
+
+    def _entry_frames(self, entry: dict[str, Any]) -> list[bytes]:
+        paths = [self.face_log.thumb_path(entry["id"])] + [self.face_log.thumb_path(f"{entry['id']}_{n}") for n in range(1, int(entry.get("frames") or 0) + 1)]
+        return [p.read_bytes() for p in paths if p]
+
+    async def _describe_entry(self, cam: dict[str, Any], entry: dict[str, Any], notify: tuple[str, str] | None = None) -> None:
+        """Claude 一句話說發生什麼事（記在紀錄的 desc）；notify 是等著要送的通知（標題, 內容）。"""
+        desc = None
+        cv = getattr(self, "claude", None)
+        frames = self._entry_frames(entry) if cv is not None else []
+        if frames and cv.allowed("describe", cam["id"]):
+            desc = await cv.look("describe", cam["id"], frames,
+                                 f"這是「{entry.get('name')}」發生時和之後幾秒的畫面（照時間順序，黃框是偵測的位置）。用一句話（40 字內）說發生了什麼事。", 200)
+            if desc:
+                entry["desc"] = desc[:150]
+                self.face_log.prune()  # 存檔
+        if notify:
+            self.notifier.send(notify[0], f"{notify[1]}・{desc}" if desc else notify[1])
 
     def _zone_fire(self, cam: dict[str, Any], item: dict[str, Any], label: str, act: dict[str, Any], now: float, jpeg: bytes | None = None) -> None:
         """區域、線觸發了：記紀錄；照設定執行情境、通知（沒人在家時先等 3 分鐘確認不是家人）。"""
@@ -1688,19 +1716,22 @@ class Hub:
         if not self._face_once(key, 20, now):
             return
         entry = self.face_log.add({"camera": name, "kind": "zone", "name": label, "sim": None}, self._zone_frame(jpeg, item) if jpeg else None)
+        mode = act.get("notify", "off")
+        at = datetime.now().strftime("%H:%M")
+        cv = getattr(self, "claude", None)
+        wait = bool(jpeg and entry.get("thumb") and cv is not None and cv.allowed("describe", cam["id"]))
         if jpeg and entry.get("thumb"):
-            self._spawn(self._zone_clip(cam, entry, item))
+            # 要 Claude 描述的話：「每次都通知」等連拍完、描述好再一起送（大約多 8 秒）
+            self._spawn(self._zone_clip(cam, entry, item, (f"{name}：{label}", at) if wait and mode == "always" else None))
         scene = act.get("scene")
         if scene and (not act.get("dark") or self.is_dark()) and self._face_once(f"{key}:scene", 60, now):
             self._presence_scene(scene, f"{name}：{label}")
-        mode = act.get("notify", "off")
-        at = datetime.now().strftime("%H:%M")
-        if mode == "always":
+        if mode == "always" and not wait:
             self.notifier.send(f"{name}：{label}", at)
         elif mode == "away":
             people = self.people_report()
             if people and all(p.get("home") is False for p in people) and key not in self._zone_pending:
-                self._zone_pending[key] = {"t": now, "title": f"⚠️ 沒人在家，{name}：{label}", "msg": at}
+                self._zone_pending[key] = {"t": now, "title": f"⚠️ 沒人在家，{name}：{label}", "msg": at, "entry": entry}
                 if not self._probe_busy:
                     self._probe_busy = True
                     self._spawn(self._probe_people())
@@ -1715,7 +1746,8 @@ class Hub:
                 del self._zone_pending[key]
             elif now - x["t"] >= camera.ARRIVE_WAIT:
                 del self._zone_pending[key]
-                self.notifier.send(x["title"], f"{x['msg']}，之後 {camera.ARRIVE_WAIT // 60} 分鐘都沒有家人的手機連上 Wi-Fi、門口也沒認出家人", "urgent")
+                desc = (x.get("entry") or {}).get("desc")
+                self.notifier.send(x["title"], f"{x['msg']}{'・' + desc if desc else ''}，之後 {camera.ARRIVE_WAIT // 60} 分鐘都沒有家人的手機連上 Wi-Fi、門口也沒認出家人", "urgent")
 
     # ---- 認臉：看到人時找臉，認出家人就做他的動作，不認得就通知 ----
 
@@ -1926,6 +1958,7 @@ class Hub:
         self.notifier.send(title, f"{where} {datetime.now().strftime('%H:%M')} 看到看得清楚、但不認得的臉"
                            f"（跟登記的家人、訪客都不像）。{lit}照片在「設定 → 攝影機 → 認臉紀錄」，只有有權限的裝置看得到",
                            "urgent" if away or late else "high")
+        self._second_opinion(cam, "門口有不認得的人")
 
     # ---- 登記臉：站在攝影機前轉一下，挑幾張清楚、角度不同的 ----
 
@@ -2104,6 +2137,29 @@ class Hub:
             self.face_log.add({"camera": name, "kind": "zone", "name": f"{dur}沒看到人走動", "sim": None})
             self.notifier.send(f"⚠️ {name}：{dur}沒看到人走動",
                                f"{local.strftime('%H:%M')}・家裡有人（手機在家）" + (f"，平常最久大約 {usual} 分鐘" if usual else "") + "。打開 App 看現在的畫面", "urgent")
+            self._second_opinion(cam, f"{dur}沒看到人走動（家裡有人）")
+
+    def _second_opinion(self, cam: dict[str, Any], what: str, jpeg: bytes | None = None) -> None:
+        """緊急通知送出之後（不擋、不等），請 Claude 看畫面補一句實際狀況（有開「緊急通知加上 Claude 的看法」才做）。"""
+        cv = getattr(self, "claude", None)
+        if cv is None or not cv.allowed("second", cam["id"]):
+            return
+
+        async def go() -> None:
+            frame = jpeg
+            if frame is None:
+                try:
+                    frame = await asyncio.to_thread(camera.snapshot, cam)
+                except Exception:  # noqa: BLE001
+                    return
+            txt = await cv.look("second", cam["id"], [frame], f"家裡的系統剛剛判斷：「{what}」，已經通知家人了。看這張現在的畫面，"
+                                "用一句話（40 字內）說你實際看到的狀況，例如真的有人倒在地上、或其實是坐在沙發上；看不清楚就說看不清楚。", 200)
+            if txt:
+                name = cam.get("name") or cam["id"]
+                self.face_log.add({"camera": name, "kind": "zone", "name": f"Claude 看了：{txt[:120]}", "sim": None})
+                self.notifier.send(f"{name}：Claude 看了", txt)
+
+        self._spawn(go())
 
     def _gesture_events(self, cam: dict[str, Any], now: float) -> None:
         """Jetson 看到維持夠久的手勢：照設定開關插座、執行情境或全部關掉（同一個手勢 10 秒內只算一次）。"""
