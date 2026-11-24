@@ -1048,6 +1048,11 @@ async def cameras_update(cam_id: str, request: Request, body: dict = Body(...)) 
         cam["ignore"] = zones
     if "light" in body:
         cam["light"] = body["light"] if body["light"] in hub.plugs else None
+    if isinstance(body.get("still"), dict):  # 很久沒動靜提醒：{"on", "window": "07:00-22:00", "min": 0（自動）或分鐘}
+        e = body["still"]
+        win = str(e.get("window") or "")
+        cam["still"] = {"on": bool(e.get("on")), "window": win if re.fullmatch(r"\d{2}:\d{2}-\d{2}:\d{2}", win) else "07:00-22:00",
+                        "min": int(_num(e.get("min") or 0, 0, 480))}
     if isinstance(body.get("empty_off"), dict):  # 沒人一陣子就關掉：{"on", "plugs": [插座 ID], "min": 分鐘, "quiet": "23:00-07:00", "ask": 先問}
         e = body["empty_off"]
         quiet = str(e.get("quiet") or "")

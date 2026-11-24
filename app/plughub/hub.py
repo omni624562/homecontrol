@@ -23,7 +23,7 @@ from typing import Any, Callable
 
 from kasa import Device, Discover, Module
 
-from . import anomaly, arpprobe, camera, faces, habits, reid, vision, zones as zonelib, locate, native, netlog, netprobe, roommotion, routine, sun, tariff
+from . import anomaly, arpprobe, camera, faces, habits, reid, stillness, vision, zones as zonelib, locate, native, netlog, netprobe, roommotion, routine, sun, tariff
 from .sensing import INTERVAL as SENSE_INTERVAL, SAVE_EVERY as SENSE_SAVE_EVERY, Sensing
 from .notify import Notifier
 from .usage import Usage
@@ -195,6 +195,7 @@ class Hub:
         self.cameras.remote = self.gpu.detect
         self.cameras.stream = self.gpu.stream
         self._cam_started = time.time()  # 剛開機還沒看到人：從這時候開始算「沒人多久」
+        self._still: dict[str, dict[str, Any]] = {}  # 很久沒動靜：攝影機 → {last 上次有動, prev 上次的框, alerted}
         self._cam_alert: dict[str, float] = {}  # 攝影機 ID → 上次「沒人在家卻看到人」通知的時間
         self._cam_pending: dict[str, float] = {}  # 攝影機 ID → 沒人在家時看到人的時間（等家人的手機連上 Wi-Fi）
         # 認臉
@@ -1440,6 +1441,8 @@ class Hub:
         for c in cams:
             if (c.get("empty_off") or {}).get("on"):
                 self._empty_off(c, now)
+            if (c.get("still") or {}).get("on"):
+                self._still_check(c, now)
         if getattr(self, "_dirty_cams", False):
             self._dirty_cams = False
             self.cameras.save()
@@ -2053,6 +2056,37 @@ class Hub:
             await self.set_power(plug_id, False)
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning("沒人自動關沒有關掉 %s：%s", plug_id, err)
+
+    def _still_check(self, cam: dict[str, Any], now: float) -> None:
+        """很久沒動靜：家裡有人、設定時段裡，比平常久都沒看到人動就通知（stillness.py）。"""
+        cfg = cam["still"]
+        cs = self.cameras.state.setdefault(cam["id"], {})
+        s = self._still.setdefault(cam["id"], {"last": now, "prev": {}, "alerted": False})
+        days = self.store.data.setdefault("cam_still", {}).setdefault(cam["id"], {})
+        local = datetime.now()
+        home = any(p.get("home") for p in self.people_report()) if self.store.data["people"] else True
+        live = cs.get("engine") == "stream"
+        tracks = cs.get("tracks") or []
+        act = live and (stillness.moved(s["prev"], tracks) or stillness.pose_moved(cs.get("poses") or []))
+        s["prev"] = {t["id"]: t["box"] for t in tracks}
+        watching = live and home and stillness.in_window(local, cfg.get("window") or "")
+        if act or not watching:  # 有動、或現在不用看（時段外、沒人在家、Jetson 沒在看）：從現在重新算
+            if act and watching:
+                stillness.record_gap(days, local, int((now - s["last"]) / 60))
+                self._dirty = True
+            s.update(last=now, alerted=False)
+        thr, usual, learned = stillness.threshold(days, local.date())
+        if cfg.get("min"):
+            thr = int(cfg["min"])
+        gap = int((now - s["last"]) / 60)
+        cs["still_info"] = {"gap": gap, "threshold": thr, "usual": usual, "learned": learned, "week": stillness.week(days, local.date()), "watching": watching}
+        if watching and not s["alerted"] and gap >= thr:
+            s["alerted"] = True
+            name = cam.get("name") or cam["id"]
+            dur = f"{gap // 60} 小時 {gap % 60} 分鐘" if gap >= 60 else f"{gap} 分鐘"
+            self.face_log.add({"camera": name, "kind": "zone", "name": f"{dur}沒看到人走動", "sim": None})
+            self.notifier.send(f"⚠️ {name}：{dur}沒看到人走動",
+                               f"{local.strftime('%H:%M')}・家裡有人（手機在家）" + (f"，平常最久大約 {usual} 分鐘" if usual else "") + "。打開 App 看現在的畫面", "urgent")
 
     def empty_cancel(self, cid: str) -> None:
         e = self.cameras.state.setdefault(cid, {}).setdefault("empty", {"done": False, "pending": None})
