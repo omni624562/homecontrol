@@ -349,7 +349,7 @@ class Cameras:
                     jpeg = mask(jpeg, cam["ignore"])
                 self.frames[cam["id"]] = jpeg
                 sc = live["scores"]
-                st.update(engine="stream", objects=live["objects"], tracks=live["tracks"], samples=live["samples"])
+                st.update(engine="stream", objects=live["objects"], tracks=live["tracks"], samples=live["samples"], poses=live.get("poses") or [])
             else:
                 jpeg = snapshot(cam)
                 if cam.get("ignore"):
@@ -358,10 +358,10 @@ class Cameras:
                 got = self.remote(jpeg) if self.remote else None
                 if got:
                     sc = got["scores"]
-                    st.update(engine="gpu", objects=got["objects"], tracks=None, samples=None)
+                    st.update(engine="gpu", objects=got["objects"], tracks=None, samples=None, poses=None)
                 else:
                     sc = self.detector.scores(jpeg)
-                    st.update(engine="cpu", objects=None, tracks=None, samples=None)
+                    st.update(engine="cpu", objects=None, tracks=None, samples=None, poses=None)
             score = sc["person"]
             if cam.get("pets", True):
                 pet_track(st, sc, now)

@@ -1689,7 +1689,11 @@ class Hub:
             people = None
             tracked = st.get("tracks") if st.get("engine") == "stream" else None
             walkers = self._track_people(tracked) if tracked is not None else None  # 區域、過線：用 Jetson 追蹤的人的腳
-            if person and (c.get("fall") or (walkers is None and (areas or c.get("lines")))):
+            if tracked is not None and c.get("fall"):
+                # Jetson 每秒 2.5 次的姿勢，照時間順序判斷跌倒（站著 → 很快倒下 → 沒起來，不會漏掉倒下的那一下）
+                for t, ppl in st.get("poses") or []:
+                    await self._fall_check(c, jpeg, float(t), [{**p, "box": tuple(p["box"]), "foot": tuple(p["foot"])} for p in ppl])
+            elif person and (c.get("fall") or (walkers is None and (areas or c.get("lines")))):
                 try:
                     people = await asyncio.to_thread(self.analyze_pose, jpeg, st.get("objects"))
                 except Exception as err:  # noqa: BLE001

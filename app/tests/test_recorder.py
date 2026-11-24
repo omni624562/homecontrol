@@ -318,3 +318,23 @@ def test_visit_end_notifies_third_time(app_module, monkeypatch):
     for i in range(3):
         hub._visit_end("g", {"start": now + i * 100, "known": set(), "maybe": set(), "app": [e, e]}, now + i * 100 + 30)
     assert len(sent) == 1
+
+
+def test_stream_poses_detect_fall(app_module, monkeypatch):
+    import asyncio
+
+    from plughub import vision
+
+    hub = app_module.hub
+    sent = []
+    monkeypatch.setattr(hub.notifier, "send", lambda *a, **k: sent.append(a))
+    monkeypatch.setattr(hub.face_engine, "thumb", lambda *a, **k: b"")
+    hub._falls = {}
+    cam = {"id": "r", "name": "客廳", "host": "x", "enabled": True, "fall": True, "zones": [], "lines": []}
+    stand = {"score": 0.9, "torso": 5, "aspect": 2.5, "box": [1, 2, 3, 4], "foot": [0.5, 0.9]}
+    flat = {"score": 0.9, "torso": 80, "aspect": 0.5, "box": [1, 2, 3, 4], "foot": [0.5, 0.9]}
+    # 站著 → 0.8 秒後躺下（每秒一張的話可能只看到「躺著」，不知道是突然倒下）→ 一直沒起來
+    poses = [[100.0, [stand]], [100.4, [stand]], [100.8, [flat]]] + [[100.8 + i, [flat]] for i in range(1, vision.FALL_HOLD + 2)]
+    for t, p in poses:
+        asyncio.run(hub._fall_check(cam, b"j", t, [{**x, "box": tuple(x["box"]), "foot": tuple(x["foot"])} for x in p]))
+    assert sent and "跌倒" in sent[0][0]

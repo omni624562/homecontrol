@@ -237,7 +237,9 @@ class RtmoPose:
         self.lock = threading.Lock()
 
     def analyze(self, jpeg: bytes) -> list[dict]:
-        img = _decode(jpeg)
+        return self.analyze_img(_decode(jpeg))
+
+    def analyze_img(self, img: np.ndarray) -> list[dict]:
         h, w = img.shape[:2]
         r = min(640 / h, 640 / w)
         pad = np.full((640, 640, 3), 114, np.uint8)
@@ -534,7 +536,7 @@ def main() -> None:
     detector = Detector(MODEL)
     blank = cv2.imencode(".jpg", np.zeros((1080, 1920, 3), np.uint8))[1].tobytes()
     detector.detect(_decode(blank))  # 暖機
-    streams = Streams(detector.detect)
+    streams = Streams(detector.detect, lambda img: rtmo.analyze_img(img) if rtmo else None)
     global index
     try:
         index = Index(detector.detect, GPU)

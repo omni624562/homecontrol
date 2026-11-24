@@ -139,7 +139,7 @@ class GpuVision:
 
         if not self.url or time.time() - self._fail_at < RETRY:
             return
-        want = {c["id"]: {"url": rtsp_url(c), "ignore": c.get("ignore") or []} for c in cams if c.get("enabled") and c.get("host")}
+        want = {c["id"]: {"url": rtsp_url(c), "ignore": c.get("ignore") or [], "pose": bool(c.get("fall"))} for c in cams if c.get("enabled") and c.get("host")}
         sig = json.dumps(want, sort_keys=True)
         if sig == self._pushed and time.time() - self._pushed_at < 300:
             return
@@ -170,7 +170,8 @@ class GpuVision:
         self._since[cid] = float(st.get("t") or 0)
         self.last_ok = time.time()
         objs = [o for o in st.get("objects") or [] if float(o.get("score") or 0) >= KEEP]
-        return {"scores": normalize(objs), "objects": objs[:20], "tracks": st.get("tracks") or [], "samples": st.get("samples") or [], "jpeg": jpeg}
+        return {"scores": normalize(objs), "objects": objs[:20], "tracks": st.get("tracks") or [], "samples": st.get("samples") or [],
+                "poses": st.get("poses") or [], "jpeg": jpeg}
 
     def appearance(self, cid: str) -> Any:
         """這台攝影機最新畫面裡最大的那個人的外觀特徵（numpy）；沒有人、連不上 → None。"""
