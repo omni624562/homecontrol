@@ -701,3 +701,39 @@ def test_night_enhance():
     m.ENHANCE["on"] = False
     assert m.enhance(dark) is dark
     m.ENHANCE["on"] = True
+
+
+def test_activity_store(tmp_path):
+    from datetime import date, datetime
+
+    from plughub.activity import GW, Activity
+
+    a = Activity(tmp_path)
+    t = datetime(2026, 11, 25, 9, 30).timestamp()  # 週三
+    a.add("r", t, [(0.5, 0.5)], 0.2)
+    a.add("r", t + 1, [(0.5, 0.5), (0.0, 0.99)], 0.2)
+    a.add("r", t + 2, [], 0.2)  # 沒人不記
+    a.add_presence("r", datetime(2026, 11, 18, 9, 0).timestamp(), 1.0)  # 上週三
+    today = date(2026, 11, 25)
+    assert a.summary("r", "today", today)["days"] == 1
+    raw = a.data["r"]["2026-11-25"]
+    assert abs(raw["h"][9] - 0.4) < 1e-9 and raw["g"][9 * GW + 16] == 2 and raw["g"][17 * GW] == 1
+    assert a.days("week", today) == ["2026-11-23", "2026-11-24", "2026-11-25"]
+    assert a.days("lastweek_same", today) == ["2026-11-16", "2026-11-17", "2026-11-18"]
+    assert a.summary("r", "lastweek_same", today)["days"] == 1
+    a.maybe_save(force=True)
+    assert Activity(tmp_path).data["r"]["2026-11-25"]["g"][9 * GW + 16] == 2
+
+
+def test_activity_api(app_module, monkeypatch):
+    import time as _t
+
+    hub = app_module.hub
+    hub.cameras.list = [{"id": "r", "name": "IN_HOUSE", "host": "x", "enabled": True, "room": "lr"}]
+    c, dev = _client(app_module)
+    hub.cameras.viewers = [dev["id"]]
+    hub.activity.data = {}
+    hub.activity.add("r", _t.time(), [(0.5, 0.5)], 0.2)
+    r = c.get("/api/activity", params={"range": "today"}).json()
+    assert r["rooms"]["lr"]["seconds"] == 0 and r["cams"]["r"]["grid"][9 * 32 + 16] == 1
+    assert c.get("/api/activity", params={"range": "compare"}).json()["range"] == "compare"

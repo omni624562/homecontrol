@@ -29,6 +29,7 @@ from .notify import Notifier
 from .usage import Usage
 from .recorder import Recorder
 from .gpu import GPU_PERSON_ON, GpuVision
+from .activity import Activity
 from .daysoff import DaysOff
 from .alerts import Alerts, quake_age_h
 from .backup import Backup
@@ -199,7 +200,9 @@ class Hub:
         self.cameras.stream = self.gpu.stream
         self._cam_started = time.time()  # 剛開機還沒看到人：從這時候開始算「沒人多久」
         self._still: dict[str, dict[str, Any]] = {}
-        self._sound_seen: dict[str, float] = {}  # 攝影機 → 已經處理過的最後一個聲音事件  # 很久沒動靜：攝影機 → {last 上次有動, prev 上次的框, alerted}
+        self._sound_seen: dict[str, float] = {}  # 攝影機 → 已經處理過的最後一個聲音事件
+        self.activity = Activity(self.store.dir)  # 活動熱圖
+        self._act_seen: dict[str, float] = {}  # 很久沒動靜：攝影機 → {last 上次有動, prev 上次的框, alerted}
         self._cam_alert: dict[str, float] = {}  # 攝影機 ID → 上次「沒人在家卻看到人」通知的時間
         self._cam_pending: dict[str, float] = {}  # 攝影機 ID → 沒人在家時看到人的時間（等家人的手機連上 Wi-Fi）
         # 認臉
@@ -1465,6 +1468,8 @@ class Hub:
                 self._gesture_events(c, now)
             if self.cameras.state.get(c["id"], {}).get("sounds"):
                 self._sound_events(c)
+            self._activity_feed(c, now)
+        self.activity.maybe_save()
         if getattr(self, "_dirty_cams", False):
             self._dirty_cams = False
             self.cameras.save()
@@ -2143,6 +2148,18 @@ class Hub:
             self.notifier.send(f"⚠️ {name}：{dur}沒看到人走動",
                                f"{local.strftime('%H:%M')}・家裡有人（手機在家）" + (f"，平常最久大約 {usual} 分鐘" if usual else "") + "。打開 App 看現在的畫面", "urgent")
             self._second_opinion(cam, f"{dur}沒看到人走動（家裡有人）")
+
+    def _activity_feed(self, cam: dict[str, Any], now: float) -> None:
+        """活動熱圖：Jetson 每秒 5 次的腳的位置（每次算 0.2 秒）；Jetson 不在時用「有沒有人」（每秒一次）。"""
+        st = self.cameras.state.get(cam["id"], {})
+        if st.get("engine") == "stream":
+            last = self._act_seen.get(cam["id"], 0.0)
+            for t, pts in st.get("samples") or []:
+                if float(t) > last:
+                    self.activity.add(cam["id"], float(t), [(x, y) for _, x, y in pts], 0.2)
+                    self._act_seen[cam["id"]] = float(t)
+        elif st.get("person"):
+            self.activity.add_presence(cam["id"], now, camera.EVERY)
 
     def _sound_events(self, cam: dict[str, Any]) -> None:
         """Jetson 聽到的聲音：記紀錄（附前後 10 秒的聲音），照設定通知。"""

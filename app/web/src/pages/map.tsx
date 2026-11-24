@@ -106,6 +106,13 @@ export function MapPage() {
   const [sense, setSense] = useState<MapSense | null>(null);
   const [edit, setEdit] = useState(false);
   const [layer, setLayer] = useState<MapLayer>("signal");
+  const [actRange, setActRange] = useState<ActRange>("today");
+  const [act, setAct] = useState<ActData | null>(null);
+  useEffect(() => {
+    if (layer !== "activity") return;
+    api<ActData>("GET", `/api/activity?range=${actRange}`).then(setAct).catch(() => setAct(null));
+  }, [layer, actRange]);
+  const actMap = useMemo(() => activityMap(act), [act]);
   const [apSug, setApSug] = useState<ApSuggest[] | null>(null);
   const [showGaps, setShowGaps] = useState(false);
   const [sel, setSel] = useState<MapSel>(null);
@@ -583,9 +590,11 @@ export function MapPage() {
             </div>
           ) : (
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-              <div className="w-80 max-w-full"><Segmented label="圖層" value={layer} onChange={setLayer} options={[["signal", "訊號強度"], ["coverage", "預估覆蓋"], ["motion", "動靜"]]} /></div>
+              <div className="w-80 max-w-full"><Segmented label="圖層" value={layer} onChange={setLayer} options={[["signal", "訊號強度"], ["coverage", "預估覆蓋"], ["motion", "動靜"], ["activity", "活動"]]} /></div>
               <div className="ml-auto flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground" aria-hidden>
-                {layer === "coverage" ? (
+                {layer === "activity" ? (
+                  <span className="inline-flex items-center gap-1">少{[0.15, 0.35, 0.6, 0.9].map((a) => <i key={a} className="size-3 rounded-sm bg-primary" style={{ opacity: a }} />)}常有人</span>
+                ) : layer === "coverage" ? (
                   <span className="inline-flex items-center gap-1.5">
                     很強<b className="h-3 w-24 rounded-sm" style={{ background: `linear-gradient(90deg, ${[-45, -56, -63, -68, -76].map((v) => covColor(v)).join(",")})` }} />弱
                   </span>
@@ -615,7 +624,7 @@ export function MapPage() {
           {/* 地圖一律縮到放得下（不用左右滑）；要看細節就放大 */}
           <div>
             <MapCanvas
-              fp={fp} devs={devs} links={links} layer={layer} edit={edit} sel={sel} motion={motion} roomHeat={roomHeat} cover={cover ? { cells: cover, step: covStep } : null} ghosts={ghosts} people={past != null ? [] : people} tool={tool}
+              fp={fp} devs={devs} links={links} layer={layer} edit={edit} sel={sel} motion={motion} roomHeat={roomHeat} activity={actMap} cover={cover ? { cells: cover, step: covStep } : null} ghosts={ghosts} people={past != null ? [] : people} tool={tool}
               onChange={setFp} onDragEnd={save} onPick={pick} onTip={setTip}
               powerOf={(p) => isOn(p)}
               onPower={(p) => {
@@ -685,6 +694,7 @@ export function MapPage() {
                   <CoveragePanel model={model} rooms={roomCov} aps={fp.aps.filter((a) => fp.items[`ap:${a.id}`])} sug={apSug}
                     onFind={() => setApSug(covFp!.aps.filter((a) => fp.items[`ap:${a.id}`]).map((a) => bestApSpot(covFp!, model, a.id)).filter((x): x is ApSuggest => !!x))} />
                 )}
+                {layer === "activity" && <ActivityPanel range={actRange} setRange={setActRange} data={act} rooms={fp.rooms} />}
                 {layer === "motion" && gaps.length > 0 && (
                   <div className="space-y-1.5">
                     <Note icon={AlertCircle} tone="warn">
@@ -829,6 +839,47 @@ function CoveragePanel({ model, rooms, aps, sug, onFind }: {
         ))}
         {sug != null && <p className="text-xs text-muted-foreground">一次只移一台、另一台不動的估計。真的搬了之後，地圖上的基地台也要拖到新位置，預估才會跟著更新。</p>}
       </div>
+    </div>
+  );
+}
+
+
+// ---- 活動圖層：攝影機看到人的時間（有攝影機的區域才有） ----
+type ActRange = "today" | "week" | "compare";
+interface ActData { range: string; cams: Record<string, { name: string; room: string | null; hours: number[]; seconds: number }>; rooms: Record<string, { seconds: number; last: number }> }
+const hrs = (sec: number) => (sec >= 3600 ? `${(sec / 3600).toFixed(1)} 小時` : `${Math.round(sec / 60)} 分鐘`);
+
+function activityMap(d: ActData | null): Record<string, { v: number; label: string; tone?: "up" | "down" }> {
+  if (!d) return {};
+  const max = Math.max(1, ...Object.values(d.rooms).map((r) => r.seconds));
+  return Object.fromEntries(Object.entries(d.rooms).map(([id, r]) => {
+    if (d.range === "compare") {
+      const ch = r.last ? Math.round(((r.seconds - r.last) / r.last) * 100) : null;
+      return [id, { v: r.seconds / max, label: ch == null ? `這週 ${hrs(r.seconds)}` : `${ch >= 0 ? "+" : ""}${ch}%（比上週）`, tone: ch != null && Math.abs(ch) >= 30 ? "up" : undefined }];
+    }
+    return [id, { v: r.seconds / max, label: hrs(r.seconds) }];
+  }));
+}
+
+function ActivityPanel({ range, setRange, data, rooms }: { range: ActRange; setRange: (r: ActRange) => void; data: ActData | null; rooms: { id: string; name: string }[] }) {
+  const cams = Object.values(data?.cams || {}).filter((c) => c.seconds > 0);
+  const roomName = (id: string | null) => rooms.find((r) => r.id === id)?.name;
+  return (
+    <div className="space-y-3">
+      <div className="w-72 max-w-full"><Segmented label="時間" value={range} onChange={(v) => setRange(v as ActRange)} options={[["today", "今天"], ["week", "這週"], ["compare", "跟上週比"]]} /></div>
+      {cams.length ? cams.map((c) => {
+        const mx = Math.max(1, ...c.hours);
+        return (
+          <div key={c.name} className="space-y-1">
+            <div className="text-sm"><b>{c.name}</b>{roomName(c.room) && <span className="text-muted-foreground">（{roomName(c.room)}）</span>}・有人 {hrs(c.seconds)}</div>
+            <div className="flex h-10 items-end gap-0.5" aria-label={`${c.name} 每小時有人的時間`}>
+              {c.hours.map((v, h) => <i key={h} title={`${h}:00・${hrs(v)}`} className="flex-1 rounded-sm bg-primary" style={{ height: `${Math.max(4, (v / mx) * 100)}%`, opacity: v ? 0.85 : 0.15 }} />)}
+            </div>
+            <div className="flex justify-between text-[11px] tabular-nums text-muted-foreground"><span>0</span><span>6</span><span>12</span><span>18</span><span>24</span></div>
+          </div>
+        );
+      }) : <Note>還沒有資料：攝影機看到人時會開始記（只記時間和位置，沒有畫面）。</Note>}
+      <p className="text-xs text-muted-foreground">只有選了「拍的區域」的攝影機會算進地圖上的區域。攝影機頁還有畫在畫面上的熱圖，看得出房間裡哪裡最常有人。</p>
     </div>
   );
 }
