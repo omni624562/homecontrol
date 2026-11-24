@@ -10,7 +10,7 @@ import { covColor, type CoverCell } from "@/lib/coverage";
 export type MapSel = { kind: "room" | "ap" | "dev" | "wall" | "door"; id: string } | null;
 // 編輯工具：選取／畫牆／放門
 export type MapTool = "select" | "wall" | "door" | "window";
-export type MapLayer = "signal" | "coverage" | "motion";
+export type MapLayer = "signal" | "coverage" | "motion" | "activity";
 // 建議的位置（虛線）：基地台搬到這裡、或在這裡加一個插座；to：連到哪裡（畫虛線）
 export interface MapGhost { id: string; kind: "ap" | "plug"; x: number; y: number; label: string; to?: { x: number; y: number } }
 // 地圖上的人：猜到在哪個區域（sure=false 是把握不夠，只是最可能的那間）
@@ -62,7 +62,7 @@ function outletRing(fp: Floorplan, at: XY, n: number): XY[] {
 
 // 地圖本體：區域、訊號光暈、連線、基地台、裝置；編輯時可以拖曳
 export function MapCanvas({
-  fp, devs, links, layer, edit, sel, motion, roomHeat = {}, cover, ghosts = [], people = [], tool = "select", onChange, onDragEnd, onPick, onTip, powerOf, onPower,
+  fp, devs, links, layer, edit, sel, motion, roomHeat = {}, activity = {}, cover, ghosts = [], people = [], tool = "select", onChange, onDragEnd, onPick, onTip, powerOf, onPower,
 }: {
   fp: Floorplan;
   devs: MapDev[];
@@ -72,6 +72,7 @@ export function MapCanvas({
   sel: MapSel;
   motion: Record<string, number | null>;
   roomHeat?: Record<string, number | null>;
+  activity?: Record<string, { v: number; label: string; tone?: "up" | "down" }>; // 活動圖層：0～1 的深淺和顯示的字
   cover?: { cells: CoverCell[]; step: number } | null;
   ghosts?: MapGhost[];
   people?: MapPerson[];
@@ -568,6 +569,11 @@ export function MapCanvas({
         const h = roomHeat[r.id];
         return h != null && h >= 0.25 ? <path key={`heat-${r.id}`} d={roomPath(r)} fill={WARN} fillOpacity={Math.min(0.4, 0.04 + h * 0.2)} className="pointer-events-none" /> : null;
       })}
+      {layer === "activity" && !edit && rooms.map((r) => {
+        // 活動：攝影機看到人的時間，整間染成藍色，越常有人越深
+        const a = activity[r.id];
+        return a && a.v > 0 ? <path key={`act-${r.id}`} d={roomPath(r)} fill="var(--primary)" fillOpacity={0.06 + a.v * 0.45} className="pointer-events-none" /> : null;
+      })}
       {rooms.map((r) => {
         const isSel = edit && sel?.kind === "room" && sel.id === r.id;
         const h = layer === "motion" && !edit ? roomHeat[r.id] : null;
@@ -583,6 +589,9 @@ export function MapCanvas({
             />
             <text x={lb.x} y={lb.y + 16 * k} className={cn("fill-muted-foreground font-semibold select-none", edit ? "cursor-move" : "pointer-events-none")} style={{ fontSize: 15 * k }}
               onPointerDown={(e) => startDrag(e, { kind: "label", id: r.id })}>{edit && <title>拖曳可以移動名稱</title>}{r.name}</text>
+            {layer === "activity" && !edit && activity[r.id] && (
+              <text x={lb.x} y={lb.y + 34 * k} className="pointer-events-none font-semibold" fill={activity[r.id].tone === "up" ? WARN : "var(--primary)"} style={{ fontSize: 12 * k }}>{activity[r.id].label}</text>
+            )}
             {h != null && h >= ROOM_ACTIVE && (
               <text x={lb.x} y={lb.y + 34 * k} className="pointer-events-none font-semibold" fill={WARN} style={{ fontSize: 12 * k }}>{h >= ROOM_STRONG ? "有人走動" : "有動靜"}</text>
             )}

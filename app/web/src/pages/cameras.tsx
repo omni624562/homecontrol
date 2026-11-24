@@ -260,7 +260,7 @@ function CamDetail(p: DetailProps) {
       <div className="mx-auto grid max-w-[112rem] items-start gap-4 px-4 py-4 sm:px-6 lg:grid-cols-[1.25fr_1fr] lg:px-8">
         <div className="min-w-0 space-y-4">
           <section id="c-view" className="scroll-mt-28 space-y-4"><DetectEditor cam={cam} scenes={p.scenes} setCams={p.setCams} upd={upd} /></section>
-          <section id="c-replay" className="scroll-mt-28"><ReplayCard cam={cam.id} camName={cam.name} /></section>
+          <section id="c-replay" className="scroll-mt-28 space-y-4"><ReplayCard cam={cam.id} camName={cam.name} /><HeatCard cam={cam} /></section>
           <div className="max-lg:hidden">{log}</div>
         </div>
         <div className="min-w-0 space-y-4">
@@ -621,6 +621,37 @@ function LogTab({ faces, cam }: { faces: FaceRep | null; cam: Cam }) {
       {every.length > 5 && <button type="button" onClick={() => setAll(!all)} className="w-full border-t px-4 py-2.5 text-left text-sm font-medium text-primary hover:bg-muted/60">{all ? "只看最近幾筆" : `看全部 ${every.length} 筆`}</button>}
       <p className="border-t px-4 py-2.5 text-xs text-muted-foreground">陌生人、跌倒、偵測（門開了、有人進來…）會存照片；有錄影機的話每一筆都能看前後的影片。照片和錄影都 7 天後自動刪掉。家人、訪客只記名字。</p>
       <ClipPlayer target={play} onClose={() => setPlay(null)} />
+    </Card>
+  );
+}
+
+
+// 活動熱圖：畫面上哪裡最常有人（Jetson 追蹤到的腳的位置）；只有數字，沒有存畫面
+function HeatCard({ cam }: { cam: Cam }) {
+  const [range, setRange] = useState<"today" | "week">("today");
+  const [d, setD] = useState<{ grid: number[]; gw: number; gh: number; seconds: number } | null>(null);
+  useEffect(() => {
+    api<{ cams: Record<string, { grid: number[]; gw: number; gh: number; seconds: number }> }>("GET", `/api/activity?range=${range}`)
+      .then((r) => setD(r.cams[cam.id] || null)).catch(() => setD(null));
+  }, [cam.id, range]);
+  if (!d || !d.grid.some((v) => v > 0)) return null;
+  const max = Math.max(...d.grid);
+  return (
+    <Card className="gap-3 p-4">
+      <div className="flex items-center gap-2">
+        <span className="flex-1 font-semibold">活動熱圖<span className="ml-2 text-sm font-normal text-muted-foreground">有人 {d.seconds >= 3600 ? `${(d.seconds / 3600).toFixed(1)} 小時` : `${Math.round(d.seconds / 60)} 分鐘`}</span></span>
+        {(["today", "week"] as const).map((k) => (
+          <button key={k} type="button" aria-pressed={range === k} onClick={() => setRange(k)}
+            className={cn("rounded-full border px-2.5 py-0.5 text-xs", range === k ? "border-primary bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted")}>{k === "today" ? "今天" : "這週"}</button>
+        ))}
+      </div>
+      <div className="relative aspect-video overflow-hidden rounded-lg bg-muted">
+        <img src={`/api/cameras/${cam.id}/snapshot.jpg`} alt="" className="size-full object-cover opacity-70" />
+        <div className="absolute inset-0 grid" style={{ gridTemplateColumns: `repeat(${d.gw}, 1fr)`, gridTemplateRows: `repeat(${d.gh}, 1fr)` }} aria-label="畫面上哪裡最常有人">
+          {d.grid.map((v, i) => <i key={i} style={{ background: v ? `rgba(220, 38, 38, ${0.12 + 0.6 * Math.sqrt(v / max)})` : "transparent" }} />)}
+        </div>
+      </div>
+      <p className="text-xs text-muted-foreground">紅色越深，人越常站在那裡（算的是腳的位置）。家中地圖頁的「活動」圖層可以看每個區域、跟上週比。</p>
     </Card>
   );
 }

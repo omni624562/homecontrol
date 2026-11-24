@@ -152,6 +152,7 @@ async def lifespan(app_: FastAPI):
             pass
     await hub.stop()
     hub.usage.save()
+    hub.activity.maybe_save(force=True)
 
 
 app = FastAPI(title="插座", lifespan=lifespan, docs_url=None, redoc_url=None)
@@ -1251,6 +1252,23 @@ async def gestures_put(request: Request, body: dict = Body(...)) -> dict[str, An
     hub.gpu._pushed = None  # 馬上告訴 Jetson 要不要看手勢
     await asyncio.to_thread(hub.gpu.push_streams, hub.cameras.list)
     return await gestures_get(request)
+
+
+@app.get("/api/activity")
+async def activity_get(request: Request, range: str = "today") -> dict[str, Any]:  # noqa: A002
+    """活動熱圖：每台攝影機的每小時有人秒數、畫面格子；每個區域（有攝影機的）加總；compare＝這週跟上週。"""
+    _need_view(request)
+    rng = range if range in ("today", "week", "lastweek", "compare") else "today"
+    cams, rooms = {}, {}
+    for c in hub.cameras.list:
+        a = hub.activity.summary(c["id"], "week" if rng == "compare" else rng)
+        cams[c["id"]] = {**a, "name": c.get("name"), "room": c.get("room")}
+        if c.get("room"):
+            r = rooms.setdefault(c["room"], {"seconds": 0, "last": 0})
+            r["seconds"] += a["seconds"]
+            if rng == "compare":
+                r["last"] += hub.activity.summary(c["id"], "lastweek_same")["seconds"]
+    return {"range": rng, "cams": cams, "rooms": rooms}
 
 
 @app.get("/api/claude-vision")
