@@ -12,7 +12,10 @@ API（都要 Authorization: Bearer <token>；POST 的 body 都是 JPEG）：
   POST /pose                  → {"ms", "people": [{"score", "torso", "aspect", "box", "foot"}]}
   POST /faces                 → {"ms", "faces": [{"w", "score", "clear", "box", "feat": [128 個數字]}]}
   POST /segment?key=&x=&y=    → {"ms", "shapes": [...]}；body 是 JPEG 就重新編碼，空的就用這個 key 60 秒內的編碼（沒有 → 409）
-  GET  /status                模型、平均耗時、處理了幾張
+  GET  /status                模型、平均耗時、處理了幾張、每台串流的狀況
+  PUT  /config                {"cams": {"id": {"url": "rtsp://...", "ignore": [...]}}}：直接看哪些攝影機的影片（stream.py）
+  GET  /cams/{id}/state?since=   最新的物件、追蹤中的人、since 之後每一張的腳的位置
+  GET  /cams/{id}/frame.jpg      最新一張畫面
 """
 from __future__ import annotations
 
@@ -40,6 +43,7 @@ os.environ.setdefault("PLUGHUB_MODEL", str(Path(os.environ.get("VISION_MODELS", 
 from plughub import faces as faces_mod  # noqa: E402  跟樹莓派同一份程式
 from plughub import segment as seg_mod  # noqa: E402
 from plughub import vision as vision_mod  # noqa: E402
+from stream import Streams  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 LOG = logging.getLogger("vision")
@@ -213,6 +217,7 @@ detector: Detector | None = None
 pose = vision_mod.Pose()
 faces = faces_mod.Engine()
 segmenter: Segmenter | None = None
+streams: Streams | None = None
 stat = Stat()
 
 
@@ -280,11 +285,51 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         if not self._auth():
             return
-        if self.path == "/status":
+        u = urlparse(self.path)
+        if u.path == "/status":
+            cams = {cid: {k: v for k, v in c.state(time.time()).items() if k in ("ok", "error", "fps", "t")} for cid, c in (streams.cams.items() if streams else [])}
             self._json(200, {"model": MODEL, "ready": detector is not None and segmenter is not None,
-                             "sam": "gpu" if segmenter and segmenter.gpu else "cpu" if segmenter else None, "stats": stat.public()})
+                             "sam": "gpu" if segmenter and segmenter.gpu else "cpu" if segmenter else None, "stats": stat.public(), "streams": cams})
             return
+        parts = u.path.strip("/").split("/")
+        if len(parts) == 3 and parts[0] == "cams" and streams:
+            cam = streams.get(parts[1])
+            if not cam:
+                self._json(404, {"error": "沒有在看這台"})
+                return
+            if parts[2] == "state":
+                try:
+                    since = float((parse_qs(u.query).get("since") or ["0"])[0])
+                except ValueError:
+                    since = 0.0
+                self._json(200, cam.state(since))
+                return
+            if parts[2] == "frame.jpg":
+                data = cam.jpeg()
+                if not data:
+                    self._json(404, {"error": "還沒有畫面"})
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "image/jpeg")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+                return
         self._json(404, {"error": "沒有這個"})
+
+    def do_PUT(self) -> None:  # noqa: N802
+        data = self.rfile.read(min(int(self.headers.get("Content-Length") or 0), MAX_BODY))
+        if not self._auth():
+            return
+        if urlparse(self.path).path != "/config" or streams is None:
+            self._json(404 if streams else 503, {"error": "沒有這個" if streams else "模型還在載入"})
+            return
+        try:
+            cfg = json.loads(data or b"{}")
+        except ValueError:
+            self._json(400, {"error": "不是 JSON"})
+            return
+        self._json(200, {"ok": True, "cams": streams.configure(cfg)})
 
     def do_POST(self) -> None:  # noqa: N802
         data = self.rfile.read(min(int(self.headers.get("Content-Length") or 0), MAX_BODY))
@@ -302,7 +347,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    global detector, segmenter
+    global detector, segmenter, streams
     if not TOKEN:
         raise SystemExit("要給 VISION_TOKEN")
     srv = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
@@ -311,6 +356,7 @@ def main() -> None:
     detector = Detector(MODEL)
     blank = cv2.imencode(".jpg", np.zeros((1080, 1920, 3), np.uint8))[1].tobytes()
     detector.detect(_decode(blank))  # 暖機
+    streams = Streams(detector.detect)
     pose.analyze(blank)
     faces.analyze(blank)
     try:

@@ -199,3 +199,38 @@ def test_segment_prefers_gpu(app_module, monkeypatch):
     state["has"] = False  # Jetson 重開了：要求重送
     c.post("/api/cameras/g/segment", json={"x": 0.4, "y": 0.4})
     assert calls[-2:] == [None, b"jpeg"]
+
+
+def test_stream_mode_uses_jetson_state(app_module, monkeypatch, tmp_path):
+    from plughub import camera
+
+    cams = camera.Cameras(tmp_path)
+    cam = {"id": "c", "host": "x", "enabled": True}
+    monkeypatch.setattr(camera, "snapshot", lambda c: (_ for _ in ()).throw(AssertionError("不該跟攝影機要畫面")))
+    cams.stream = lambda cid: {"scores": {"person": 0.9, "cat": 0, "dog": 0}, "objects": [], "jpeg": b"frame",
+                               "tracks": [{"id": 1, "box": [0.1, 0.1, 0.1, 0.3], "foot": [0.15, 0.4], "score": 0.8}], "samples": [[1.0, [[1, 0.1, 0.4]]]]}
+    cams.check(cam, 1)
+    st = cams.state["c"]
+    assert st["engine"] == "stream" and cams.frames["c"] == b"frame" and st["tracks"][0]["id"] == 1
+    cams.stream = lambda cid: None  # 串流不正常：改回自己抓畫面
+    monkeypatch.setattr(camera, "snapshot", lambda c: b"snap")
+    cams.remote = None
+    monkeypatch.setattr(cams.detector, "scores", lambda j: {"person": 0.0, "cat": 0.0, "dog": 0.0})
+    cams.check(cam, 2)
+    assert cams.state["c"]["engine"] == "cpu" and cams.frames["c"] == b"snap" and cams.state["c"]["tracks"] is None
+
+
+def test_stream_samples_feed_lines(app_module, monkeypatch):
+    import asyncio
+
+    hub = app_module.hub
+    fired = []
+    monkeypatch.setattr(hub, "_zone_fire", lambda cam, item, label, act, now, jpeg=None: fired.append(label))
+    cam = {"id": "c", "name": "門口", "host": "x", "enabled": True, "zones": [],
+           "lines": [{"id": "l1", "name": "樓梯口", "a": [0.5, 0.0], "b": [0.5, 1.0], "in": {}, "out": {}}]}
+    # 一個人從左走到右，中間只有 Jetson 的樣本（樹莓派每秒一張的畫面裡人都在同一邊）
+    st = {"engine": "stream", "samples": [[1.0, [[1, 0.40, 0.5]]], [1.2, [[1, 0.46, 0.5]]], [1.4, [[1, 0.54, 0.5]]], [1.6, [[1, 0.60, 0.5]]]]}
+    asyncio.run(hub._zones_check(cam, st, b"j", 2.0, [], True))
+    assert len(fired) == 1 and "樓梯口" in fired[0]
+    people = hub._track_people([{"id": 3, "box": [0.1, 0.2, 0.1, 0.4], "foot": [0.15, 0.6], "score": 0.8}])
+    assert people[0]["foot"] == (0.15, 0.6) and people[0]["torso"] is None

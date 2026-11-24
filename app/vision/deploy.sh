@@ -19,5 +19,5 @@ for f in efficientdet_lite0.tflite movenet_multipose.tflite face_detection_yunet
   ssh "$HOST" "test -f ~/vision/models/$f" || { docker cp "plughub:/app/models/$f" "$TMP/$f" && scp -q "$TMP/$f" "$HOST":vision/models/; }
 done
 scp -q ../plughub/__init__.py ../plughub/camera.py ../plughub/vision.py ../plughub/faces.py ../plughub/segment.py "$HOST":vision/plughub/
-scp -q server.py Dockerfile docker-compose.yml "$HOST":vision/
+scp -q server.py stream.py Dockerfile docker-compose.yml "$HOST":vision/
 ssh "$HOST" "cd ~/vision && VISION_TOKEN='$TOKEN' VISION_MODEL='${VISION_MODEL:-yolox_m}' docker compose up -d --build && docker ps --filter name=vision --format '{{.Status}}'"
