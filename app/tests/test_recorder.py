@@ -311,7 +311,8 @@ def test_visit_end_notifies_third_time(app_module, monkeypatch):
     for i in range(3):
         hub._visit_end("g", {"start": now + i * 600, "known": set(), "maybe": set(), "app": [e, e]}, now + i * 600 + 30)
     assert len(sent) == 1 and "第 3 次" in sent[0][0]
-    assert hub.face_log.items[-1]["kind"] == "stranger" and "今天第 3 次出現" in hub.face_log.items[-1]["name"]
+    st = [x for x in hub.face_log.items if x["kind"] == "stranger" and "今天第 3 次出現" in (x.get("name") or "")]
+    assert st and st[-1]["t"] == round(now + 1200)  # 寫他來的時間（不是走了以後），影片才看得到人
     # 家人手機剛進出：不算
     hub.repeats = __import__("sys").modules["plughub.reid"].Repeats()
     hub._presence = {"mom": {"home": True, "since": now + 10}}
@@ -756,7 +757,8 @@ def test_visit_end_uses_named_regular(app_module, monkeypatch):
     hub.visitors.visits, hub.visitors.named = [], [{"id": "n1", "name": "清潔阿姨", "emb": [1.0] * 768, "n": 3}]
     e = np.ones(768, np.float32)
     hub._visit_end("g", {"start": 1795488000.0, "known": set(), "maybe": set(), "app": [e, e]}, 1795488030.0)
-    assert hub.face_log.items[-1]["name"] == "清潔阿姨" and hub.face_log.items[-1]["kind"] == "guest" and not hub.visitors.visits
+    g = [x for x in hub.face_log.items if x["kind"] == "guest" and x.get("name") == "清潔阿姨"]
+    assert g and g[-1]["t"] == 1795488000 and not hub.visitors.visits
     hub.visitors.named = []
     hub._visit_end("g", {"start": 1795488100.0, "known": set(), "maybe": set(), "app": [e, e]}, 1795488130.0)
     assert len(hub.visitors.visits) == 1  # 沒取名字：記下來等分群
@@ -863,3 +865,16 @@ def test_more_finger_gestures():
     for f, name in (([False, True, True, True, False], "three"), ([False, True, False, False, True], "rock"), ([True, False, False, False, True], "call"),
                     ([False, True, True, False, False], "v"), ([False, True, False, False, False], "point"), ([True, True, True, True, True], "open")):
         assert m.gesture(f, lm) == name, (f, name)
+
+
+def test_face_log_inserts_late_items_in_order(tmp_path):
+    from plughub.faces import FaceLog
+
+    import time
+
+    b = round(time.time()) - 100
+    log = FaceLog(tmp_path)
+    log.add({"t": b, "kind": "zone"})
+    log.add({"t": b + 30, "kind": "zone"})
+    log.add({"t": b + 10, "kind": "stranger"})  # 人走了才記：照來的時間排
+    assert [x["t"] - b for x in log.items] == [0, 10, 30]

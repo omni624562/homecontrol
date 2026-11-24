@@ -1861,7 +1861,7 @@ class Hub:
         name = cam.get("name") or cid
         regular = self.visitors.match_named(emb)
         if regular is not None:  # 取了名字的常來的人：記名字，不當陌生人
-            self.face_log.add({"camera": name, "kind": "guest", "name": regular["name"], "sim": None, "by": "外觀"})
+            self.face_log.add({"t": round(v["start"]), "camera": name, "kind": "guest", "name": regular["name"], "sim": None, "by": "外觀"})
             return
         self.visitors.add(cid, v["start"], emb, self._person_thumb(v.get("app_jpeg"), v.get("app_box")))
         hit = self.repeats.add_visit(emb, v["start"])
@@ -1870,7 +1870,8 @@ class Hub:
         times = "、".join(datetime.fromtimestamp(t).strftime("%H:%M") for t in hit["times"])
         n = len(hit["times"])
         thumb = self._zone_frame(v["app_jpeg"], {}) if v.get("app_jpeg") else None
-        self.face_log.add({"camera": name, "kind": "stranger", "name": f"今天第 {n} 次出現（{times}）", "sim": None}, thumb or None)
+        # 人走了才知道是不是同一個人：紀錄時間寫他「來的時候」，影片才看得到人（不是人走了以後的空畫面）
+        self.face_log.add({"t": round(v["start"]), "camera": name, "kind": "stranger", "name": f"今天第 {n} 次出現（{times}）", "sim": None}, thumb or None)
         self.notifier.send(f"{name}：同一個不認得的人今天第 {n} 次出現", f"{times}；臉沒拍清楚，是用穿著、身形判斷的，可能是家人換了衣服")
 
     @staticmethod
