@@ -21,7 +21,7 @@ GET /api/sensing/replay     動靜回放：最近 24 小時每 5 分鐘一格
 GET /api/sensing/week       一週動靜：每間房「星期幾 × 幾點」有動靜的比例
 GET /api/net/events         斷線紀錄：外網、基地台卡住、Wi-Fi、插座、停電恢復
 GET /api/net/plug-health    插座連線健檢：斷幾次、訊號、建議
-GET/POST /api/cameras       網路攝影機（認人）；PUT/DELETE /api/cameras/{id}（room、enabled、alert、帳密）；GET …/{id}/snapshot.jpg 現在的畫面；POST …/{id}/segment 點一下就框
+GET/POST /api/cameras       網路攝影機（認人）；PUT/DELETE /api/cameras/{id}（room、enabled、alert、帳密）；GET …/{id}/snapshot.jpg 現在的畫面；POST …/{id}/segment 點一下就框；GET …/{id}/clip.mp4?t= 錄影片段；GET/PUT /api/recorder 錄影機
 GET /api/faces              認臉：認得的人、動作、登記（POST/DELETE /api/faces/enroll）、紀錄；PUT /api/faces/actions、PUT/DELETE /api/faces/{id}
 PUT /api/cameras/access     誰可以看攝影機；POST …/access/send-code 驗證碼送到手機、POST …/access/claim 開通這台
 GET /api/report/monthly     每月報告預覽（上個月）
@@ -1152,6 +1152,63 @@ async def cameras_segment(cam_id: str, request: Request, body: dict = Body(...))
         raise HTTPException(502, f"找不到邊：{err}") from None
     asyncio.get_running_loop().call_later(segment_mod.IDLE_FREE + 5, segmenter.free_if_idle)
     return {"shapes": shapes, "ms": round((time.monotonic() - t) * 1000)}
+
+
+CLIP_DIR = Path("/tmp/plughub-clips")
+
+
+@app.get("/api/recorder")
+async def recorder_get(request: Request) -> dict[str, Any]:
+    """錄影機（另一台主機全天錄影）的狀態。"""
+    _need_view(request)
+    return hub.recorder.public()
+
+
+@app.put("/api/recorder")
+async def recorder_put(request: Request, body: dict = Body(...)) -> dict[str, Any]:
+    """{"url": "http://10.0.2.99:8200"}（空字串＝不用錄影機）。只能是家裡網路的位址。"""
+    _need_view(request)
+    url = str(body.get("url") or "").strip().rstrip("/")
+    if url:
+        m = re.fullmatch(r"http://(\d{1,3}(?:\.\d{1,3}){3}):(\d{2,5})", url)
+        import ipaddress
+
+        if not m or not ipaddress.ip_address(m.group(1)).is_private:
+            raise HTTPException(400, "要是家裡網路的位址，例如 http://10.0.2.99:8200")
+    store.data["settings"]["recorder_url"] = url
+    store.save()
+    await asyncio.to_thread(hub.recorder.refresh, hub.cameras.list)
+    return hub.recorder.public()
+
+
+@app.get("/api/cameras/{cam_id}/clip.mp4")
+async def cameras_clip(cam_id: str, request: Request, t: float, before: float = 10, after: float = 20) -> Response:
+    """錄影機剪出 t（秒，epoch）前 before 秒到後 after 秒的影片。只有「可以看攝影機」的裝置拿得到。"""
+    _need_view(request)
+    if not hub.cameras.get(cam_id):
+        raise HTTPException(404, "找不到這台攝影機")
+    if not hub.recorder.url:
+        raise HTTPException(404, "還沒有設定錄影機")
+    before, after = min(120.0, max(0.0, before)), min(180.0, max(1.0, after))
+    if t + after > time.time() - 5:
+        raise HTTPException(425, "影片還在錄，等一下再看")
+    CLIP_DIR.mkdir(mode=0o700, exist_ok=True)
+    for old in CLIP_DIR.glob("*.mp4"):  # 剪好的暫存一小時
+        if time.time() - old.stat().st_mtime > 3600:
+            old.unlink(missing_ok=True)
+    safe = re.sub(r"[^\w-]", "", cam_id)
+    path = CLIP_DIR / f"{safe}-{int(t)}-{int(before)}-{int(after)}.mp4"
+    if not path.exists():
+        try:
+            data = await asyncio.to_thread(hub.recorder.clip, cam_id, t - before, t + after)
+        except Exception as err:  # noqa: BLE001
+            code = getattr(err, "code", None)
+            raise HTTPException(404 if code == 404 else 502, "這段時間沒有錄到" if code == 404 else f"錄影機連不上：{getattr(err, 'reason', err)}") from None
+        tmp = path.with_suffix(".tmp")
+        tmp.write_bytes(data)
+        tmp.replace(path)
+    hub.usage.hit("view:clip", every=60)
+    return FileResponse(path, media_type="video/mp4", headers={"Cache-Control": "private, no-store"})
 
 
 @app.put("/api/cameras/{cam_id}/lines")

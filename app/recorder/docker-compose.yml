@@ -1,0 +1,16 @@
+# 在 Jetson 上：RECORDER_TOKEN=... docker compose up -d --build（deploy.sh 會帶）
+services:
+  recorder:
+    build:
+      context: .
+      network: host  # 這台的 Docker bridge 解析不到網址
+    container_name: recorder
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      - RECORDER_TOKEN=${RECORDER_TOKEN:?要給 RECORDER_TOKEN}
+      - RECORDER_KEEP_DAYS=7
+      - RECORDER_MIN_FREE_GB=100
+    volumes:
+      - ./data:/data
+      - ${RECORDER_DIR:-/home/nan/recordings}:/rec

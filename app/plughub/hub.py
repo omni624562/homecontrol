@@ -26,6 +26,7 @@ from . import anomaly, arpprobe, camera, faces, habits, vision, zones as zonelib
 from .sensing import INTERVAL as SENSE_INTERVAL, SAVE_EVERY as SENSE_SAVE_EVERY, Sensing
 from .notify import Notifier
 from .usage import Usage
+from .recorder import Recorder
 from .daysoff import DaysOff
 from .alerts import Alerts, quake_age_h
 from .backup import Backup
@@ -144,6 +145,7 @@ class Hub:
         self.store = store
         self.notifier = notifier
         self.usage = Usage(store.dir)
+        self.recorder = Recorder(store.dir / "secrets.json", lambda: self.store.data["settings"])  # 另一台主機全天錄影
         notifier.on_send = lambda title: self.usage.hit("notify:" + _notify_key(title))
         self.backup = Backup(store.dir, lambda title, msg: notifier.send(title, msg, "high"))
         self.watchdog = Watchdog(store.dir, notifier.send_sync)
@@ -389,6 +391,7 @@ class Hub:
             asyncio.create_task(self._loop(self._local_tick, 15)),
             asyncio.create_task(self.router.run()),
             asyncio.create_task(self._loop(self._probe_tick, 120)),
+            asyncio.create_task(self._loop(self._recorder_tick, 60)),
             asyncio.create_task(self._loop(self._wan_tick, netlog.WAN_EVERY)),
         ]
 
@@ -2300,6 +2303,10 @@ class Hub:
         except OSError:
             pass
         return None
+
+    async def _recorder_tick(self) -> None:
+        """錄影機：同步要錄哪些攝影機、更新狀態（沒設定就什麼都不做）。"""
+        await asyncio.to_thread(self.recorder.refresh, self.cameras.list)
 
     async def _probe_tick(self) -> None:
         """路由器也說不出名字的裝置：直接在家裡網路問它一下是什麼（只讀，不登入）。問過的記在樹莓派上，一週後才再問。"""
