@@ -56,6 +56,8 @@ CAMERA_SCORE = 1.5  # 攝影機看到人的房間，動靜分數至少這麼多�
 PROBE_EVERY = 60  # 路由器多久沒看到家人的手機，就由樹莓派直接問（ARP）
 PROBE_MAX_AGE = 24 * 3600  # 超過一天沒看到的就不問了
 PRESENCE_LOG_MAX = 50
+SOUNDS = {"alarm": "聽到煙霧／火災警報聲", "glass": "聽到玻璃破掉的聲音", "scream": "聽到有人大叫、呼救", "dog": "狗一直叫（超過 2 分鐘）"}
+SOUND_DEFAULT = {"alarm": "urgent", "glass": "urgent", "scream": "urgent", "dog": "normal"}
 GESTURES = {"one_up": "舉一隻手", "both_up": "舉雙手", "cross": "雙手交叉"}
 ITEM_ONE = {"包裹", "垃圾袋", "推車"}  # 「多了一個包裹」
 ITEM_TAKEN = {"包裹", "袋子", "外送餐點", "垃圾袋"}  # 被拿走時可以另外決定要不要通知（act.taken）
@@ -196,7 +198,8 @@ class Hub:
         self.cameras.remote = self.gpu.detect
         self.cameras.stream = self.gpu.stream
         self._cam_started = time.time()  # 剛開機還沒看到人：從這時候開始算「沒人多久」
-        self._still: dict[str, dict[str, Any]] = {}  # 很久沒動靜：攝影機 → {last 上次有動, prev 上次的框, alerted}
+        self._still: dict[str, dict[str, Any]] = {}
+        self._sound_seen: dict[str, float] = {}  # 攝影機 → 已經處理過的最後一個聲音事件  # 很久沒動靜：攝影機 → {last 上次有動, prev 上次的框, alerted}
         self._cam_alert: dict[str, float] = {}  # 攝影機 ID → 上次「沒人在家卻看到人」通知的時間
         self._cam_pending: dict[str, float] = {}  # 攝影機 ID → 沒人在家時看到人的時間（等家人的手機連上 Wi-Fi）
         # 認臉
@@ -1460,6 +1463,8 @@ class Hub:
                 self._still_check(c, now)
             if self.cameras.state.get(c["id"], {}).get("gestures"):
                 self._gesture_events(c, now)
+            if self.cameras.state.get(c["id"], {}).get("sounds"):
+                self._sound_events(c)
         if getattr(self, "_dirty_cams", False):
             self._dirty_cams = False
             self.cameras.save()
@@ -2138,6 +2143,23 @@ class Hub:
             self.notifier.send(f"⚠️ {name}：{dur}沒看到人走動",
                                f"{local.strftime('%H:%M')}・家裡有人（手機在家）" + (f"，平常最久大約 {usual} 分鐘" if usual else "") + "。打開 App 看現在的畫面", "urgent")
             self._second_opinion(cam, f"{dur}沒看到人走動（家裡有人）")
+
+    def _sound_events(self, cam: dict[str, Any]) -> None:
+        """Jetson 聽到的聲音：記紀錄（附前後 10 秒的聲音），照設定通知。"""
+        cfg = cam.get("sound") or {}
+        seen = self._sound_seen.setdefault(cam["id"], 0.0)
+        for t, kind, score in self.cameras.state[cam["id"]].pop("sounds", None) or []:
+            if t <= seen or not cfg.get("on"):
+                continue
+            self._sound_seen[cam["id"]] = max(self._sound_seen[cam["id"]], t)
+            label = SOUNDS.get(kind, kind)
+            name = cam.get("name") or cam["id"]
+            self.face_log.add({"camera": name, "kind": "sound", "name": label, "sim": None, "sound_t": int(t), "score": score})
+            level = cfg.get(kind, SOUND_DEFAULT.get(kind, "normal"))
+            if level != "off":
+                icon = "🔥 " if kind == "alarm" else "⚠️ " if level == "urgent" else ""
+                self.notifier.send(f"{icon}{name}：{label}", f"{datetime.fromtimestamp(t).strftime('%H:%M')}・打開 App 的攝影機紀錄可以聽前後 10 秒",
+                                   "urgent" if level == "urgent" else "normal")
 
     def _second_opinion(self, cam: dict[str, Any], what: str, jpeg: bytes | None = None) -> None:
         """緊急通知送出之後（不擋、不等），請 Claude 看畫面補一句實際狀況（有開「緊急通知加上 Claude 的看法」才做）。"""

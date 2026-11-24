@@ -1051,6 +1051,11 @@ async def cameras_update(cam_id: str, request: Request, body: dict = Body(...)) 
         cam["ignore"] = zones
     if "light" in body:
         cam["light"] = body["light"] if body["light"] in hub.plugs else None
+    if isinstance(body.get("sound"), dict):  # 聽到這些就通知：{"on", "alarm"|"glass"|"scream"|"dog": "urgent"|"normal"|"off"}
+        e = body["sound"]
+        cam["sound"] = {"on": bool(e.get("on")), **{k: (e.get(k) if e.get(k) in ("urgent", "normal", "off") else d)
+                                                    for k, d in (("alarm", "urgent"), ("glass", "urgent"), ("scream", "urgent"), ("dog", "normal"))}}
+        hub.gpu._pushed = None
     if isinstance(body.get("still"), dict):  # 很久沒動靜提醒：{"on", "window": "07:00-22:00", "min": 0（自動）或分鐘}
         e = body["still"]
         win = str(e.get("window") or "")
@@ -1404,6 +1409,18 @@ async def _write_story(d: date, summary: dict[str, Any]) -> None:
             store.save()
     finally:
         _story_busy.discard(d.isoformat())
+
+
+@app.get("/api/cameras/{cam_id}/sound.wav")
+async def cameras_sound(cam_id: str, request: Request, t: int) -> Response:
+    """聽到警報、玻璃破掉…那一刻前後各 10 秒的聲音。只有「可以看攝影機」的裝置拿得到。"""
+    _need_view(request)
+    if not hub.cameras.get(cam_id):
+        raise HTTPException(404, "找不到這台攝影機")
+    data = await asyncio.to_thread(hub.gpu.sound_clip, cam_id, t)
+    if not data:
+        raise HTTPException(404, "沒有這段聲音（只留 7 天）")
+    return Response(data, media_type="audio/wav", headers={"Cache-Control": "private, max-age=3600"})
 
 
 @app.get("/api/cameras/{cam_id}/clip.mp4")

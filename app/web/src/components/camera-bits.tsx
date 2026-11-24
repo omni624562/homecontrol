@@ -18,9 +18,11 @@ export interface Zone { id: string; name: string; kind: "area" | "object" | "doo
 export interface Line { id: string; name: string; a: number[]; b: number[]; in: Act; out: Act; last?: { way: "in" | "out"; t: number } | null }
 export interface Cam { id: string; name: string; host: string; port: number; room: string | null; enabled: boolean; alert: boolean; model?: string; faces?: boolean; role?: "entry" | "room"; light?: string | null; pets?: boolean; fall?: boolean; pet_notify?: boolean; pets_here?: string[]; ignore?: number[][][]; zones?: Zone[]; lines?: Line[];
   night?: boolean | null; person: boolean; score: number | null; ok: boolean | null; error: string | null;
-  empty_off?: EmptyOff | null; seen?: number | null; empty?: { done: boolean; pending: number | null } | null; still?: Still | null; still_info?: StillInfo | null }
+  empty_off?: EmptyOff | null; seen?: number | null; empty?: { done: boolean; pending: number | null } | null; still?: Still | null; still_info?: StillInfo | null; sound?: Sound | null; sound_error?: string | null }
 export interface EmptyOff { on: boolean; plugs: string[]; min: number; quiet: string; ask: boolean }
 export interface Still { on: boolean; window: string; min: number }
+export type SoundLevel = "urgent" | "normal" | "off";
+export interface Sound { on: boolean; alarm: SoundLevel; glass: SoundLevel; scream: SoundLevel; dog: SoundLevel }
 export interface StillInfo { gap: number; threshold: number; usual: number | null; learned: number; week: { d: string; max: number | null }[]; watching: boolean }
 
 // 誰可以看攝影機畫面：沒權限的裝置用手機通知的驗證碼開通；有權限的人勾選其他裝置
@@ -142,7 +144,7 @@ export function CamLive({ id, name }: { id: string; name: string }) {
 
 // 認臉：登記家人和訪客、認出家人時做什麼、最近的紀錄（只有「可以看攝影機」的裝置看得到）
 export interface FacePerson { id: string; name: string; kind: "family" | "guest"; samples: number; at: number | null; notify?: boolean }
-export interface FaceLogItem { id: string; t: number; camera: string; kind: "family" | "guest" | "stranger" | "pet" | "fall" | "door" | "zone"; name?: string; sim: number | null; thumb: boolean; frames?: number; desc?: string }
+export interface FaceLogItem { id: string; t: number; camera: string; kind: "family" | "guest" | "stranger" | "pet" | "fall" | "door" | "zone" | "sound"; name?: string; sim: number | null; thumb: boolean; frames?: number; desc?: string; sound_t?: number }
 export interface FaceAct { day?: string | null; night?: string | null; late?: string | null; notify?: boolean }
 export interface FaceRep {
   family: FacePerson[]; guests: FacePerson[]; actions: Record<string, FaceAct>; slot: "day" | "night" | "late";

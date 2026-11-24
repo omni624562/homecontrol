@@ -7,5 +7,5 @@ ENV PYTHONUNBUFFERED=1 TZ=Asia/Taipei PYTHONWARNINGS=ignore::FutureWarning
 WORKDIR /app
 # 姿勢、認臉、點一下就框：跟樹莓派同一份程式（deploy.sh 從 app/plughub 複製過來）
 COPY plughub ./plughub
-COPY server.py stream.py index.py ./
+COPY server.py stream.py index.py sound.py ./
 CMD ["python3", "server.py"]

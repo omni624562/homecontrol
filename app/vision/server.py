@@ -414,6 +414,23 @@ class Handler(BaseHTTPRequestHandler):
                              "index": index.status if index else None})
             return
         parts = u.path.strip("/").split("/")
+        if len(parts) == 4 and parts[0] == "cams" and parts[2] == "sound" and parts[3].endswith(".wav"):
+            from sound import clip_path
+
+            try:
+                p = clip_path(parts[1], int(parts[3][:-4]))
+            except ValueError:
+                p = None
+            if not p:
+                self._json(404, {"error": "沒有這段聲音"})
+                return
+            data = p.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "audio/wav")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         if len(parts) == 3 and parts[0] == "cams" and streams:
             cam = streams.get(parts[1])
             if not cam:
@@ -424,7 +441,8 @@ class Handler(BaseHTTPRequestHandler):
                     since = float((parse_qs(u.query).get("since") or ["0"])[0])
                 except ValueError:
                     since = 0.0
-                self._json(200, cam.state(since))
+                ear = streams.ears.get(parts[1])
+                self._json(200, {**cam.state(since), "sounds": ear.recent(since) if ear else [], "sound_error": ear.error if ear else None})
                 return
             if parts[2] == "frame.jpg":
                 data = cam.jpeg()

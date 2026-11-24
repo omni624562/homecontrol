@@ -303,13 +303,13 @@ class Cameras:
         out = []
         for c in self.list:
             st = self.state.get(c["id"], {})
-            out.append({k: c.get(k) for k in ("id", "name", "host", "port", "room", "enabled", "alert", "model", "faces", "role", "light", "pets", "fall", "pet_notify", "ignore", "empty_off", "still")}
+            out.append({k: c.get(k) for k in ("id", "name", "host", "port", "room", "enabled", "alert", "model", "faces", "role", "light", "pets", "fall", "pet_notify", "ignore", "empty_off", "still", "sound")}
                        | {"night": st.get("night"),
                           "pets_here": [n for n, p in (st.get("pets") or {}).items() if p.get("here")],
                           "zones": [{k: z.get(k) for k in ("id", "name", "kind", "poly", "linger", "act")} | {"refs": len(z.get("refs") or []), **ref_counts(z), **_zone_state(st, z)} for z in c.get("zones") or []],
                           "lines": [{k: ln.get(k) for k in ("id", "name", "a", "b", "in", "out")} | {"last": (st.get("lines") or {}).get(ln["id"], {}).get("last")} for ln in c.get("lines") or []]}
                        | {"person": bool(st.get("person")), "since": st.get("since"), "score": (st.get("recent") or [None])[-1],
-                          "ok": st.get("ok"), "error": st.get("error"), "at": st.get("at"), "seen": st.get("seen"), "empty": st.get("empty"), "still_info": st.get("still_info")})
+                          "ok": st.get("ok"), "error": st.get("error"), "at": st.get("at"), "seen": st.get("seen"), "empty": st.get("empty"), "still_info": st.get("still_info"), "sound_error": st.get("sound_error")})
         return out
 
     def rooms(self) -> dict[str, list[str]]:
@@ -350,7 +350,8 @@ class Cameras:
                 self.frames[cam["id"]] = jpeg
                 sc = live["scores"]
                 st.update(engine="stream", objects=live["objects"], tracks=live["tracks"], samples=live["samples"], poses=live.get("poses") or [],
-                          gestures=live.get("gestures") or [], gesture_now=live.get("gesture_now"))
+                          gestures=live.get("gestures") or [], gesture_now=live.get("gesture_now"),
+                          sounds=live.get("sounds") or [], sound_error=live.get("sound_error"))
             else:
                 jpeg = snapshot(cam)
                 if cam.get("ignore"):

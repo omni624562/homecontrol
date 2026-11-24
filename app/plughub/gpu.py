@@ -141,7 +141,8 @@ class GpuVision:
             return
         g = self._settings().get("gestures") or {}
         want = {c["id"]: {"url": rtsp_url(c), "ignore": c.get("ignore") or [], "pose": bool(c.get("fall")),
-                          "gesture": bool(g.get("on")) and g.get("cam") == c["id"]} for c in cams if c.get("enabled") and c.get("host")}
+                          "gesture": bool(g.get("on")) and g.get("cam") == c["id"], "sound": bool((c.get("sound") or {}).get("on"))}
+                for c in cams if c.get("enabled") and c.get("host")}
         sig = json.dumps(want, sort_keys=True)
         if sig == self._pushed and time.time() - self._pushed_at < 300:
             return
@@ -173,13 +174,18 @@ class GpuVision:
         self.last_ok = time.time()
         objs = [o for o in st.get("objects") or [] if float(o.get("score") or 0) >= KEEP]
         return {"scores": normalize(objs), "objects": objs[:20], "tracks": st.get("tracks") or [], "samples": st.get("samples") or [],
-                "poses": st.get("poses") or [], "gestures": st.get("gestures") or [], "gesture_now": st.get("gesture_now"), "jpeg": jpeg}
+                "poses": st.get("poses") or [], "gestures": st.get("gestures") or [], "gesture_now": st.get("gesture_now"),
+                "sounds": st.get("sounds") or [], "sound_error": st.get("sound_error"), "jpeg": jpeg}
 
     def classify(self, jpeg: bytes, box: list[float]) -> str | None:
         """框裡多的是什麼（包裹、袋子、鞋子…）；看不出來、連不上 → None。"""
         q = ",".join(f"{v:.4f}" for v in box)
         res = self._post(f"/classify?box={q}", jpeg, timeout=20)
         return (res or {}).get("label")
+
+    def sound_clip(self, cid: str, t: int) -> bytes | None:
+        """聽到警報、玻璃破掉…那一刻前後各 10 秒的聲音（WAV）。"""
+        return self._get(f"/cams/{urllib.parse.quote(cid)}/sound/{int(t)}.wav", timeout=10)
 
     def appearance(self, cid: str) -> Any:
         """這台攝影機最新畫面裡最大的那個人的外觀特徵（numpy）；沒有人、連不上 → None。"""
