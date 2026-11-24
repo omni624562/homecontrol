@@ -1231,6 +1231,10 @@ async def gestures_get(request: Request) -> dict[str, Any]:
     """手勢遙控的設定＋那台攝影機現在看到的手勢（「試試看」用）。"""
     _need_view(request)
     g = store.data["settings"].get("gestures") or {"on": False, "cam": None, "map": {}}
+    if any(not k.startswith("f_") for k in g.get("map") or {}):  # 舉手的手勢拿掉了：舊設定清掉
+        g["map"] = {k: v for k, v in g["map"].items() if k.startswith("f_")}
+        store.data["settings"]["gestures"] = g
+        store.save()
     st = hub.cameras.state.get(g.get("cam") or "", {})
     pl = st.get("pose_last") or {}
     fresh = time.time() - float(pl.get("t") or 0) < 3
@@ -1240,12 +1244,12 @@ async def gestures_get(request: Request) -> dict[str, Any]:
 
 @app.put("/api/gestures")
 async def gestures_put(request: Request, body: dict = Body(...)) -> dict[str, Any]:
-    """{"on", "cam", "map": {"one_up"|"both_up"|"cross"|"f_open"|"f_fist"|"f_v"|"f_point"|"f_thumbs": {"type": "plug"（切換）|"plug_on"|"plug_off"|"scene"|"off", "id"} | null}}"""
+    """{"on", "cam", "map": {"f_open"|"f_fist"|"f_v"|"f_point"|"f_thumbs": {"type": "plug"（切換）|"plug_on"|"plug_off"|"scene"|"off", "id"} | null}}"""
     _need_view(request)
     cams = {c["id"] for c in hub.cameras.list}
     m = {}
     for k, a in (body.get("map") or {}).items():
-        if k not in ("one_up", "both_up", "cross", "f_open", "f_fist", "f_v", "f_point", "f_thumbs") or not isinstance(a, dict):
+        if k not in ("f_open", "f_fist", "f_v", "f_point", "f_thumbs") or not isinstance(a, dict):
             continue
         t = a.get("type")
         if t in ("plug", "plug_on", "plug_off") and a.get("id") in hub.plugs or t == "scene" and store.scene(a.get("id") or "") or t == "off":

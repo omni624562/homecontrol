@@ -240,11 +240,10 @@ class Cam:
                     if self.g_cur[0] and time.time() - self.g_cur[2] < 2 else None}
 
     def _gesture(self, people: list[dict[str, Any]], now: float, img: np.ndarray | None = None) -> None:
-        """最大的那個人的手勢（舉手優先，沒有才看手指）；同一個手勢維持夠久算一次（放下前不重複）。"""
-        big = max((p for p in people if p.get("kp")), key=lambda p: p["box"][2] * p["box"][3], default=None)
-        g = gesture(big["kp"]) if big else None
+        """手指手勢（舉手的手勢已經拿掉）；同一個手勢維持夠久算一次（放下前不重複）。"""
+        g = None
         hand = None
-        if g is None and img is not None and self.hands is not None:
+        if img is not None and self.hands is not None:
             found = [h for h in self.hands(img, people) if h["px"] >= FINGER_MIN_PX and h["presence"] >= FINGER_MIN_P and h["gesture"] in FINGERS]
             if found:
                 hand = max(found, key=lambda h: h["px"])
