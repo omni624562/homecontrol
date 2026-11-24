@@ -3,6 +3,7 @@
 - EfficientDet-Lite0（Apache 2.0）：認人
 - YuNet（MIT）：找臉；SFace（Apache 2.0）：認是誰。都來自 OpenCV Zoo
 - MoveNet MultiPose Lightning（Apache 2.0）：姿勢（跌倒偵測），Kaggle 上的 tar.gz
+- MobileSAM（Apache 2.0；ONNX 版 Acly/MobileSAM，MIT）：點一下就框出門、電梯的邊
 """
 import hashlib
 import io
@@ -28,6 +29,14 @@ MODELS = {
     "movenet_multipose.tflite": (
         "https://www.kaggle.com/api/v1/models/google/movenet/tfLite/multipose-lightning-tflite-float16/1/download",
         "d4489f89e6bd6777a8b9a1a16189832131f84ff90d82fae729e670b84d7948dd",
+    ),
+    "mobile_sam_image_encoder.onnx": (
+        "https://huggingface.co/Acly/MobileSAM/resolve/main/mobile_sam_image_encoder.onnx",
+        "580f5fb648ea1062c0aabc26217aed56921985f03f0cbbd852bba81d760cc749",
+    ),
+    "sam_mask_decoder_multi.onnx": (
+        "https://huggingface.co/Acly/MobileSAM/resolve/main/sam_mask_decoder_multi.onnx",
+        "8976b90a87ba50a6a72217a5ff994f7d25ce16f2229fcc1ed259e1294c622ffe",
     ),
 }
 
