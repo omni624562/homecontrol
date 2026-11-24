@@ -454,3 +454,48 @@ def test_empty_off_api(app_module):
     r = c.put("/api/cameras/r", json={"empty_off": {"on": True, "plugs": ["nope"], "min": 1, "quiet": "bad", "ask": 1}}).json()["cameras"][0]
     assert r["empty_off"] == {"on": True, "plugs": [], "min": 5, "ask": True, "quiet": ""}
     assert c.post("/api/cameras/r/empty-off/cancel").status_code == 200
+
+
+def test_stillness_rules():
+    from datetime import date, datetime
+
+    from plughub import stillness as S
+
+    t = [{"id": 1, "box": [0.5, 0.5, 0.1, 0.3]}]
+    assert S.moved({}, t)  # 新出現
+    assert not S.moved({1: [0.5, 0.5, 0.1, 0.3]}, t)
+    assert S.moved({1: [0.45, 0.5, 0.1, 0.3]}, t)  # 走動
+    assert S.moved({1: [0.5, 0.5, 0.1, 0.4]}, t)  # 站起來／坐下
+    p = lambda torso, x=100: {"box": [x, 100, 50, 200], "torso": torso}  # noqa: E731
+    assert not S.pose_moved([[0, [p(10)]], [1, [p(12)]]])
+    assert S.pose_moved([[0, [p(10)]], [1, [p(40)]]])  # 彎腰
+    today = date(2026, 12, 10)
+    assert S.threshold({}, today) == (120, None, 0)
+    days = {"2026-12-09": 40, "2026-12-08": 50, "2026-12-07": 30, "2026-12-01": 999}
+    assert S.threshold(days, today) == (80, 40, 3)  # 中位數 40 × 2
+    assert S.threshold({"2026-12-09": 10, "2026-12-08": 10, "2026-12-07": 10}, today)[0] == 60  # 至少 60
+    assert S.in_window(datetime(2026, 12, 10, 8), "07:00-22:00") and not S.in_window(datetime(2026, 12, 10, 23), "07:00-22:00")
+    S.record_gap(days, datetime(2026, 12, 10, 9), 25)
+    assert days["2026-12-10"] == 25 and "2026-12-01" in days
+
+
+def test_still_check_alerts(app_module, monkeypatch):
+    hub = app_module.hub
+    sent = []
+    monkeypatch.setattr(hub.notifier, "send", lambda *a, **k: sent.append(a))
+    monkeypatch.setattr(hub, "people_report", lambda: [{"id": "a", "home": True}])
+    st = __import__("sys").modules["plughub.stillness"]
+    monkeypatch.setattr(st, "in_window", lambda when, w: True)
+    cam = {"id": "r", "name": "IN_HOUSE", "still": {"on": True, "window": "07:00-22:00", "min": 60}}
+    hub._still = {}
+    hub.cameras.state["r"] = {"engine": "stream", "tracks": [{"id": 1, "box": [0.5, 0.5, 0.1, 0.3]}], "poses": []}
+    hub._still_check(cam, 1000.0)  # 新出現：有動
+    hub._still_check(cam, 1000.0 + 59 * 60)
+    assert not sent
+    hub._still_check(cam, 1000.0 + 61 * 60)
+    assert len(sent) == 1 and "沒看到人走動" in sent[0][0] and sent[0][2] == "urgent"
+    hub._still_check(cam, 1000.0 + 90 * 60)
+    assert len(sent) == 1  # 只講一次
+    hub.cameras.state["r"]["tracks"] = [{"id": 1, "box": [0.3, 0.5, 0.1, 0.3]}]  # 動了
+    hub._still_check(cam, 1000.0 + 91 * 60)
+    assert hub.cameras.state["r"]["still_info"]["gap"] == 0

@@ -1,6 +1,6 @@
 // 攝影機頁：每台一張卡片（即時畫面、在做什麼、還差哪一步）；點進去同一頁：畫面＋偵測、要做什麼、紀錄、設定（電腦左右兩欄，手機上面有快速跳轉）
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Cat, ChevronLeft, ChevronRight, DoorOpen, Lightbulb, Loader2, Play, Plus, PowerOff, ScanFace, ShieldAlert, Trash2, UserRoundX } from "lucide-react";
+import { Cat, ChevronLeft, ChevronRight, DoorOpen, HeartPulse, Lightbulb, Loader2, Play, Plus, PowerOff, ScanFace, ShieldAlert, Trash2, UserRoundX } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -15,7 +15,7 @@ import { Switch } from "@/components/ui/switch";
 import { JumpChips } from "@/components/jump-chips";
 import { PageHeader } from "@/components/app-shell";
 import { DetectEditor } from "@/components/cam-detect";
-import { CamAccessBox, CamLive, SLOT, hhmm, type Cam, type CamAccess, type EmptyOff, type FacePerson, type FaceRep } from "@/components/camera-bits";
+import { CamAccessBox, CamLive, SLOT, hhmm, type Cam, type CamAccess, type EmptyOff, type FacePerson, type Still, type FaceRep } from "@/components/camera-bits";
 import { ClipPlayer, ReplayCard, type ClipTarget } from "@/components/clip-player";
 import type { MotionRule } from "@/components/motion-rules";
 import { api } from "@/lib/api";
@@ -355,6 +355,9 @@ function TasksTab({ cam, faces, rules, plugs, scenes, setFaces, setRules, setCam
   const doors = (cam.zones || []).filter((z) => z.kind === "door");
   const eo: EmptyOff = { on: false, plugs: [], min: 30, quiet: "23:00-07:00", ask: false, ...(cam.empty_off || {}) };
   const setEo = (patch: Partial<EmptyOff>, ok = "已更新") => upd({ empty_off: { ...eo, ...patch } }, ok);
+  const sl: Still = { on: false, window: "07:00-22:00", min: 0, ...(cam.still || {}) };
+  const setSl = (patch: Partial<Still>, ok = "已更新") => upd({ still: { ...sl, ...patch } }, ok);
+  const info = cam.still_info;
   const e = faces?.enroll;
   const enroll = (person: string | null, name?: string) => facesCall("POST", "/api/faces/enroll", { person, name, camera: cam.id });
   const personRow = (pp: FacePerson, extra?: ReactNode) => (
@@ -520,6 +523,41 @@ function TasksTab({ cam, faces, rules, plugs, scenes, setFaces, setRules, setCam
         </div>
         <label className="flex items-center gap-2 text-sm"><Switch checked={eo.ask} onCheckedChange={(v) => setEo({ ask: v })} aria-label="關之前先傳 LINE" />關之前先傳 LINE，5 分鐘內可以按「不要關」</label>
       </Task>
+
+      {!entry && (
+        <Task icon={HeartPulse} title="家裡有人但很久沒動，通知我" on={!!sl.on} onChange={(v) => setSl({ on: v }, v ? "很久沒動會通知" : "不會通知")}
+          hint="有人在家（手機在家）、設定的時段裡比平常久都沒看到人走動，傳 LINE 給家人；坐著手有動不算沒動">
+          <div className="grid gap-2 sm:grid-cols-2">
+            <label className="flex items-center gap-2 text-sm"><span className="w-16 shrink-0 text-muted-foreground">時段</span>
+              <Select value={sl.window} onValueChange={(v) => setSl({ window: v })}>
+                <SelectTrigger className="h-8 min-w-0 flex-1 bg-background" aria-label="什麼時段要看"><SelectValue /></SelectTrigger>
+                <SelectContent>{["07:00-22:00", "08:00-23:00", "06:00-21:00"].map((w) => <SelectItem key={w} value={w}>白天 {w.replace("-", "～")}</SelectItem>)}</SelectContent>
+              </Select>
+            </label>
+            <label className="flex items-center gap-2 text-sm"><span className="w-16 shrink-0 text-muted-foreground">多久沒動</span>
+              <Select value={String(sl.min)} onValueChange={(v) => setSl({ min: Number(v) })}>
+                <SelectTrigger className="h-8 min-w-0 flex-1 bg-background" aria-label="多久沒動才通知"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="0">自動（比平常久一倍）</SelectItem>{[60, 120, 180].map((m) => <SelectItem key={m} value={String(m)}>{m / 60} 小時</SelectItem>)}</SelectContent>
+              </Select>
+            </label>
+          </div>
+          {info && (
+            <div className="space-y-1.5">
+              <p className="text-sm text-muted-foreground">
+                {info.usual != null ? `平常白天最久大約 ${info.usual} 分鐘沒走動（學了 ${info.learned} 天）` : `還在學平常的作息（${info.learned}/3 天），先用 ${info.threshold / 60} 小時`}
+                {info.watching ? `・現在 ${info.gap} 分鐘沒動，${info.threshold} 分鐘會通知` : "・現在不在時段內或沒人在家"}
+              </p>
+              <div className="flex h-9 items-end gap-1" aria-label="過去 7 天每天最久沒走動的時間">
+                {info.week.map((w, i) => {
+                  const mx = Math.max(info.threshold, ...info.week.map((x) => x.max || 0));
+                  return <i key={w.d} title={`${w.d.slice(5)}：${w.max ?? "—"} 分鐘`} className={cn("flex-1 rounded-sm", i === 6 ? "bg-amber-500" : "bg-primary/30")} style={{ height: `${Math.max(6, ((w.max || 0) / mx) * 100)}%` }} />;
+                })}
+              </div>
+              <p className="text-xs text-muted-foreground">過去 7 天每天最久沒走動的時間；橘色是今天</p>
+            </div>
+          )}
+        </Task>
+      )}
 
       <Task icon={ShieldAlert} title={"有人跌倒通知我"} on={!!cam.fall} onChange={(v) => upd({ fall: v }, v ? "會偵測跌倒" : "不偵測跌倒")}
         hint={<>站著突然倒下、20 秒沒起來就緊急通知；慢慢坐下再躺下不算 <Badge variant="secondary">實驗</Badge></>} />
