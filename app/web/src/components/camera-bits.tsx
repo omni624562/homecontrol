@@ -138,7 +138,7 @@ export function CamLive({ id, name }: { id: string; name: string }) {
 
 // 認臉：登記家人和訪客、認出家人時做什麼、最近的紀錄（只有「可以看攝影機」的裝置看得到）
 export interface FacePerson { id: string; name: string; kind: "family" | "guest"; samples: number; at: number | null; notify?: boolean }
-export interface FaceLogItem { id: string; t: number; camera: string; kind: "family" | "guest" | "stranger" | "pet" | "fall" | "door"; name?: string; sim: number | null; thumb: boolean }
+export interface FaceLogItem { id: string; t: number; camera: string; kind: "family" | "guest" | "stranger" | "pet" | "fall" | "door" | "zone"; name?: string; sim: number | null; thumb: boolean; frames?: number }
 export interface FaceAct { day?: string | null; night?: string | null; late?: string | null; notify?: boolean }
 export interface FaceRep {
   family: FacePerson[]; guests: FacePerson[]; actions: Record<string, FaceAct>; slot: "day" | "night" | "late";

@@ -2,7 +2,7 @@
 
 - 只在攝影機看到人的時候才找臉（省 CPU）。
 - 家人和訪客的臉只存「數字特徵」（每張 128 個數字），不存照片：data/faces.json（600 權限）。
-- 陌生人的小圖存在 data/faces_thumbs/，7 天後自動刪掉；只有「可以看攝影機」的裝置拿得到。
+- 陌生人的小圖、區域／線偵測到時的畫面（連拍幾張）存在 data/faces_thumbs/，7 天後自動刪掉；只有「可以看攝影機」的裝置拿得到。
 - 判斷結果三種：known（認得：家人或訪客）、stranger（看清楚了、但誰都不像）、unclear（臉太小、太暗、側臉）。
 """
 from __future__ import annotations
@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 import time
 import uuid
@@ -190,20 +191,35 @@ class FaceLog:
     def add(self, item: dict[str, Any], thumb: bytes | None = None) -> dict[str, Any]:
         item = {"id": uuid.uuid4().hex[:10], "t": round(time.time()), **item, "thumb": bool(thumb)}
         if thumb:
-            self.dir.mkdir(exist_ok=True)
-            p = self.dir / f"{item['id']}.jpg"
-            p.write_bytes(thumb)
-            os.chmod(p, 0o600)
+            self._write(f"{item['id']}.jpg", thumb)
         self.items.append(item)
         self.prune()
         return item
+
+    def _write(self, name: str, data: bytes) -> None:
+        self.dir.mkdir(exist_ok=True)
+        p = self.dir / name
+        p.write_bytes(data)
+        os.chmod(p, 0o600)
+
+    def add_frame(self, item: dict[str, Any], jpeg: bytes) -> None:
+        """偵測到之後接著拍的畫面（{id}_1.jpg、{id}_2.jpg…）。紀錄已經刪掉就不存。"""
+        if item not in self.items or not jpeg:
+            return
+        n = int(item.get("frames") or 0) + 1
+        self._write(f"{item['id']}_{n}.jpg", jpeg)
+        item["frames"] = n
+        self.prune()
 
     def prune(self, now: float | None = None) -> None:
         now = now or time.time()
         keep = [x for x in self.items if now - x["t"] < LOG_KEEP_S][-LOG_MAX:]
         for x in self.items:
-            if x not in keep and x.get("thumb"):
-                (self.dir / f"{x['id']}.jpg").unlink(missing_ok=True)
+            if x not in keep:
+                if x.get("thumb"):
+                    (self.dir / f"{x['id']}.jpg").unlink(missing_ok=True)
+                for n in range(1, int(x.get("frames") or 0) + 1):
+                    (self.dir / f"{x['id']}_{n}.jpg").unlink(missing_ok=True)
         self.items = keep
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps({"items": self.items}, ensure_ascii=False), "utf-8")
@@ -211,7 +227,7 @@ class FaceLog:
         tmp.replace(self.path)
 
     def thumb_path(self, item_id: str) -> Path | None:
-        if not item_id.isalnum():
+        if not re.fullmatch(r"[0-9a-f]{1,32}(_\d{1,2})?", item_id):
             return None
         p = self.dir / f"{item_id}.jpg"
         return p if p.exists() else None

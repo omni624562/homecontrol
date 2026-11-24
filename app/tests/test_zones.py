@@ -104,7 +104,7 @@ def test_object_zone_learns_and_reports(app_module, monkeypatch):
     vis = __import__("sys").modules["plughub.vision"]
     sigs = {"now": np.ones((64, 64), np.float32)}
     monkeypatch.setattr(vis, "door_sig", lambda jpeg, rect, poly=None: sigs["now"])
-    monkeypatch.setattr(hub, "_zone_thumb", lambda jpeg, poly: b"t")
+    monkeypatch.setattr(hub, "_zone_frame", lambda jpeg, item: b"t")
     asyncio.run(hub._zones_check(cam, st, b"j", 0, [], False))
     asyncio.run(hub._zones_check(cam, st, b"j", 61, [], False))
     assert len(cam["zones"][0]["refs"]) == 1  # 沒人、穩定 60 秒：自己記住正常的樣子

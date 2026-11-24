@@ -170,3 +170,32 @@ def test_door_poly_only_looks_inside():
     outside = img.copy()
     cv2.circle(outside, (95, 200), 6, (250, 250, 250), -1)  # 多邊形外框裡、但在多邊形外面的東西變了（右下角）
     assert vision.door_score(vision.door_sig(jpg(outside), [0, 0, 1, 1], poly), [ref]) > 0.9
+
+
+def test_zone_event_saves_frames(app_module, monkeypatch):
+    import cv2
+
+    hub, sent, ran = _hub(app_module, monkeypatch)
+    hub_mod = __import__("sys").modules["plughub.hub"]
+    cam_mod = __import__("sys").modules["plughub.camera"]
+    monkeypatch.setattr(hub_mod, "CLIP_GAP", 0)
+    ok, buf = cv2.imencode(".jpg", np.full((720, 1280, 3), 128, np.uint8))
+    jpeg = buf.tobytes()
+    monkeypatch.setattr(cam_mod, "snapshot", lambda c: jpeg)
+    cam = hub.cameras.list[0]
+    z = cam["zones"][0]
+
+    async def run():
+        hub._zone_fire(cam, z, "大門開了", {}, time.time(), jpeg)
+        assert hub.spawned
+        await hub._zone_clip(cam, hub.face_log.items[-1], z)  # _spawn 在 _hub 裡換成不執行：這裡自己跑
+
+    asyncio.run(run())
+    item = hub.face_log.items[-1]
+    assert item["thumb"] and item["frames"] == hub_mod.CLIP_MORE
+    first = hub.face_log.thumb_path(item["id"]).read_bytes()
+    assert cv2.imdecode(np.frombuffer(first, np.uint8), cv2.IMREAD_COLOR).shape[1] == hub_mod.CLIP_W
+    assert hub.face_log.thumb_path(f"{item['id']}_{hub_mod.CLIP_MORE}")
+    assert hub.face_log.thumb_path("../x") is None
+    hub.face_log.prune(now=time.time() + 8 * 86400)  # 7 天後：圖也刪掉
+    assert hub.face_log.thumb_path(f"{item['id']}_1") is None
