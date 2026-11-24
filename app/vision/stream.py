@@ -28,7 +28,7 @@ GESTURE_GAP = 0.9  # 秒：中間看不清楚這麼短不算放下
 FINGER_HOLD = 2.0  # 秒：手指手勢維持這麼久才算
 FINGER_MIN_PX = 100  # 手（裁下來的那一塊）至少這麼大：太遠的、房間裡別人隨手的動作不算
 FINGER_MIN_P = 0.85  # 手部模型「這是手」的把握
-FINGERS = {"open": "f_open", "fist": "f_fist", "v": "f_v", "point": "f_point", "thumbs_up": "f_thumbs"}
+FINGERS = {"open": "f_open", "fist": "f_fist", "v": "f_v", "point": "f_point", "thumbs_up": "f_thumbs", "three": "f_three", "rock": "f_rock", "call": "f_call"}
 
 
 def gesture(kp: list[list[float]]) -> str | None:

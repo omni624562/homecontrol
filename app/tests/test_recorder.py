@@ -834,3 +834,16 @@ def test_finger_gestures_hold_and_filter(app_module, monkeypatch):
     hub._gesture_events({"id": "r", "name": "IN_HOUSE"}, 1000.0)
     assert toggled == [("lamp", True), ("lamp", False)]  # 張開＝開（就算已經開著）、握拳＝關
     assert "手勢（握拳）：關掉客廳燈" in hub.face_log.items[-1]["name"]
+
+
+def test_more_finger_gestures():
+    import numpy as np
+
+    spec = importlib.util.spec_from_file_location("hands_svc", Path(__file__).parent.parent / "vision" / "hands.py")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    lm = np.zeros((21, 2), np.float32)
+    lm[9] = [0, -40]
+    for f, name in (([False, True, True, True, False], "three"), ([False, True, False, False, True], "rock"), ([True, False, False, False, True], "call"),
+                    ([False, True, True, False, False], "v"), ([False, True, False, False, False], "point"), ([True, True, True, True, True], "open")):
+        assert m.gesture(f, lm) == name, (f, name)

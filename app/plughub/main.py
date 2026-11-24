@@ -79,7 +79,7 @@ from . import tls as tlsmod
 from .locate import MIN_SAMPLES as LOCATE_MIN, TRAIN_S as LOCATE_TRAIN_S
 from .assistant import MODELS as ASSISTANT_MODELS, Assistant
 from .claude_vision import FEATURES as CV_FEATURES, ClaudeVision
-from .hub import APP_VERSION, SOURCE, Hub, Locked
+from .hub import APP_VERSION, GESTURES as GESTURE_NAMES, SOURCE, Hub, Locked
 from .summary import build_summary
 from .notify import LineError, Notifier
 from .store import Store, _hms
@@ -1226,6 +1226,9 @@ async def cameras_empty_cancel(cam_id: str, request: Request) -> dict[str, Any]:
     return {"cameras": hub.cameras.public()}
 
 
+GESTURE_KEYS = set(GESTURE_NAMES)
+
+
 @app.get("/api/gestures")
 async def gestures_get(request: Request) -> dict[str, Any]:
     """手勢遙控的設定＋那台攝影機現在看到的手勢（「試試看」用）。"""
@@ -1244,12 +1247,12 @@ async def gestures_get(request: Request) -> dict[str, Any]:
 
 @app.put("/api/gestures")
 async def gestures_put(request: Request, body: dict = Body(...)) -> dict[str, Any]:
-    """{"on", "cam", "map": {"f_open"|"f_fist"|"f_v"|"f_point"|"f_thumbs": {"type": "plug"（切換）|"plug_on"|"plug_off"|"scene"|"off", "id"} | null}}"""
+    """{"on", "cam", "map": {手指手勢（hub.GESTURES 的 key）: {"type": "plug"（切換）|"plug_on"|"plug_off"|"scene"|"off", "id"} | null}}"""
     _need_view(request)
     cams = {c["id"] for c in hub.cameras.list}
     m = {}
     for k, a in (body.get("map") or {}).items():
-        if k not in ("f_open", "f_fist", "f_v", "f_point", "f_thumbs") or not isinstance(a, dict):
+        if k not in GESTURE_KEYS or not isinstance(a, dict):
             continue
         t = a.get("type")
         if t in ("plug", "plug_on", "plug_off") and a.get("id") in hub.plugs or t == "scene" and store.scene(a.get("id") or "") or t == "off":
