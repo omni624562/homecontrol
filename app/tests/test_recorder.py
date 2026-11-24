@@ -103,6 +103,7 @@ def test_service_segments_and_auth(tmp_path, monkeypatch):
         assert code == 200 and body["cams"] == ["g"]
         cfg = json.loads((tmp_path / "data" / "config.json").read_text())
         assert cfg["token"] == "sekret" and (tmp_path / "data" / "config.json").stat().st_mode & 0o777 == 0o600
+        assert "cams" not in cfg and "u:p@" not in (tmp_path / "data" / "config.json").read_text()  # 含帳密的網址只放記憶體
         assert call("GET", "/clip?cam=g&start=10&end=5", "sekret")[0] == 400
         assert call("GET", "/clip?cam=g&start=0&end=1000", "sekret")[0] == 400  # 太長
     finally:

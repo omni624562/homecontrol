@@ -143,8 +143,10 @@ def test_api_cameras(app_module, monkeypatch):
     got = r.json()["cameras"][0]
     assert got["room"] == "r1" and got["alert"] is False
     assert c.put(f"/api/cameras/{cam['id']}", json={"room": "nope"}).json()["cameras"][0]["room"] is None
-    saved = json.loads((app_module.store.dir / "cameras.json").read_text("utf-8"))
-    assert saved["cameras"][0]["pwd"] == "ok"
+    raw = (app_module.store.dir / "cameras.json").read_text("utf-8")
+    saved = json.loads(raw)
+    assert "pwd" not in saved["cameras"][0] and saved["cameras"][0]["pwd_enc"].startswith("enc1:") and '"ok"' not in raw  # 加密後才存
+    assert camera_reload(app_module.store.dir)[0]["pwd"] == "ok"
     assert "pwd" not in json.dumps(c.get("/api/cameras").json())
     monkeypatch.setattr(cam_mod, "snapshot", lambda c: b"\xff\xd8jpeg")
     r = c.get(f"/api/cameras/{cam['id']}/snapshot.jpg")
@@ -284,3 +286,25 @@ def test_is_night():
     assert not vision.is_night(jpg(color))
     assert vision.is_night(jpg(gray))
 
+
+
+def camera_reload(d):
+    return camera.Cameras(d).list
+
+
+def test_camera_credentials_encrypted_at_rest(tmp_path):
+    (tmp_path / "cameras.json").write_text(json.dumps({"cameras": [{"id": "a", "name": "門口", "host": "10.0.0.5", "user": "admin", "pwd": "秘密123"}]}), "utf-8")
+    cams = camera.Cameras(tmp_path)  # 舊的明碼：讀進來就改存成加密的
+    assert cams.list[0]["pwd"] == "秘密123" and cams.list[0]["user"] == "admin"
+    raw = (tmp_path / "cameras.json").read_text("utf-8")
+    assert "秘密123" not in raw and "admin" not in raw and "pwd_enc" in raw
+    assert (tmp_path / "secret.key").stat().st_mode & 0o777 == 0o600
+    assert camera.Cameras(tmp_path).list[0]["pwd"] == "秘密123"
+    (tmp_path / "secret.key").unlink()  # 金鑰不見了（例如還原到新的樹莓派）：不會當掉，帳密變空的等重新輸入
+    assert camera.Cameras(tmp_path).list[0]["pwd"] == ""
+
+
+def test_backup_skips_secret_key():
+    from plughub import backup
+
+    assert "secret.key" in backup.SKIP
