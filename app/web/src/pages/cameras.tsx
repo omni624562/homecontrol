@@ -1,6 +1,6 @@
 // 攝影機頁：每台一張卡片（即時畫面、在做什麼、還差哪一步）；點進去同一頁：畫面＋偵測、要做什麼、紀錄、設定（電腦左右兩欄，手機上面有快速跳轉）
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Cat, ChevronLeft, ChevronRight, DoorOpen, HeartPulse, Lightbulb, Loader2, Play, Plus, PowerOff, ScanFace, ShieldAlert, Trash2, UserRoundX } from "lucide-react";
+import { Cat, ChevronLeft, ChevronRight, DoorOpen, Ear, HeartPulse, Lightbulb, Loader2, Play, Plus, PowerOff, ScanFace, ShieldAlert, Trash2, UserRoundX } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -15,7 +15,7 @@ import { Switch } from "@/components/ui/switch";
 import { JumpChips } from "@/components/jump-chips";
 import { PageHeader } from "@/components/app-shell";
 import { DetectEditor } from "@/components/cam-detect";
-import { CamAccessBox, CamLive, SLOT, hhmm, type Cam, type CamAccess, type EmptyOff, type FacePerson, type Still, type FaceRep } from "@/components/camera-bits";
+import { CamAccessBox, CamLive, SLOT, hhmm, type Cam, type CamAccess, type EmptyOff, type FacePerson, type Sound, type SoundLevel, type Still, type FaceRep } from "@/components/camera-bits";
 import { ClipPlayer, ReplayCard, type ClipTarget } from "@/components/clip-player";
 import type { MotionRule } from "@/components/motion-rules";
 import { api } from "@/lib/api";
@@ -358,6 +358,8 @@ function TasksTab({ cam, faces, rules, plugs, scenes, setFaces, setRules, setCam
   const sl: Still = { on: false, window: "07:00-22:00", min: 0, ...(cam.still || {}) };
   const setSl = (patch: Partial<Still>, ok = "已更新") => upd({ still: { ...sl, ...patch } }, ok);
   const info = cam.still_info;
+  const snd: Sound = { on: false, alarm: "urgent", glass: "urgent", scream: "urgent", dog: "normal", ...(cam.sound || {}) };
+  const setSnd = (patch: Partial<Sound>, ok = "已更新") => upd({ sound: { ...snd, ...patch } }, ok);
   const e = faces?.enroll;
   const enroll = (person: string | null, name?: string) => facesCall("POST", "/api/faces/enroll", { person, name, camera: cam.id });
   const personRow = (pp: FacePerson, extra?: ReactNode) => (
@@ -559,6 +561,20 @@ function TasksTab({ cam, faces, rules, plugs, scenes, setFaces, setRules, setCam
         </Task>
       )}
 
+      <Task icon={Ear} title="聽到這些就通知" on={!!snd.on} onChange={(v) => setSnd({ on: v }, v ? "會聽聲音" : "不聽聲音")}
+        hint="Jetson 即時聽攝影機收到的聲音；平常不錄、不上傳，只有聽到時才留前後 10 秒（7 天後刪）">
+        {cam.sound_error && <p className="text-sm text-amber-700 dark:text-amber-400">現在聽不到這台的聲音：{cam.sound_error}（攝影機可能沒有麥克風，或沒開聲音）</p>}
+        {([["alarm", "煙霧／火災警報聲"], ["glass", "玻璃破掉"], ["scream", "有人大叫、呼救"], ["dog", "狗一直叫（超過 2 分鐘）"]] as const).map(([k, label]) => (
+          <label key={k} className="flex items-center gap-2 text-sm">
+            <span className="min-w-0 flex-1">{label}</span>
+            <Select value={snd[k]} onValueChange={(v) => setSnd({ [k]: v as SoundLevel })}>
+              <SelectTrigger className="h-8 w-32 bg-background" aria-label={`${label}的時候`}><SelectValue /></SelectTrigger>
+              <SelectContent><SelectItem value="urgent">緊急通知</SelectItem><SelectItem value="normal">一般通知</SelectItem><SelectItem value="off">只記紀錄</SelectItem></SelectContent>
+            </Select>
+          </label>
+        ))}
+      </Task>
+
       <Task icon={ShieldAlert} title={"有人跌倒通知我"} on={!!cam.fall} onChange={(v) => upd({ fall: v }, v ? "會偵測跌倒" : "不偵測跌倒")}
         hint={<>站著突然倒下、20 秒沒起來就緊急通知；慢慢坐下再躺下不算 <Badge variant="secondary">實驗</Badge></>} />
 
@@ -575,8 +591,8 @@ function LogTab({ faces, cam }: { faces: FaceRep | null; cam: Cam }) {
   const [play, setPlay] = useState<ClipTarget | null>(null); // 點開：影片（錄影機）＋偵測到時連拍的照片
   const every = (faces?.log || []).filter((x) => x.camera === cam.name);
   const items = all ? every : every.slice(0, 5);
-  const tone = (k: string) => (k === "stranger" || k === "fall" ? "bg-orange-500" : k === "family" ? "bg-emerald-500" : k === "door" || k === "zone" ? "bg-primary" : "bg-muted-foreground");
-  const text = (x: (typeof items)[number]) => x.kind === "stranger" ? (x.name ? `不認得的人・${x.name}` : "不認得的人") : x.kind === "guest" ? `${x.name}（訪客）` : x.kind === "pet" ? `看到${x.name}` : x.kind === "fall" ? "可能有人跌倒" : x.kind === "door" ? "門打開了" : x.kind === "zone" ? x.name || "偵測到" : `認出 ${x.name}`;
+  const tone = (k: string) => (k === "stranger" || k === "fall" ? "bg-orange-500" : k === "family" ? "bg-emerald-500" : k === "door" || k === "zone" ? "bg-primary" : k === "sound" ? "bg-red-500" : "bg-muted-foreground");
+  const text = (x: (typeof items)[number]) => x.kind === "stranger" ? (x.name ? `不認得的人・${x.name}` : "不認得的人") : x.kind === "guest" ? `${x.name}（訪客）` : x.kind === "pet" ? `看到${x.name}` : x.kind === "fall" ? "可能有人跌倒" : x.kind === "door" ? "門打開了" : x.kind === "zone" || x.kind === "sound" ? x.name || "偵測到" : `認出 ${x.name}`;
   return (
     <Card className="gap-0 py-0">
       <div className="border-b px-4 py-3 font-semibold">紀錄<span className="ml-2 text-sm font-normal text-muted-foreground">最近 7 天</span></div>
@@ -586,14 +602,15 @@ function LogTab({ faces, cam }: { faces: FaceRep | null; cam: Cam }) {
             <li key={x.id} className="flex items-center gap-3 px-4 py-2.5">
               <span className="w-24 shrink-0 text-sm tabular-nums text-muted-foreground">{hhmm(x.t)}</span>
               <span className={cn("size-2.5 shrink-0 rounded-full", tone(x.kind))} aria-hidden />
-              <span className={cn("min-w-0 flex-1 text-sm", (x.kind === "stranger" || x.kind === "fall") && "font-semibold text-orange-600 dark:text-orange-400")}>{text(x)}{x.sim != null && <span className="ml-1 text-xs text-muted-foreground">相似度 {x.sim}</span>}{x.desc && <span className="block text-xs font-normal text-muted-foreground">{x.desc}</span>}</span>
+              <span className={cn("min-w-0 flex-1 text-sm", (x.kind === "stranger" || x.kind === "fall") && "font-semibold text-orange-600 dark:text-orange-400")}>{text(x)}{x.sim != null && <span className="ml-1 text-xs text-muted-foreground">相似度 {x.sim}</span>}{x.desc && <span className="block text-xs font-normal text-muted-foreground">{x.desc}</span>}
+                {x.sound_t && <audio controls preload="none" src={`/api/cameras/${cam.id}/sound.wav?t=${x.sound_t}`} className="mt-1 h-8 w-full max-w-64" aria-label={`${text(x)}前後 10 秒的聲音`} />}</span>
               {x.thumb && (
                 <button type="button" onClick={() => setPlay({ cam: cam.id, t: x.t, title: text(x), photos: { id: x.id, frames: x.frames || 0 } })} className="relative shrink-0 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={`看${text(x)}的畫面`}>
                   <img src={`/api/faces/log/${x.id}.jpg`} alt="" className={cn("rounded-md object-cover", x.kind === "zone" ? "h-12 w-20" : "size-12")} loading="lazy" />
                   {(x.frames || 0) > 0 && <span className="absolute right-0.5 bottom-0.5 rounded bg-black/60 px-1 text-[10px] font-medium text-white tabular-nums">{(x.frames || 0) + 1} 張</span>}
                 </button>
               )}
-              {!x.thumb && (
+              {!x.thumb && x.kind !== "sound" && (
                 <Button variant="ghost" size="icon" className="size-9 shrink-0 text-muted-foreground" aria-label={`看${text(x)}的錄影`}
                   onClick={() => setPlay({ cam: cam.id, t: x.t, title: text(x) })}><Play /></Button>
               )}

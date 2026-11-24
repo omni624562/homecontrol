@@ -640,3 +640,47 @@ def test_claude_vision_api_and_ask_tools(app_module, monkeypatch):
     assert "look_camera" in names and "search_recordings" in names
     c.put("/api/claude-vision", json={"on": False})
     assert "look_camera" not in [t.name for t in hub.assistant._tools([])]  # 總開關關：問家裡看不到攝影機
+
+
+def _sound_mod():
+    spec = importlib.util.spec_from_file_location("sound_svc", Path(__file__).parent.parent / "vision" / "sound.py")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+def test_sound_listener_rules(monkeypatch):
+    m = _sound_mod()
+    ear = m.Listener.__new__(m.Listener)
+    ear.id, ear.lock, ear.events, ear.last, ear.dog = "r", __import__("threading").Lock(), m.deque(), {}, m.deque()
+    ear.hits = {g: 0 for g in m.GROUPS}
+    monkeypatch.setattr(m.threading, "Thread", lambda target, args=(), daemon=None: type("T", (), {"start": lambda self: None})())
+    quiet = {"alarm": 0.0, "glass": 0.0, "scream": 0.0, "dog": 0.0}
+    ear._check({**quiet, "alarm": 0.8}, 100.0)
+    ear._check({**quiet, "alarm": 0.8}, 100.5)
+    assert not ear.events  # 警報要連續 3 次（1.5 秒）
+    ear._check({**quiet, "alarm": 0.8}, 101.0)
+    assert [e[1] for e in ear.events] == ["alarm"]
+    for i in range(3):
+        ear._check({**quiet, "alarm": 0.8}, 102.0 + i * 0.5)
+    assert len(ear.events) == 1  # 2 分鐘內只算一次
+    ear._check({**quiet, "glass": 0.6}, 103.0)
+    assert ear.events[-1][1] == "glass"  # 玻璃一次就算
+    for i in range(int(m.DOG_SPAN / m.HOP)):  # 狗叫了一半的時間、超過 2 分鐘
+        ear._check({**quiet, "dog": 0.5 if i % 2 else 0.0}, 200.0 + i * m.HOP)
+    assert ear.events[-1][1] == "dog"
+
+
+def test_sound_events_hub(app_module, monkeypatch):
+    hub = app_module.hub
+    sent = []
+    monkeypatch.setattr(hub.notifier, "send", lambda *a, **k: sent.append(a))
+    hub._sound_seen = {}
+    cam = {"id": "r", "name": "IN_HOUSE", "sound": {"on": True, "alarm": "urgent", "glass": "urgent", "scream": "urgent", "dog": "off"}}
+    hub.cameras.state["r"] = {"sounds": [[1000.0, "alarm", 0.8], [1001.0, "dog", 0.5]]}
+    hub._sound_events(cam)
+    assert len(sent) == 1 and "煙霧" in sent[0][0] and sent[0][2] == "urgent"
+    assert [x["kind"] for x in hub.face_log.items[-2:]] == ["sound", "sound"] and hub.face_log.items[-2]["sound_t"] == 1000
+    hub.cameras.state["r"]["sounds"] = [[1000.0, "alarm", 0.8]]  # 同一個事件再來一次：不重複
+    hub._sound_events(cam)
+    assert len(sent) == 1

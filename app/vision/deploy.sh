@@ -29,6 +29,14 @@ trap 'rm -rf "$TMP"' EXIT
 for f in efficientdet_lite0.tflite movenet_multipose.tflite face_detection_yunet_2023mar.onnx face_recognition_sface_2021dec.onnx mobile_sam_image_encoder.onnx sam_mask_decoder_multi.onnx; do
   ssh "$HOST" "test -f ~/vision/models/$f" || { docker cp "plughub:/app/models/$f" "$TMP/$f" && scp -q "$TMP/$f" "$HOST":vision/models/; }
 done
+# 聲音偵測：YAMNet（Apache 2.0，MediaPipe 版）和類別名稱，樹莓派下載核對後送過去
+if ! ssh "$HOST" "test -f ~/vision/models/yamnet/yamnet.tflite -a -f ~/vision/models/yamnet/yamnet_class_map.csv"; then
+  curl -sfL -o "$TMP/yamnet.tflite" https://storage.googleapis.com/mediapipe-models/audio_classifier/yamnet/float32/1/yamnet.tflite
+  curl -sfL -o "$TMP/yamnet_class_map.csv" https://raw.githubusercontent.com/tensorflow/models/master/research/audioset/yamnet/yamnet_class_map.csv
+  (cd "$TMP" && printf '%s\n' "4d8b4a53282dc83ef04e3e7dbc4fbc98082e34e44ed798e16c3a0cdd4c584faf  yamnet.tflite" "cdf24d193e196d9e95912a2667051ae203e92a2ba09449218ccb40ef787c6df2  yamnet_class_map.csv" | sha256sum -c --quiet)
+  ssh "$HOST" 'mkdir -p ~/vision/models/yamnet'
+  scp -q "$TMP/yamnet.tflite" "$TMP/yamnet_class_map.csv" "$HOST":vision/models/yamnet/
+fi
 scp -q ../plughub/__init__.py ../plughub/camera.py ../plughub/vision.py ../plughub/faces.py ../plughub/segment.py "$HOST":vision/plughub/
-scp -q server.py stream.py index.py Dockerfile docker-compose.yml "$HOST":vision/
+scp -q server.py stream.py index.py sound.py Dockerfile docker-compose.yml "$HOST":vision/
 ssh "$HOST" "cd ~/vision && VISION_TOKEN='$TOKEN' VISION_MODEL='${VISION_MODEL:-yolox_m}' docker compose up -d --build && docker ps --filter name=vision --format '{{.Status}}'"

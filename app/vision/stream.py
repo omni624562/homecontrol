@@ -241,6 +241,8 @@ class Streams:
     def __init__(self, detect: Callable[[np.ndarray], list[dict[str, Any]]], pose: Callable[[np.ndarray], list[dict[str, Any]] | None] | None = None) -> None:
         self.detect = detect
         self.pose = pose
+        self.ears: dict[str, Any] = {}  # 攝影機 → sound.Listener（有開聲音偵測的）
+        self._sound_model = None
         self.cams: dict[str, Cam] = {}
         self.lock = threading.Lock()
 
@@ -259,6 +261,20 @@ class Streams:
                     self.cams[cid].ignore = c.get("ignore") or []
                     self.cams[cid].pose_on = bool(c.get("pose"))
                     self.cams[cid].gesture_on = bool(c.get("gesture"))
+            for cid in list(self.ears):  # 聲音：關掉的、換網址的停掉
+                c = want.get(cid)
+                if not c or not c.get("sound") or c["url"] != self.ears[cid].url:
+                    self.ears.pop(cid).close()
+            for cid, c in want.items():
+                if c.get("sound") and cid not in self.ears:
+                    try:
+                        from sound import Listener, Model
+
+                        if self._sound_model is None:
+                            self._sound_model = Model()
+                        self.ears[cid] = Listener(cid, c["url"], self._sound_model)
+                    except Exception:  # noqa: BLE001
+                        LOG.exception("聲音偵測載入失敗")
             for cid, c in want.items():
                 if cid not in self.cams:
                     self.cams[cid] = Cam(cid, c["url"], c.get("ignore") or [], self.detect, self.pose, bool(c.get("pose")))
