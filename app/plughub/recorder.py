@@ -90,6 +90,10 @@ class Recorder:
         q = urllib.parse.urlencode({"cam": cam_id, "start": f"{start:.1f}", "end": f"{end:.1f}"})
         return self._req("GET", f"/clip?{q}", timeout=60)
 
+    def frame(self, cam_id: str, t: float, width: int = 640) -> bytes:
+        q = urllib.parse.urlencode({"cam": cam_id, "t": f"{t:.1f}", "w": width})
+        return self._req("GET", f"/frame?{q}", timeout=30)
+
     def public(self) -> dict[str, Any]:
         """給畫面看的狀態（沒有網址以外的東西：帳密、token 都不給）。"""
         if not self.url:

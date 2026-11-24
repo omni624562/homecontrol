@@ -9,6 +9,7 @@ API（都要 Authorization: Bearer <token>）：
   PUT /config          {"cams": {"id": "rtsp://..."}}：要錄哪些攝影機
   GET /status          每台在不在錄、最舊／最新一段、硬碟空間
   GET /clip?cam=&start=&end=   （秒，epoch）剪出那段 MP4，最長 MAX_CLIP 秒
+  GET /frame?cam=&t=&w=        那個時間點的一張畫面（JPEG，寬 w，預設 640）
 """
 from __future__ import annotations
 
@@ -174,6 +175,23 @@ def make_clip(cam: str, start: float, end: float) -> Path | None:
     return out
 
 
+def make_frame(cam: str, t: float, width: int = 640) -> bytes | None:
+    """t 那一刻的畫面（找搜尋結果的縮圖用）。"""
+    segs = segments(cam)
+    seg = None
+    for i, (st, p) in enumerate(segs):
+        nxt = segs[i + 1][0] if i + 1 < len(segs) else st + SEG * 2
+        if st <= t < nxt:
+            seg = (st, p)
+            break
+    if not seg:
+        return None
+    cmd = ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-ss", f"{max(0.0, t - seg[0]):.2f}", "-i", str(seg[1]),
+           "-frames:v", "1", "-vf", f"scale={width}:-2", "-q:v", "4", "-f", "image2", "-c:v", "mjpeg", "pipe:1"]
+    r = subprocess.run(cmd, capture_output=True, timeout=20)
+    return r.stdout if r.returncode == 0 and r.stdout else None
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "recorder"
 
@@ -226,6 +244,22 @@ class Handler(BaseHTTPRequestHandler):
                 shutil.rmtree(out.parent, ignore_errors=True)
             self.send_response(200)
             self.send_header("Content-Type", "video/mp4")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
+        if u.path == "/frame":
+            try:
+                cam, t, width = q["cam"], float(q["t"]), min(1920, max(160, int(q.get("w") or 640)))
+            except (KeyError, ValueError):
+                self._json(400, {"error": "要給 cam、t"})
+                return
+            data = make_frame(cam, t, width) if CAM_ID.match(cam) else None
+            if not data:
+                self._json(404, {"error": "那個時間沒有錄到"})
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)

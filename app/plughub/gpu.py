@@ -172,6 +172,28 @@ class GpuVision:
         objs = [o for o in st.get("objects") or [] if float(o.get("score") or 0) >= KEEP]
         return {"scores": normalize(objs), "objects": objs[:20], "tracks": st.get("tracks") or [], "samples": st.get("samples") or [], "jpeg": jpeg}
 
+    # ---- 錄影分析（Jetson 的 index.py）----
+
+    def summary(self, day: str) -> dict[str, Any] | None:
+        raw = self._get(f"/summary?day={urllib.parse.quote(day)}", timeout=10)
+        try:
+            return json.loads(raw) if raw else None
+        except ValueError:
+            return None
+
+    def search(self, q: str, days: int = 7, cam: str | None = None) -> dict[str, Any] | None:
+        """打字找錄影；第一次要載入文字模型，會等久一點。"""
+        if not self.url:
+            return None
+        try:
+            req = urllib.request.Request(self.url + "/search", data=json.dumps({"q": q, "days": days, "cam": cam}).encode(), method="POST",
+                                         headers={"Authorization": f"Bearer {self._token()}", "Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=60) as r:  # noqa: S310
+                return json.loads(r.read())
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("找錄影失敗：%s", err)
+            return None
+
     def public(self) -> dict[str, Any]:
         if not self.url:
             return {"configured": False}

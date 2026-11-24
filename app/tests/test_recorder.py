@@ -234,3 +234,42 @@ def test_stream_samples_feed_lines(app_module, monkeypatch):
     assert len(fired) == 1 and "樓梯口" in fired[0]
     people = hub._track_people([{"id": 3, "box": [0.1, 0.2, 0.1, 0.4], "foot": [0.15, 0.6], "score": 0.8}])
     assert people[0]["foot"] == (0.15, 0.6) and people[0]["torso"] is None
+
+
+def test_build_summary():
+    from datetime import date, datetime
+
+    from plughub.summary import build_summary
+
+    d = date(2026, 11, 23)
+    ts = lambda h, m: datetime(2026, 11, 23, h, m).timestamp()  # noqa: E731
+    cams = [{"id": "g", "name": "大門口", "role": "entry"}]
+    log = [{"id": "a", "t": ts(9, 0), "camera": "大門口", "kind": "zone", "name": "電梯開了"},
+           {"id": "b", "t": ts(9, 5), "camera": "大門口", "kind": "zone", "name": "電梯開了"},
+           {"id": "c", "t": ts(14, 12), "camera": "大門口", "kind": "zone", "name": "門口地板多了東西", "thumb": True},
+           {"id": "d", "t": ts(20, 0), "camera": "大門口", "kind": "stranger"},
+           {"id": "e", "t": datetime(2026, 11, 24, 1, 0).timestamp(), "camera": "大門口", "kind": "stranger"}]  # 隔天：不算
+    vis = {"cams": {"g": {"visits": [{"start": ts(3, 12), "end": ts(3, 13)}, {"start": ts(22, 40), "end": ts(22, 43)}, {"start": ts(10, 0), "end": ts(10, 0)}],
+                          "counts": {"dog": 1}}}}
+    s = build_summary(d, cams, log, vis)
+    c = s["cams"][0]
+    assert c["counts"]["電梯開了"] == 2 and c["counts"]["陌生人"] == 1 and c["counts"]["有人來"] == 3 and c["counts"]["狗"] == 1
+    assert [h["kind"] for h in c["highlights"]] == ["night", "object", "stranger", "linger"]
+    assert s["indexed"] and build_summary(d, cams, log, None)["cams"][0]["indexed"] is False
+    assert sum(c["hours"]) == 7 and c["hours"][9] == 2 and c["hours"][3] == 1
+
+
+def test_summary_and_search_api(app_module, monkeypatch):
+    hub = app_module.hub
+    hub.cameras.list = [{"id": "g", "name": "大門口", "host": "x", "enabled": True}]
+    c, dev = _client(app_module)
+    hub.cameras.viewers = [dev["id"]]
+    monkeypatch.setattr(hub.gpu, "summary", lambda day: None)
+    r = c.get("/api/summary", params={"day": "2026-11-23"}).json()
+    assert r["day"] == "2026-11-23" and r["cams"][0]["name"] == "大門口"
+    assert c.get("/api/summary", params={"day": "bad"}).status_code == 400
+    monkeypatch.setattr(hub.gpu, "search", lambda q, days, cam: {"hits": [{"cam": "g", "t": 1.0, "cls": "person", "box": [0, 0, 1, 1], "score": 0.1}, {"cam": "gone", "t": 2.0}], "classes": ["person"]})
+    r = c.get("/api/recordings/search", params={"q": "穿紅衣服的人"}).json()
+    assert len(r["hits"]) == 1 and r["hits"][0]["name"] == "大門口"
+    monkeypatch.setattr(hub.gpu, "search", lambda q, days, cam: None)
+    assert c.get("/api/recordings/search", params={"q": "狗"}).status_code == 503

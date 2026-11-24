@@ -13,3 +13,5 @@ services:
       - VISION_MODEL=${VISION_MODEL:-yolox_m}
     volumes:
       - ./models:/models
+      - ./index:/index  # 錄影分析的結果（特徵數字，保留 8 天）
+      - ${RECORDER_DIR:-/home/nan/recordings}:/rec:ro  # 錄影機存的影片（只讀）
