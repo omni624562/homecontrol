@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { AlertCircle, Archive, BarChart3, ListChecks, Bell, Cctv, Download, Lock, Plus, ShieldCheck, Trash2, CheckCircle2, CloudSun, KeyRound, MessageCircle, ChevronLeft, ChevronRight, ExternalLink, EyeOff, Home, Loader2, MessageSquareText, Mic, Moon, Palette, Search, Wifi, WifiOff } from "lucide-react";
+import { AlertCircle, Archive, BarChart3, ListChecks, Bell, Cctv, Download, Lock, Plus, ShieldCheck, Trash2, CheckCircle2, CloudSun, KeyRound, MessageCircle, ChevronLeft, ChevronRight, ExternalLink, EyeOff, Link2, Loader2, Zap, CalendarClock, MessageSquareText, Mic, Moon, Palette, Search, Wifi, WifiOff } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -607,7 +607,54 @@ function CameraLinkCard() {
       <LinkRow label="攝影機和認臉" hint="即時畫面、這台要幫我做什麼、誰可以看畫面、紀錄，都在「攝影機」頁" href="#cameras" />
       <NightEnhanceRow />
       <RecordingRows />
-      <GestureRows />
+    </SCard>
+  );
+}
+
+// 自動化：手勢、晚安、停電恢復＋其他頁面的自動化捷徑
+function AutoCards({ s }: { s: HubState }) {
+  return (
+    <>
+      <SCard id="s-gesture" icon={Zap} title="手勢遙控">
+        <GestureRows />
+      </SCard>
+      <GoodnightCard s={s} />
+      <SCard id="s-auto" icon={CalendarClock} title="其他自動化">
+        <SRow label="停電後恢復插座" hint="停電回來，插座開關跟停電前不一樣就改回來（6 小時內）；高風險電器不會自動打開">
+          <Switch checked={s.settings.power_restore !== false} onCheckedChange={(v) => put({ power_restore: v }, v ? "停電後會恢復插座" : "停電後不自動恢復")} aria-label="停電後恢復插座" />
+        </SRow>
+        <LinkRow label="排程" hint="幾點開、幾點關，在「排程」頁" href="#schedule" />
+        <LinkRow label="動靜自動化" hint="房間有人就開、沒人就關，在「地圖」頁的「動靜」" href="#map" />
+        <LinkRow label="攝影機的自動化" hint="沒人自動關燈、很久沒動提醒、聽到警報…每台攝影機各自設，在「攝影機」頁" href="#cameras" />
+      </SCard>
+    </>
+  );
+}
+
+// 連接與遠端：Google Home、從外面連回家、Jetson
+function RemoteCard() {
+  return (
+    <SCard id="s-remote" icon={Link2} title="在外面連回家">
+      <div className="space-y-2 px-4 py-3.5 text-sm leading-relaxed sm:px-5">
+        <p>家裡的網頁、攝影機都<b>沒有</b>直接放上網路。在外面要用，先在手機連上路由器的 <b>OpenVPN</b>，再照平常的網址打開就好；攝影機誰能看照原本的設定。</p>
+        <p className="text-muted-foreground">路由器建議：OpenVPN 用 UDP、開 TLS 控制通道、加密選 AES-GCM、用戶端只連「區域網路」；從外網進路由器管理頁、SSH、AiCloud、UPnP 都關掉，韌體自動更新打開。</p>
+      </div>
+    </SCard>
+  );
+}
+
+function JetsonCard() {
+  const [v, setV] = useState<{ configured: boolean; ok?: boolean; error?: string | null; avg_ms?: number | null } | null>(null);
+  const [r, setR] = useState<{ configured: boolean; ok?: boolean; error?: string | null } | null>(null);
+  useEffect(() => {
+    api<typeof v>("GET", "/api/vision").then(setV).catch(() => {});
+    api<typeof r>("GET", "/api/recorder").then(setR).catch(() => {});
+  }, []);
+  const dot = (ok?: boolean) => <span className={cn("size-3 rounded-full", ok ? "bg-emerald-500" : "bg-amber-500")} aria-hidden />;
+  return (
+    <SCard id="s-jetson" icon={Cctv} title="Jetson 主機（GPU、錄影）">
+      <SRow label="影像辨識" hint={!v ? "讀取中…" : !v.configured ? "沒設定：只用樹莓派自己的模型" : v.ok ? `正常${v.avg_ms ? `・平均 ${v.avg_ms} 毫秒` : ""}` : `連不上${v.error ? `：${v.error}` : ""}`}>{v?.configured && dot(v.ok)}</SRow>
+      <SRow label="錄影機" hint={!r ? "讀取中…" : !r.configured ? "沒設定" : r.ok ? "正常（保留天數在「攝影機與錄影」）" : `連不上${r.error ? `：${r.error}` : ""}`}>{r?.configured && dot(r.ok)}</SRow>
     </SCard>
   );
 }
@@ -960,19 +1007,21 @@ function GoodnightCard({ s }: { s: HubState }) {
 }
 
 // ---- 設定首頁：分類＋搜尋；#settings/<分類>、#settings/privacy、#settings/setup；舊的 #settings/s-xxx 會跳到那張卡片所在的分類 ----
-type CatKey = "notify" | "cam" | "ai" | "life" | "home" | "google" | "security" | "other";
+type CatKey = "notify" | "auto" | "cam" | "ai" | "life" | "home" | "link" | "security" | "other";
 const CATS: { key: CatKey; title: string; hint: string; icon: React.ElementType }[] = [
   { key: "notify", title: "通知與提醒", hint: "LINE、開太久、天氣、停電、每週摘要", icon: Bell },
-  { key: "cam", title: "攝影機與錄影", hint: "誰能看、錄影留多久、夜間增強、手勢", icon: Cctv },
+  { key: "auto", title: "自動化", hint: "手勢遙控、晚安檢查、停電恢復、排程捷徑", icon: Zap },
+  { key: "cam", title: "攝影機與錄影", hint: "誰能看、錄影留多久、夜間增強", icon: Cctv },
   { key: "ai", title: "Claude（AI）", hint: "問家裡、看攝影機畫面、每月上限", icon: MessageSquareText },
-  { key: "life", title: "生活與晚安", hint: "晚安檢查、天氣、垃圾車、小動畫", icon: Moon },
-  { key: "home", title: "家人與裝置", hint: "裝置檢查、停電恢復、Wi-Fi 感測、找新插座", icon: Search },
-  { key: "google", title: "Google Home", hint: "插座、情境放到 Google", icon: Home },
+  { key: "life", title: "生活資訊", hint: "天氣、垃圾車、公車、小動畫", icon: CloudSun },
+  { key: "home", title: "家人與裝置", hint: "裝置檢查、Wi-Fi 感測、找新插座", icon: Search },
+  { key: "link", title: "連接與遠端", hint: "Google Home、在外面連回家、Jetson 主機", icon: Link2 },
   { key: "security", title: "安全與備份", hint: "存取碼、備份、HTTPS", icon: ShieldCheck },
   { key: "other", title: "外觀與其他", hint: "畫面風格、手機選單、待機畫面、使用統計", icon: Palette },
 ];
 const CARD_CAT: Record<string, string> = {
-  "s-notify": "notify", "s-cam": "cam", "s-ask": "ai", "s-night": "life", "s-life": "life", "s-dev": "home", "s-google": "google",
+  "s-notify": "notify", "s-cam": "cam", "s-ask": "ai", "s-night": "auto", "s-gesture": "auto", "s-auto": "auto", "s-life": "life", "s-dev": "home",
+  "s-google": "link", "s-remote": "link", "s-jetson": "link",
   "s-sys": "security", "s-tls": "security", "s-look": "other", "s-usage": "other", "s-setup": "setup",
 };
 // 搜尋：[關鍵字, 分類, 卡片 id]
@@ -981,11 +1030,11 @@ const SEARCH: [string, string, string][] = [
   ["停班停課", "notify", "s-notify"], ["天氣特報 颱風", "notify", "s-notify"], ["地震", "notify", "s-notify"], ["供電吃緊", "notify", "s-notify"],
   ["空氣品質 AQI", "notify", "s-notify"], ["用電異常", "notify", "s-notify"], ["電費跳級", "notify", "s-notify"], ["功率過高 待機門檻", "notify", "s-notify"],
   ["每週摘要", "notify", "s-notify"], ["每月報告", "notify", "s-notify"],
-  ["攝影機 誰可以看 權限", "cam", "s-cam"], ["錄影 保留 硬碟", "cam", "s-cam"], ["夜間畫面增強", "cam", "s-cam"], ["手勢遙控", "cam", "s-cam"], ["Jetson", "cam", "s-cam"],
+  ["攝影機 誰可以看 權限", "cam", "s-cam"], ["錄影 保留 硬碟", "cam", "s-cam"], ["夜間畫面增強", "cam", "s-cam"], ["手勢遙控", "auto", "s-gesture"], ["Jetson GPU", "link", "s-jetson"],
   ["問家裡 Claude 金鑰 模型 上限", "ai", "s-ask"], ["Claude 看攝影機畫面", "ai", "s-ask"],
-  ["晚安檢查 睡前", "life", "s-night"], ["天氣 授權碼 氣象署", "life", "s-life"], ["垃圾車 公車 YouBike", "life", "s-life"], ["趣味小動畫", "life", "s-life"],
-  ["裝置檢查 網路", "home", "s-dev"], ["停電後恢復插座", "home", "s-dev"], ["Wi-Fi 感測", "home", "s-dev"], ["TP-Link 雲端", "home", "s-dev"], ["找新插座", "home", "s-dev"],
-  ["Google Home Matter", "google", "s-google"], ["存取碼 配對 備份 還原", "security", "s-sys"], ["HTTPS 憑證 安全連線", "security", "s-tls"],
+  ["晚安檢查 睡前", "auto", "s-night"], ["排程 動靜自動化", "auto", "s-auto"], ["天氣 授權碼 氣象署", "life", "s-life"], ["垃圾車 公車 YouBike", "life", "s-life"], ["趣味小動畫", "life", "s-life"],
+  ["裝置檢查 網路", "home", "s-dev"], ["停電後恢復插座", "auto", "s-auto"], ["Wi-Fi 感測", "home", "s-dev"], ["TP-Link 雲端", "home", "s-dev"], ["找新插座", "home", "s-dev"],
+  ["Google Home Matter", "link", "s-google"], ["在外面連回家 VPN OpenVPN 遠端", "link", "s-remote"], ["存取碼 配對 備份 還原", "security", "s-sys"], ["HTTPS 憑證 安全連線", "security", "s-tls"],
   ["畫面風格 科技感", "other", "s-look"], ["手機選單 下方分頁", "other", "s-look"], ["待機畫面 平板", "other", "s-look"], ["使用統計", "other", "s-usage"],
   ["隱私 資料 Anthropic", "privacy", ""], ["設定進度 還沒設定", "setup", ""],
 ];
@@ -998,7 +1047,7 @@ function useSettingsView(ready: boolean): string {
     window.addEventListener("hashchange", on);
     return () => window.removeEventListener("hashchange", on);
   }, []);
-  const view = part.startsWith("s-") ? CARD_CAT[part] || "" : part;
+  const view = part.startsWith("s-") ? CARD_CAT[part] || "" : ({ google: "link" } as Record<string, string>)[part] || part;
   useEffect(() => {  // 舊的連結（#settings/s-tls 之類）：到那個分類後捲到那張卡片
     if (!ready || !part.startsWith("s-")) return;
     const t = setTimeout(() => document.getElementById(part)?.scrollIntoView({ behavior: "smooth", block: "start" }), 300);
@@ -1013,20 +1062,24 @@ function SettingsHome({ view, go, state }: { view: string; go: (to: string) => v
   const [rec, setRec] = useState<{ configured: boolean; cams?: Record<string, { recording: boolean }> } | null>(null);
   const [cv, setCv] = useState<{ on: boolean } | null>(null);
   const [tls, setTls] = useState<{ secure: boolean } | null>(null);
+  const [gest, setGest] = useState<{ on: boolean } | null>(null);
   useEffect(() => {
+    api<typeof gest>("GET", "/api/gestures").then(setGest).catch(() => {});
     api<typeof rec>("GET", "/api/recorder").then(setRec).catch(() => {});
     api<typeof cv>("GET", "/api/claude-vision").then(setCv).catch(() => {});
     api<typeof tls>("GET", "/api/tls").then(setTls).catch(() => {});
   }, []);
   const gn = (state.settings.goodnight || {}) as { at?: string; mode?: string };
   const recOn = Object.values(rec?.cams || {}).filter((c) => c.recording).length;
-  const chip: Record<CatKey, [string, "ok" | "warn" | "ai"] | null> = {
+  // 綠＝正常、橘＝該處理、灰＝自己關的、AI＝會送畫面出去
+  const chip: Record<CatKey, [string, "ok" | "warn" | "ai" | "off"] | null> = {
     notify: state.notify?.error ? ["LINE 沒送出去", "warn"] : state.notify?.line ? ["LINE 正常", "ok"] : ["LINE 還沒設定", "warn"],
     cam: rec?.configured ? [`${recOn} 台在錄`, recOn ? "ok" : "warn"] : null,
-    ai: cv ? [cv.on ? "看畫面：開" : "看畫面：關", "ai"] : null,
-    life: gn.mode === "none" ? ["不做晚安檢查", "warn"] : [`${gn.at || "23:30"} 晚安檢查`, "ok"],
+    auto: gest ? (gest.on ? ["手勢：開", "ok"] : gn.mode === "none" ? ["不做晚安檢查", "off"] : [`${gn.at || "23:30"} 晚安檢查`, "ok"]) : null,
+    ai: cv ? (cv.on ? ["看畫面：開", "ai"] : ["看畫面：關", "off"]) : null,
+    life: null,
     home: [`${state.plugs.filter((p) => p.online).length}/${state.plugs.length} 個插座在線`, state.plugs.every((p) => p.online) ? "ok" : "warn"],
-    google: state.matter ? (state.matter.commissioned ? ["已連結", "ok"] : ["還沒連結", "warn"]) : null,
+    link: state.matter ? (state.matter.commissioned ? ["Google 已連結", "ok"] : ["Google 沒連結", "off"]) : null,
     security: tls ? (tls.secure ? ["HTTPS", "ok"] : ["這台還沒用 HTTPS", "warn"]) : null,
     other: null,
   };
@@ -1057,7 +1110,7 @@ function SettingsHome({ view, go, state }: { view: string; go: (to: string) => v
                     view === c.key && "border-primary bg-primary/5")}>
                   <c.icon className="size-5 shrink-0 text-primary" />
                   <span className="min-w-0 lg:flex-1"><span className="block font-semibold leading-snug">{c.title}</span><span className="block text-xs leading-snug text-muted-foreground lg:truncate">{c.hint}</span></span>
-                  {ch && <span className={cn("mt-1 shrink-0 rounded-full px-2 text-[11px] lg:mt-0", ch[1] === "ok" ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : ch[1] === "ai" ? "bg-orange-500/10 text-orange-700 dark:text-orange-400" : "bg-amber-500/15 text-amber-700 dark:text-amber-400")}>{ch[0]}</span>}
+                  {ch && <span className={cn("mt-1 shrink-0 rounded-full px-2 text-[11px] lg:mt-0", ch[1] === "ok" ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : ch[1] === "ai" ? "bg-orange-500/10 text-orange-700 dark:text-orange-400" : ch[1] === "off" ? "bg-muted text-muted-foreground" : "bg-amber-500/15 text-amber-700 dark:text-amber-400")}>{ch[0]}</span>}
                 </button>
               );
             })}
@@ -1111,7 +1164,7 @@ function PrivacyView({ go }: { go: (to: string) => void }) {
           }} />} />
         <Row t="ai" title="問家裡（Claude）" hint={ask?.configured ? "你問的話、需要的家裡資料（裝置名稱、開關狀態、誰在家）送到 Anthropic" : "沒設定金鑰：不會送"} right={link("ai", "設定")} />
         <Row t="out" title="LINE 通知" hint={state?.notify?.line ? "通知的文字（不含照片）經過 LINE 送到手機" : "沒設定：不會送"} right={link("notify", "設定")} />
-        <Row t="out" title="Google Home" hint={state?.matter?.commissioned ? "插座名稱和開關狀態（Matter，家裡網路）；Google 帳號那邊看得到" : "沒連結"} right={link("google", "設定")} />
+        <Row t="out" title="Google Home" hint={state?.matter?.commissioned ? "插座名稱和開關狀態（Matter，家裡網路）；Google 帳號那邊看得到" : "沒連結"} right={link("link", "設定")} />
         <Row t="home" title="天氣、垃圾車、停水停電" hint="只送大概的位置去查，不送家裡的資料" right={<span className="text-sm text-muted-foreground">只查詢</span>} />
       </div>
     </SCard>
@@ -1286,9 +1339,6 @@ export function SettingsPage() {
   const devCard = (
           <SCard id="s-dev" icon={Search} title="裝置">
             <NetCheck s={state} />
-            <SRow label="停電後恢復插座" hint="停電回來，插座開關跟停電前不一樣就改回來（6 小時內）；高風險電器不會自動打開">
-              <Switch checked={state.settings.power_restore !== false} onCheckedChange={(v) => put({ power_restore: v }, v ? "停電後會恢復插座" : "停電後不自動恢復")} aria-label="停電後恢復插座" />
-            </SRow>
             <LinkRow label={<>Wi-Fi 感測 <Badge variant="secondary">實驗</Badge></>} hint="用插座的訊號擾動，猜哪裡有人在走動" onClick={() => setSheet("sense")} />
             <LinkRow label="TP-Link 雲端" hint={`${bound ? `${bound} 個插座綁著 TP-Link 帳號` : "已和 TP-Link 帳號解除綁定"}・家庭中控和 Google Home 都不需要它`} onClick={() => setSheet("cloud")} />
             <SRow label="找新插座" hint="每分鐘會自動找一次；剛插上的插座可以按這裡馬上找">
@@ -1317,11 +1367,12 @@ export function SettingsPage() {
 
   const cards: Record<CatKey, ReactNode> = {
     notify: notifyCard,
+    auto: <AutoCards s={state} />,
     cam: <CameraLinkCard />,
     ai: <AskCard />,
-    life: <><GoodnightCard s={state} />{lifeCard}</>,
+    life: lifeCard,
     home: devCard,
-    google: <GoogleCard />,
+    link: <><GoogleCard /><RemoteCard /><JetsonCard /></>,
     security: <><SystemCard s={state} /><TlsCard /></>,
     other: <>{lookCard}<SCard id="s-usage" icon={BarChart3} title="功能使用統計"><UsageList /></SCard></>,
   };
