@@ -1,6 +1,6 @@
 // 攝影機頁：每台一張卡片（即時畫面、在做什麼、還差哪一步）；點進去同一頁：畫面＋偵測、要做什麼、紀錄、設定（電腦左右兩欄，手機上面有快速跳轉）
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Cat, ChevronLeft, ChevronRight, DoorOpen, Lightbulb, Loader2, Play, Plus, ScanFace, ShieldAlert, Trash2, UserRoundX } from "lucide-react";
+import { Cat, ChevronLeft, ChevronRight, DoorOpen, Lightbulb, Loader2, Play, Plus, PowerOff, ScanFace, ShieldAlert, Trash2, UserRoundX } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -15,7 +15,7 @@ import { Switch } from "@/components/ui/switch";
 import { JumpChips } from "@/components/jump-chips";
 import { PageHeader } from "@/components/app-shell";
 import { DetectEditor } from "@/components/cam-detect";
-import { CamAccessBox, CamLive, SLOT, hhmm, type Cam, type CamAccess, type FacePerson, type FaceRep } from "@/components/camera-bits";
+import { CamAccessBox, CamLive, SLOT, hhmm, type Cam, type CamAccess, type EmptyOff, type FacePerson, type FaceRep } from "@/components/camera-bits";
 import { ClipPlayer, ReplayCard, type ClipTarget } from "@/components/clip-player";
 import type { MotionRule } from "@/components/motion-rules";
 import { api } from "@/lib/api";
@@ -353,6 +353,8 @@ function TasksTab({ cam, faces, rules, plugs, scenes, setFaces, setRules, setCam
     saveRules(rule ? rules.map((r) => (r === rule ? next : r)) : [...rules, next], ok);
   };
   const doors = (cam.zones || []).filter((z) => z.kind === "door");
+  const eo: EmptyOff = { on: false, plugs: [], min: 30, quiet: "23:00-07:00", ask: false, ...(cam.empty_off || {}) };
+  const setEo = (patch: Partial<EmptyOff>, ok = "已更新") => upd({ empty_off: { ...eo, ...patch } }, ok);
   const e = faces?.enroll;
   const enroll = (person: string | null, name?: string) => facesCall("POST", "/api/faces/enroll", { person, name, camera: cam.id });
   const personRow = (pp: FacePerson, extra?: ReactNode) => (
@@ -479,6 +481,44 @@ function TasksTab({ cam, faces, rules, plugs, scenes, setFaces, setRules, setCam
             <label className="flex items-center gap-2 text-sm"><Switch checked={rule.need_home} onCheckedChange={(v) => setRule({ need_home: v }, "已更新")} aria-label="只在有人在家時" />只在家人在家時</label>
           </div>
         )}
+      </Task>
+
+      <Task icon={PowerOff} title="沒人一陣子就關掉" on={!!eo.on} disabled={!plugs.length}
+        hint={plugs.length ? "拍的這一區沒人超過設定的時間，關掉選的插座（攝影機看不到的角落有人時可能誤關）" : "還沒有插座"}
+        onChange={(v) => setEo({ on: v, plugs: eo.plugs.length ? eo.plugs : lights.slice(0, 1).map((x) => x.id) }, v ? "沒人一陣子會自動關" : "不會自動關")}>
+        {cam.empty?.pending && (
+          <div className="flex flex-wrap items-center gap-2 rounded-lg bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
+            <span className="flex-1">沒人 {eo.min} 分鐘了，大約 {Math.max(1, Math.ceil((cam.empty.pending + 300 - Date.now() / 1000) / 60))} 分鐘後關掉</span>
+            <Button size="sm" variant="outline" className="bg-background" onClick={async () => { const r = await call<{ cameras: Cam[] }>("POST", `/api/cameras/${cam.id}/empty-off/cancel`, undefined, "這次不關"); if (r) setCams(r.cameras); }}>不要關</Button>
+          </div>
+        )}
+        <div className="space-y-1.5">
+          <div className="text-sm text-muted-foreground">關哪些</div>
+          <div className="flex flex-wrap gap-1.5">
+            {plugs.map((pl) => {
+              const sel = eo.plugs.includes(pl.id);
+              return (
+                <button key={pl.id} type="button" aria-pressed={sel} onClick={() => setEo({ plugs: sel ? eo.plugs.filter((x) => x !== pl.id) : [...eo.plugs, pl.id] })}
+                  className={cn("rounded-full border px-2.5 py-0.5 text-sm", sel ? "border-primary bg-primary/10 text-primary" : "bg-background text-muted-foreground hover:bg-muted")}>{pl.name}</button>
+              );
+            })}
+          </div>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <label className="flex items-center gap-2 text-sm"><span className="w-16 shrink-0 text-muted-foreground">沒人多久</span>
+            <Select value={String(eo.min)} onValueChange={(v) => setEo({ min: Number(v) })}>
+              <SelectTrigger className="h-8 min-w-0 flex-1 bg-background" aria-label="沒人多久才關"><SelectValue /></SelectTrigger>
+              <SelectContent>{[...new Set([15, 30, 60, 120, eo.min])].sort((a, b) => a - b).map((m) => <SelectItem key={m} value={String(m)}>{m} 分鐘</SelectItem>)}</SelectContent>
+            </Select>
+          </label>
+          <label className="flex items-center gap-2 text-sm"><span className="w-16 shrink-0 text-muted-foreground">不要關</span>
+            <Select value={eo.quiet || "_none"} onValueChange={(v) => setEo({ quiet: v === "_none" ? "" : v })}>
+              <SelectTrigger className="h-8 min-w-0 flex-1 bg-background" aria-label="什麼時段不要關"><SelectValue /></SelectTrigger>
+              <SelectContent><SelectItem value="_none">整天都會關</SelectItem><SelectItem value="23:00-07:00">睡覺時間 23:00～07:00</SelectItem><SelectItem value="22:00-08:00">睡覺時間 22:00～08:00</SelectItem></SelectContent>
+            </Select>
+          </label>
+        </div>
+        <label className="flex items-center gap-2 text-sm"><Switch checked={eo.ask} onCheckedChange={(v) => setEo({ ask: v })} aria-label="關之前先傳 LINE" />關之前先傳 LINE，5 分鐘內可以按「不要關」</label>
       </Task>
 
       <Task icon={ShieldAlert} title={"有人跌倒通知我"} on={!!cam.fall} onChange={(v) => upd({ fall: v }, v ? "會偵測跌倒" : "不偵測跌倒")}

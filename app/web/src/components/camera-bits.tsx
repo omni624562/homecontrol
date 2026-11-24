@@ -17,7 +17,9 @@ export interface Act { notify: "off" | "away" | "always"; scene: string | null; 
 export interface Zone { id: string; name: string; kind: "area" | "object" | "door"; poly: number[][]; linger: number; act: Act; refs?: number; day?: number; night?: number; busy?: boolean; open?: boolean; score?: number | null }
 export interface Line { id: string; name: string; a: number[]; b: number[]; in: Act; out: Act; last?: { way: "in" | "out"; t: number } | null }
 export interface Cam { id: string; name: string; host: string; port: number; room: string | null; enabled: boolean; alert: boolean; model?: string; faces?: boolean; role?: "entry" | "room"; light?: string | null; pets?: boolean; fall?: boolean; pet_notify?: boolean; pets_here?: string[]; ignore?: number[][][]; zones?: Zone[]; lines?: Line[];
-  night?: boolean | null; person: boolean; score: number | null; ok: boolean | null; error: string | null }
+  night?: boolean | null; person: boolean; score: number | null; ok: boolean | null; error: string | null;
+  empty_off?: EmptyOff | null; seen?: number | null; empty?: { done: boolean; pending: number | null } | null }
+export interface EmptyOff { on: boolean; plugs: string[]; min: number; quiet: string; ask: boolean }
 
 // 誰可以看攝影機畫面：沒權限的裝置用手機通知的驗證碼開通；有權限的人勾選其他裝置
 export function CamAccessBox({ acc, onChange }: { acc: CamAccess; onChange: (a: CamAccess) => void }) {
