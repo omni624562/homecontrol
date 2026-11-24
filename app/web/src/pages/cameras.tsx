@@ -498,7 +498,7 @@ function LogTab({ faces, cam }: { faces: FaceRep | null; cam: Cam }) {
   const every = (faces?.log || []).filter((x) => x.camera === cam.name);
   const items = all ? every : every.slice(0, 5);
   const tone = (k: string) => (k === "stranger" || k === "fall" ? "bg-orange-500" : k === "family" ? "bg-emerald-500" : k === "door" || k === "zone" ? "bg-primary" : "bg-muted-foreground");
-  const text = (x: (typeof items)[number]) => x.kind === "stranger" ? "不認得的人" : x.kind === "guest" ? `${x.name}（訪客）` : x.kind === "pet" ? `看到${x.name}` : x.kind === "fall" ? "可能有人跌倒" : x.kind === "door" ? "門打開了" : x.kind === "zone" ? x.name || "偵測到" : `認出 ${x.name}`;
+  const text = (x: (typeof items)[number]) => x.kind === "stranger" ? (x.name ? `不認得的人・${x.name}` : "不認得的人") : x.kind === "guest" ? `${x.name}（訪客）` : x.kind === "pet" ? `看到${x.name}` : x.kind === "fall" ? "可能有人跌倒" : x.kind === "door" ? "門打開了" : x.kind === "zone" ? x.name || "偵測到" : `認出 ${x.name}`;
   return (
     <Card className="gap-0 py-0">
       <div className="border-b px-4 py-3 font-semibold">紀錄<span className="ml-2 text-sm font-normal text-muted-foreground">最近 7 天</span></div>

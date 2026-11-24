@@ -273,3 +273,48 @@ def test_summary_and_search_api(app_module, monkeypatch):
     assert len(r["hits"]) == 1 and r["hits"][0]["name"] == "大門口"
     monkeypatch.setattr(hub.gpu, "search", lambda q, days, cam: None)
     assert c.get("/api/recordings/search", params={"q": "狗"}).status_code == 503
+
+
+def test_repeats_counts_same_stranger():
+    import numpy as np
+
+    from plughub import reid
+
+    rng = np.random.default_rng(0)
+    a, b, fam = (rng.normal(size=768) for _ in range(3))
+    near = lambda v: v + rng.normal(size=768) * 0.15  # noqa: E731  同一個人換個角度
+    r = reid.Repeats()
+    t0 = 1795488000.0  # 某天早上
+    r.add_family(fam, t0)
+    assert r.add_visit(near(fam), t0 + 60) is None and not r.unknown  # 跟今天的家人一樣：不算
+    assert r.add_visit(near(a), t0 + 100) is None
+    assert r.add_visit(b, t0 + 200) is None  # 另一個人
+    assert r.add_visit(near(a), t0 + 300) is None
+    hit = r.add_visit(near(a), t0 + 400)
+    assert hit and len(hit["times"]) == 3
+    assert r.add_visit(near(a), t0 + 500) is None  # 只講一次
+    assert r.add_visit(near(a), t0 + 86400) is None and len(r.unknown) == 1  # 隔天重算
+    assert reid.family_moved({"dad": {"since": t0}}, t0 + 200, t0 + 250) and not reid.family_moved({"dad": {"since": t0}}, t0 + 1000, t0 + 1100)
+
+
+def test_visit_end_notifies_third_time(app_module, monkeypatch):
+    import numpy as np
+
+    hub = app_module.hub
+    sent = []
+    monkeypatch.setattr(hub.notifier, "send", lambda *a, **k: sent.append(a))
+    hub.cameras.list = [{"id": "g", "name": "大門口", "host": "x", "enabled": True, "role": "entry"}]
+    hub._presence = {}
+    hub.repeats = __import__("sys").modules["plughub.reid"].Repeats()
+    e = np.ones(768, np.float32)
+    now = 1795488000.0
+    for i in range(3):
+        hub._visit_end("g", {"start": now + i * 600, "known": set(), "maybe": set(), "app": [e, e]}, now + i * 600 + 30)
+    assert len(sent) == 1 and "第 3 次" in sent[0][0]
+    assert hub.face_log.items[-1]["kind"] == "stranger" and "今天第 3 次出現" in hub.face_log.items[-1]["name"]
+    # 家人手機剛進出：不算
+    hub.repeats = __import__("sys").modules["plughub.reid"].Repeats()
+    hub._presence = {"mom": {"home": True, "since": now + 10}}
+    for i in range(3):
+        hub._visit_end("g", {"start": now + i * 100, "known": set(), "maybe": set(), "app": [e, e]}, now + i * 100 + 30)
+    assert len(sent) == 1

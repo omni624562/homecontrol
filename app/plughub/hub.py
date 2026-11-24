@@ -23,7 +23,7 @@ from typing import Any, Callable
 
 from kasa import Device, Discover, Module
 
-from . import anomaly, arpprobe, camera, faces, habits, vision, zones as zonelib, locate, native, netlog, netprobe, roommotion, routine, sun, tariff
+from . import anomaly, arpprobe, camera, faces, habits, reid, vision, zones as zonelib, locate, native, netlog, netprobe, roommotion, routine, sun, tariff
 from .sensing import INTERVAL as SENSE_INTERVAL, SAVE_EVERY as SENSE_SAVE_EVERY, Sensing
 from .notify import Notifier
 from .usage import Usage
@@ -193,6 +193,7 @@ class Hub:
         self.face_log = faces.FaceLog(self.store.dir)
         self.face_error: str | None = None
         self._visits: dict[str, dict[str, Any]] = {}  # 攝影機 ID → 這次「有人」期間認到的臉
+        self.repeats = reid.Repeats()  # 同一個陌生人今天又來了
         self._face_cool: dict[str, float] = {}  # 「誰:做什麼」→ 上次做的時間（同一件事不要一直做）
         self._face_arrived_at = 0.0  # 上次認臉認出家人回家的時間（Wi-Fi 的「回家情境」就不用再跑一次）
         self.enroll: dict[str, Any] | None = None  # 正在登記的臉：{"pid","name","kind","cam","until","cands"}
@@ -1713,10 +1714,11 @@ class Hub:
                 self._enroll_feed(found, now)
             else:
                 self._face_visit(c, jpeg, found, now)
+                await self._appearance_sample(c, jpeg, now)
         if self.enroll is not None and now >= self.enroll["until"]:
             self._enroll_finish()
         for cid in [k for k in self._visits if not self.cameras.state.get(k, {}).get("person")]:
-            del self._visits[cid]  # 人走了：這次結束
+            self._visit_end(cid, self._visits.pop(cid), now)  # 人走了：這次結束
         self._zone_pending_check(now)
         await self._line_boost(cams)
 
@@ -1733,6 +1735,41 @@ class Hub:
         if not v["alerted"] and v["stranger"] >= 2 and not v["known"] and (cam.get("role") != "entry" or now - v["start"] >= FACE_LINGER):
             v["alerted"] = True
             self._face_stranger(cam, v, now)
+
+    async def _appearance_sample(self, cam: dict[str, Any], jpeg: bytes, now: float) -> None:
+        """門口有人時，每 2 秒跟 Jetson 拿一次這個人的外觀特徵（最多 6 次），這次結束時拿來比今天前幾次。"""
+        v = self._visits.get(cam["id"])
+        if v is None or cam.get("role") != "entry" or self.cameras.state.get(cam["id"], {}).get("engine") != "stream":
+            return
+        app = v.setdefault("app", [])
+        if len(app) >= 6 or now - v.get("app_t", 0) < 2:
+            return
+        v["app_t"] = now
+        emb = await asyncio.to_thread(self.gpu.appearance, cam["id"])
+        if emb is not None:
+            app.append(emb)
+            v["app_jpeg"] = jpeg
+
+    def _visit_end(self, cid: str, v: dict[str, Any], now: float) -> None:
+        if len(v.get("app") or []) < 2:
+            return
+        cam = self.cameras.get(cid) or {"id": cid}
+        emb = reid.mean_emb(v["app"])
+        family = any(self.gallery.people.get(pid, {}).get("kind") == "family" for pid in v["known"])
+        if family or v["maybe"] or reid.family_moved(self._presence, v["start"], now):
+            self.repeats.add_family(emb, now)  # 多半是家人：記住他今天的穿著
+            return
+        if v["known"]:  # 認出訪客
+            return
+        hit = self.repeats.add_visit(emb, v["start"])
+        if not hit:
+            return
+        name = cam.get("name") or cid
+        times = "、".join(datetime.fromtimestamp(t).strftime("%H:%M") for t in hit["times"])
+        n = len(hit["times"])
+        thumb = self._zone_frame(v["app_jpeg"], {}) if v.get("app_jpeg") else None
+        self.face_log.add({"camera": name, "kind": "stranger", "name": f"今天第 {n} 次出現（{times}）", "sim": None}, thumb or None)
+        self.notifier.send(f"{name}：同一個不認得的人今天第 {n} 次出現", f"{times}；臉沒拍清楚，是用穿著、身形判斷的，可能是家人換了衣服")
 
     def _face_known(self, cam: dict[str, Any], v: dict[str, Any], pid: str, sim: float, now: float) -> None:
         g = self.gallery.people.get(pid) or {}
