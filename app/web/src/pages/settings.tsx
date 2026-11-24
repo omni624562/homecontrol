@@ -744,8 +744,8 @@ function RecordingRows() {
 }
 
 // 手勢遙控：對著攝影機舉手 3 秒，開關插座、執行情境或全部關掉
-type GAct = { type: "plug" | "scene" | "off"; id: string | null } | null;
-interface GestureCfg { on: boolean; cam: string | null; map: Record<string, GAct>; now?: { name: string; held: number } | null; live?: boolean; people?: { kp: number[][] }[] }
+type GAct = { type: "plug" | "plug_on" | "plug_off" | "scene" | "off"; id: string | null } | null;
+interface GestureCfg { on: boolean; cam: string | null; map: Record<string, GAct>; now?: { name: string; held: number; need?: number; hand?: { points: number[][]; px: number; presence: number } | null } | null; live?: boolean; people?: { kp: number[][] }[] }
 // COCO 17 點的骨架連線
 const BONES: [number, number][] = [[5, 6], [5, 7], [7, 9], [6, 8], [8, 10], [5, 11], [6, 12], [11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [0, 5], [0, 6]];
 
@@ -760,6 +760,8 @@ function GestureLive({ cam, g }: { cam: string; g: GestureCfg }) {
   const sh = p && ok(5) && ok(6) ? (p.kp[5][0] + p.kp[6][0]) / 2 : null;
   const hip = p && ok(11) && ok(12) ? (p.kp[11][0] + p.kp[12][0]) / 2 : null;
   const lying = sh != null && hip != null && hip - sh < 0.05;
+  const hand = g.now?.hand && g.now.hand.points?.length === 21 ? g.now.hand : null;
+  const need = g.now?.need || 3;
   return (
     <div className="space-y-2">
       <div className="relative aspect-video w-full max-w-md overflow-hidden rounded-lg bg-muted">
@@ -772,10 +774,16 @@ function GestureLive({ cam, g }: { cam: string; g: GestureCfg }) {
             {[9, 10].filter(ok).map((i) => <ellipse key={i} cx={p.kp[i][1]} cy={p.kp[i][0]} rx={0.012} ry={0.021} fill={up(i) ? "#22c55e" : "#f59e0b"} stroke="#fff" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />)}
           </svg>
         )}
+        {hand && (
+          <svg viewBox="0 0 1 1" preserveAspectRatio="none" className="absolute inset-0 size-full" aria-hidden>
+            {HAND_BONES.map(([a, b]) => <line key={`${a}-${b}`} x1={hand.points[a][0]} y1={hand.points[a][1]} x2={hand.points[b][0]} y2={hand.points[b][1]} stroke="#4ade80" strokeWidth={2} vectorEffect="non-scaling-stroke" />)}
+            {hand.points.map((q, i) => <ellipse key={i} cx={q[0]} cy={q[1]} rx={0.004} ry={0.007} fill="#4ade80" />)}
+          </svg>
+        )}
         {g.now && (
           <div className="absolute inset-x-2 bottom-2 rounded-md bg-black/60 px-2 py-1 text-xs text-white">
-            {GESTURES.find(([k]) => k === g.now!.name)?.[2].replace(" 3 秒", "")}
-            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-white/30"><div className="h-full bg-emerald-400" style={{ width: `${Math.min(100, (g.now.held / 3) * 100)}%` }} /></div>
+            {GESTURES.find(([k]) => k === g.now!.name)?.slice(1).join(" ")}{hand ? `・手 ${hand.px} 像素` : ""}
+            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-white/30"><div className="h-full bg-emerald-400" style={{ width: `${Math.min(100, (g.now.held / need) * 100)}%` }} /></div>
           </div>
         )}
       </div>
@@ -783,13 +791,18 @@ function GestureLive({ cam, g }: { cam: string; g: GestureCfg }) {
         {!g.live ? "這台還沒在 Jetson 上即時看，等一下再試"
           : !p ? "沒看到人：站到攝影機看得到的地方（上半身要入鏡）"
           : lying ? "看起來是躺著或斜靠：手勢要坐正或站著比較認得出來"
-          : `看到人・左手 ${up(9) ? "舉起 ✓" : "放下"}・右手 ${up(10) ? "舉起 ✓" : "放下"}${g.now ? (g.now.held >= 3 ? "・算一次了" : `・再維持 ${Math.max(0, 3 - g.now.held).toFixed(1)} 秒`) : ""}`}
+          : g.now ? `看到「${GESTURES.find(([k]) => k === g.now!.name)?.[2]}」${g.now.held >= need ? "・算一次了" : `・再維持 ${Math.max(0, need - g.now.held).toFixed(1)} 秒`}`
+          : `看到人・左手 ${up(9) ? "舉起 ✓" : "放下"}・右手 ${up(10) ? "舉起 ✓" : "放下"}・手指手勢要把手舉到胸前、掌心朝攝影機（太遠認不出來）`}
       </p>
-      <p className="text-xs text-muted-foreground">藍線是 Jetson 看到的骨架（大約慢半秒）；手腕綠色＝舉過頭，橘色＝沒有。</p>
+      <p className="text-xs text-muted-foreground">藍線是 Jetson 看到的骨架（大約慢半秒）；手腕綠色＝舉過頭，橘色＝沒有；綠色細線是認出來的手指。</p>
     </div>
   );
 }
-const GESTURES: [string, string, string][] = [["one_up", "🙋", "舉一隻手 3 秒"], ["both_up", "🙌", "舉雙手 3 秒"], ["cross", "🙅", "雙手在胸前交叉 3 秒"]];
+const ARM_GESTURES: [string, string, string][] = [["one_up", "🙋", "舉一隻手"], ["both_up", "🙌", "舉雙手"], ["cross", "🙅", "雙手在胸前交叉"]];
+const FINGER_GESTURES: [string, string, string][] = [["f_open", "✋", "張開手掌"], ["f_fist", "✊", "握拳"], ["f_v", "✌️", "比 YA"], ["f_point", "☝️", "比 1"], ["f_thumbs", "👍", "比讚"]];
+const GESTURES = [...ARM_GESTURES, ...FINGER_GESTURES];
+// 手的 21 點連線（MediaPipe）
+const HAND_BONES: [number, number][] = [[0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8], [5, 9], [9, 10], [10, 11], [11, 12], [9, 13], [13, 14], [14, 15], [15, 16], [13, 17], [17, 18], [18, 19], [19, 20], [0, 17]];
 function GestureRows() {
   const { state } = useHub();
   const [g, setG] = useState<GestureCfg | null>(null);
@@ -818,10 +831,10 @@ function GestureRows() {
   };
   const plugs = state?.plugs || [], scenes = state?.scenes || [];
   const val = (a: GAct) => (!a ? "_none" : a.type === "off" ? "off" : `${a.type}:${a.id}`);
-  const parse = (v: string): GAct => (v === "_none" ? null : v === "off" ? { type: "off", id: null } : { type: v.split(":")[0] as "plug" | "scene", id: v.slice(v.indexOf(":") + 1) });
+  const parse = (v: string): GAct => (v === "_none" ? null : v === "off" ? { type: "off", id: null } : { type: v.split(":")[0] as "plug" | "plug_on" | "plug_off" | "scene", id: v.slice(v.indexOf(":") + 1) });
   return (
     <>
-      <SRow label="手勢遙控" hint="對著攝影機做手勢，開關電器或執行情境；要維持 3 秒，同一個手勢 10 秒內只算一次">
+      <SRow label="手勢遙控" hint="對著攝影機舉手或比手指，開關電器或執行情境；同一個手勢 10 秒內只算一次">
         <Switch checked={g.on} onCheckedChange={(v) => put({ on: v, cam: g.cam || cams[cams.length - 1]?.id || null }, v ? "手勢遙控打開了" : "手勢遙控關了")} aria-label="手勢遙控" />
       </SRow>
       {g.on && (
@@ -832,19 +845,26 @@ function GestureRows() {
               <SelectContent>{cams.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
             </Select>
           </label>
-          {GESTURES.map(([k, icon, text]) => (
-            <div key={k} className="flex flex-wrap items-center gap-2 text-sm">
-              <span className={cn("flex size-10 items-center justify-center rounded-lg border text-xl", g.now?.name === k && "border-primary bg-primary/10")} aria-hidden>{icon}</span>
-              <span className="w-36 shrink-0">{text}</span>
-              <Select value={val(g.map[k] || null)} onValueChange={(v) => put({ map: { ...g.map, [k]: parse(v) } })}>
-                <SelectTrigger className="h-8 min-w-0 flex-1 bg-background sm:max-w-56" aria-label={`${text}要做什麼`}><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="_none">不做事</SelectItem>
-                  <SelectItem value="off">全部關掉</SelectItem>
-                  {plugs.map((p) => <SelectItem key={p.id} value={`plug:${p.id}`}>開關 {p.name}</SelectItem>)}
-                  {scenes.map((sc) => <SelectItem key={sc.id} value={`scene:${sc.id}`}>執行 {sc.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
+          {([["舉手（維持 3 秒）", ARM_GESTURES], ["手指（手舉到胸前、掌心朝攝影機，維持 2 秒）", FINGER_GESTURES]] as const).map(([head, list]) => (
+            <div key={head} className="space-y-2">
+              <div className="text-xs font-semibold text-muted-foreground">{head}</div>
+              {list.map(([k, icon, text]) => (
+                <div key={k} className="flex flex-wrap items-center gap-2 text-sm">
+                  <span className={cn("flex size-10 items-center justify-center rounded-lg border text-xl", g.now?.name === k && "border-primary bg-primary/10")} aria-hidden>{icon}</span>
+                  <span className="w-32 shrink-0">{text}</span>
+                  <Select value={val(g.map[k] || null)} onValueChange={(v) => put({ map: { ...g.map, [k]: parse(v) } })}>
+                    <SelectTrigger className="h-8 min-w-0 flex-1 bg-background sm:max-w-56" aria-label={`${text}要做什麼`}><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="_none">不做事</SelectItem>
+                      <SelectItem value="off">全部關掉</SelectItem>
+                      {plugs.map((p) => <SelectItem key={`t${p.id}`} value={`plug:${p.id}`}>開關 {p.name}</SelectItem>)}
+                      {plugs.map((p) => <SelectItem key={`n${p.id}`} value={`plug_on:${p.id}`}>打開 {p.name}</SelectItem>)}
+                      {plugs.map((p) => <SelectItem key={`f${p.id}`} value={`plug_off:${p.id}`}>關掉 {p.name}</SelectItem>)}
+                      {scenes.map((sc) => <SelectItem key={sc.id} value={`scene:${sc.id}`}>執行 {sc.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ))}
             </div>
           ))}
           <div className="flex flex-wrap items-center gap-3">
