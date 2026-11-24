@@ -4,7 +4,7 @@
 - 全部錄影留 keep.all 天；「有事的時段」（樹莓派送來的事件前後，存在 /data/windows.json）留 keep.event 天
 - 硬碟剩不到 MIN_FREE_GB 時：先從最舊的「沒事的」刪，還不夠才刪有事的
 - 只有樹莓派能用：每個請求都要帶 token（樹莓派用 PUT /config 設定攝影機時一起給；第一次由 RECORDER_TOKEN 環境變數決定）
-- 攝影機帳密只存在 /data/config.json（600），API 不會回傳
+- 攝影機網址（含帳密）只放在記憶體，不寫進檔案；重開後等樹莓派送過來（每分鐘送一次）。API 不會回傳
 
 API（都要 Authorization: Bearer <token>）：
   PUT /config          {"cams": {"id": "rtsp://..."}}：要錄哪些攝影機
@@ -89,7 +89,7 @@ def load_cfg() -> dict:
 def save_cfg(cfg: dict) -> None:
     DATA.mkdir(parents=True, exist_ok=True)
     tmp = DATA / "config.tmp"
-    tmp.write_text(json.dumps(cfg), "utf-8")
+    tmp.write_text(json.dumps({k: v for k, v in cfg.items() if k != "cams"}), "utf-8")  # 網址裡有帳密：不存
     os.chmod(tmp, 0o600)
     tmp.replace(DATA / "config.json")
 
@@ -366,7 +366,10 @@ class Handler(BaseHTTPRequestHandler):
 
 def main() -> None:
     REC.mkdir(parents=True, exist_ok=True)
-    apply(load_cfg())
+    cfg = load_cfg()
+    if "cams" in cfg:  # 舊版存過含帳密的網址：先照錄，再把檔案裡的拿掉
+        apply(cfg)
+        save_cfg(cfg)
     threading.Thread(target=cleanup, daemon=True).start()
     LOG.info("錄影機啟動：port %s，保留 %s", PORT, keep_days(load_cfg()))
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

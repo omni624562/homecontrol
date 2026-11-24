@@ -30,6 +30,7 @@ PREFIX = "plughub-"
 SKIP = {
     "alerts_cache.json", "bus_routes.json", "garbage_arrivals.json", "garbage_lines.json",
     "roads.json", "usage_cache.json", "weather_cache.json", "pair_code.json",
+    "secret.key",  # 帳密的金鑰不放進備份：備份被拿走也解不開攝影機帳密（還原後要重新輸入）
 }
 
 

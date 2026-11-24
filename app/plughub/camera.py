@@ -2,7 +2,7 @@
 
 - 影像只在記憶體裡處理，不存檔、不上傳；判斷完就丟掉。
 - 模型：EfficientDet-Lite0（Apache 2.0），只看「人」這一類的最高分數，一張約 40 毫秒。
-- 設定和帳密存在 data/cameras.json（帳密不會回傳給瀏覽器）。
+- 設定存在 data/cameras.json；帳號、密碼加密後才寫進去（secretbox.py，金鑰 data/secret.key），也不會回傳給瀏覽器。
 - 看到人：攝影機所在的房間當作「有動靜」（動靜自動開關、地圖都用得到）。
 - 沒人在家時看到人：先等 3 分鐘、順便直接問家人的手機；有家人的手機連上 Wi-Fi 就是家人回來，沒有才通知。
 """
@@ -22,10 +22,13 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable
 
+from .secretbox import SecretBox
+
 _LOGGER = logging.getLogger(__name__)
 
 MODEL = Path(os.environ.get("PLUGHUB_MODEL", Path(__file__).resolve().parent.parent / "models" / "efficientdet_lite0.tflite"))
 EVERY = 1.0  # 秒：每台多久看一次
+SECRET_FIELDS = ("user", "pwd")  # 加密後才寫進 cameras.json
 PERSON_ON = 0.4  # 「人」的分數到這裡算看到
 PERSON_HITS = 2  # 最近 3 張裡有幾張看到才算有人（避免一張誤判）
 HOLD = 15  # 秒：多久沒看到人才算人走了
@@ -250,6 +253,7 @@ class AccessCode:
 class Cameras:
     def __init__(self, data_dir: Path) -> None:
         self.path = data_dir / "cameras.json"
+        self.box = SecretBox(data_dir / "secret.key")
         self.list: list[dict[str, Any]] = []
         self.viewers: list[str] = []  # 可以看畫面、改攝影機設定的裝置 ID（配對的裝置 ID，或家人手機的「mac:…」）
         self.code = AccessCode()
@@ -284,13 +288,33 @@ class Cameras:
             c.setdefault("zones", [])  # 區域：[{"id","name","kind": area/object/door,"poly","linger","act": {...},"refs": [樣子…]}]
             c.setdefault("lines", [])  # 線：[{"id","name","a","b","in": {...},"out": {...}}]（箭頭那邊＝回來）
             _migrate_door(c)
+        plain = False
+        for c in self.list:
+            for k in SECRET_FIELDS:
+                if f"{k}_enc" in c:
+                    v = self.box.open(str(c.pop(f"{k}_enc")))
+                    if v is None:
+                        _LOGGER.warning("攝影機 %s 的%s解不開（金鑰換了？）：請重新輸入帳密", c.get("name") or c.get("host"), "帳號" if k == "user" else "密碼")
+                    c[k] = v or ""
+                elif c.get(k):
+                    plain = True
+        if plain:  # 舊的明碼：馬上改存成加密的
+            self.save()
+            _LOGGER.info("攝影機帳密改成加密存放")
 
     def save(self) -> None:
         tmp = self.path.with_suffix(".tmp")
         def strip(d: dict[str, Any]) -> dict[str, Any]:
             return {k: v for k, v in d.items() if not k.startswith("_")}
 
-        clean = [{**c, "zones": [strip(z) for z in c.get("zones") or []]} for c in self.list]
+        def seal(c: dict[str, Any]) -> dict[str, Any]:
+            out = {k: v for k, v in c.items() if k not in SECRET_FIELDS}
+            for k in SECRET_FIELDS:
+                if c.get(k):
+                    out[f"{k}_enc"] = self.box.seal(str(c[k]))
+            return out
+
+        clean = [{**seal(c), "zones": [strip(z) for z in c.get("zones") or []]} for c in self.list]
         tmp.write_text(json.dumps({"cameras": clean, "viewers": self.viewers}, ensure_ascii=False, indent=2), "utf-8")
         os.chmod(tmp, 0o600)
         tmp.replace(self.path)
