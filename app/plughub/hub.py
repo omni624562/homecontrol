@@ -56,6 +56,15 @@ CAMERA_SCORE = 1.5  # 攝影機看到人的房間，動靜分數至少這麼多�
 PROBE_EVERY = 60  # 路由器多久沒看到家人的手機，就由樹莓派直接問（ARP）
 PROBE_MAX_AGE = 24 * 3600  # 超過一天沒看到的就不問了
 PRESENCE_LOG_MAX = 50
+ITEM_ONE = {"包裹", "垃圾袋", "推車"}  # 「多了一個包裹」
+ITEM_TAKEN = {"包裹", "袋子", "外送餐點", "垃圾袋"}  # 被拿走時可以另外決定要不要通知（act.taken）
+
+
+def _dur(sec: float) -> str:
+    m = int(sec // 60)
+    return f"{m // 60} 小時 {m % 60} 分" if m >= 60 else f"{max(1, m)} 分鐘"
+
+
 CLIP_W = 800  # 區域、線偵測到時存的畫面寬度
 CLIP_MORE = 3  # 偵測到之後再拍幾張
 CLIP_GAP = 2.0  # 秒：每張隔多久（門開了，人通常過幾秒才出現）
@@ -1542,8 +1551,19 @@ class Hub:
             if ev:
                 self._zone_learn(z, sig, s, "night" if st.get("night") else "day")  # 不管是第一次還是變了：現在的樣子記成正常的（包裹放著不會一直講）
             if ev in ("more", "less", "changed"):
-                word = {"more": "多了東西", "less": "東西不見了", "changed": "有東西變了"}[ev]
-                self._zone_fire(cam, z, f"{z['name']}{word}", z.get("act") or {}, now, jpeg)
+                act = z.get("act") or {}
+                label = f"{z['name']}" + {"more": "多了東西", "less": "東西不見了", "changed": "有東西變了"}[ev]
+                item = s.pop("item", None) if ev != "more" else None
+                if ev == "more":  # 問 Jetson 多的是什麼（包裹、袋子、鞋子…）；看不出來就照舊
+                    what = await asyncio.to_thread(self.gpu.classify, jpeg, vision.poly_bbox(z["poly"]))
+                    if what:
+                        s["item"] = {"label": what, "t": now}
+                        label = f"{z['name']}多了{'一個' if what in ITEM_ONE else ''}{what}"
+                elif item:
+                    label = f"{z['name']}的{item['label']}被拿走了（放了 {_dur(now - item['t'])}）"
+                    if item["label"] in ITEM_TAKEN and act.get("taken") is False:
+                        act = {**act, "notify": "off"}
+                self._zone_fire(cam, z, label, act, now, jpeg)
         lst = st.setdefault("lines", {})
         if st.get("engine") == "stream" and cam.get("lines"):
             # Jetson 每秒 5 張的腳的位置，一張一張照順序算（走很快也不會跳過線）

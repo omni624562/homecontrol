@@ -22,6 +22,7 @@ API（都要 Authorization: Bearer <token>；POST 的 body 都是 JPEG）：
   GET  /summary?day=YYYY-MM-DD   那天錄影分析的結果（有人來的時段、各種東西出現幾次；index.py）
   POST /search                {"q": "穿紅衣服的人", "days": 7, "cam": null} → 最像的時間點
   POST /index/run?day=        馬上分析那天的錄影（平常半夜 2 點自己做）
+  POST /classify?box=x,y,w,h  body = JPEG → 框裡多的是什麼（包裹、袋子、鞋子…；「東西多了」用）
   POST /appearance?cam=       這台攝影機最新畫面裡追蹤中的人，每個人的外觀特徵（SigLIP 2；認「同一個陌生人又來了」用）
 """
 from __future__ import annotations
@@ -510,6 +511,17 @@ class Handler(BaseHTTPRequestHandler):
         if not self._auth():
             return
         u = urlparse(self.path)
+        if u.path == "/classify":
+            if index is None:
+                self._json(503, {"error": "還沒載入"})
+                return
+            try:
+                box = [float(v) for v in (parse_qs(u.query).get("box") or [""])[0].split(",")][:4]
+                assert len(box) == 4
+                self._json(200, index.classify(_decode(data), box))
+            except (AssertionError, ValueError):
+                self._json(400, {"error": "要給 box=x,y,w,h 和 JPEG"})
+            return
         if u.path == "/appearance":
             self._json(*self._appearance(parse_qs(u.query).get("cam", [""])[0]))
             return

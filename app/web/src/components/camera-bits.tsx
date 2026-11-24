@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
 
 // 網路攝影機：樹莓派每秒看一張快照認人；看到人 → 那間算有動靜（動靜自動開關、地圖），沒人在家時看到人就通知
 export interface CamAccess { can_view: boolean; me: string | null; count: number; viewers?: { id: string; name: string }[]; candidates?: { id: string; name: string; kind: string }[] }
-export interface Act { notify: "off" | "away" | "always"; scene: string | null; dark: boolean }
+export interface Act { notify: "off" | "away" | "always"; scene: string | null; dark: boolean; taken?: boolean }
 export interface Zone { id: string; name: string; kind: "area" | "object" | "door"; poly: number[][]; linger: number; act: Act; refs?: number; day?: number; night?: number; busy?: boolean; open?: boolean; score?: number | null }
 export interface Line { id: string; name: string; a: number[]; b: number[]; in: Act; out: Act; last?: { way: "in" | "out"; t: number } | null }
 export interface Cam { id: string; name: string; host: string; port: number; room: string | null; enabled: boolean; alert: boolean; model?: string; faces?: boolean; role?: "entry" | "room"; light?: string | null; pets?: boolean; fall?: boolean; pet_notify?: boolean; pets_here?: string[]; ignore?: number[][][]; zones?: Zone[]; lines?: Line[];
