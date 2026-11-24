@@ -143,3 +143,59 @@ def test_vision_api(app_module):
     assert c.put("/api/vision", json={"url": "http://example.com:1"}).status_code == 400
     assert c.put("/api/vision", json={"url": "http://10.0.2.99:8210"}).json()["url"] == "http://10.0.2.99:8210"
     assert c.put("/api/vision", json={"url": ""}).json()["configured"] is False
+
+
+def test_pose_faces_go_to_gpu_then_fallback(app_module, monkeypatch):
+    import numpy as np
+
+    hub = app_module.hub
+    monkeypatch.setattr(hub.pose, "analyze", lambda j: [{"score": 0.3, "torso": 5, "aspect": 2, "box": (1, 2, 3, 4), "foot": (0.1, 0.9)}])
+    monkeypatch.setattr(hub.face_engine, "analyze", lambda j: ["local"])
+    # 沒設定 Jetson：用樹莓派的
+    monkeypatch.setattr(hub.gpu, "_settings", lambda: {})
+    assert hub.analyze_pose(b"j")[0]["score"] == 0.3 and hub.analyze_faces(b"j") == ["local"]
+    # 有 Jetson：用 Jetson 的；格式換回原本的
+    monkeypatch.setattr(hub.gpu, "_settings", lambda: {"vision_url": "http://10.0.2.99:8210"})
+    replies = {"/pose": {"people": [{"score": 0.8, "torso": 3, "aspect": 2.5, "box": [5, 6, 7, 8], "foot": [0.5, 0.6]}]},
+               "/faces": {"faces": [{"w": 80, "score": 0.9, "clear": True, "box": [1, 2, 3, 4], "feat": [0.5] * 128}]}}
+    monkeypatch.setattr(hub.gpu, "_post", lambda path, body, timeout=3, soft=(): replies.get(path))
+    p = hub.analyze_pose(b"j")
+    assert p[0]["foot"] == (0.5, 0.6) and p[0]["box"] == (5, 6, 7, 8)
+    f = hub.analyze_faces(b"j")
+    assert isinstance(f[0]["feat"], np.ndarray) and f[0]["feat"].shape == (128,)
+    # 姿勢沒抓到人、但物件辨識框到人：用框的底部中間當腳
+    replies["/pose"] = {"people": []}
+    got = hub.analyze_pose(b"notjpeg", [{"name": "person", "score": 0.9, "box": [0.2, 0.1, 0.2, 0.5]}, {"name": "person", "score": 0.3, "box": [0, 0, 1, 1]}])
+    assert len(got) == 1 and got[0]["foot"] == (0.30000000000000004, 0.6) and got[0]["torso"] is None
+    # Jetson 掛了：用樹莓派的
+    monkeypatch.setattr(hub.gpu, "_post", lambda path, body, timeout=3, soft=(): None)
+    assert hub.analyze_pose(b"j")[0]["score"] == 0.3 and hub.analyze_faces(b"j") == ["local"]
+
+
+def test_segment_prefers_gpu(app_module, monkeypatch):
+    from plughub import camera as cam_mod
+
+    hub = app_module.hub
+    hub.cameras.list = [{"id": "g", "name": "大門口", "host": "x", "enabled": True}]
+    c, dev = _client(app_module)
+    hub.cameras.viewers = [dev["id"]]
+    monkeypatch.setattr(app_module.segment_mod, "available", lambda: True)
+    monkeypatch.setattr(cam_mod, "snapshot", lambda cam: b"jpeg")
+    monkeypatch.setattr(hub.gpu, "_settings", lambda: {"vision_url": "http://10.0.2.99:8210"})
+    calls = []
+    state = {"has": False}
+
+    def seg(key, x, y, jpeg):
+        calls.append(jpeg)
+        if jpeg:
+            state["has"] = True
+        return [{"poly": [[0, 0], [1, 0], [1, 1]], "area": 0.2, "score": 0.9}] if state["has"] else "need"
+
+    monkeypatch.setattr(hub.gpu, "segment", seg)
+    app_module._seg_sent.clear()
+    assert c.post("/api/cameras/g/segment", json={"x": 0.5, "y": 0.5}).json()["shapes"][0]["area"] == 0.2
+    c.post("/api/cameras/g/segment", json={"x": 0.4, "y": 0.4})
+    assert calls == [b"jpeg", None]  # 第二次不用再送畫面
+    state["has"] = False  # Jetson 重開了：要求重送
+    c.post("/api/cameras/g/segment", json={"x": 0.4, "y": 0.4})
+    assert calls[-2:] == [None, b"jpeg"]

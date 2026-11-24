@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import calendar
 import contextvars
+import io
 import json
 import logging
 import os
@@ -27,7 +28,7 @@ from .sensing import INTERVAL as SENSE_INTERVAL, SAVE_EVERY as SENSE_SAVE_EVERY,
 from .notify import Notifier
 from .usage import Usage
 from .recorder import Recorder
-from .gpu import GpuVision
+from .gpu import GPU_PERSON_ON, GpuVision
 from .daysoff import DaysOff
 from .alerts import Alerts, quake_age_h
 from .backup import Backup
@@ -1440,10 +1441,41 @@ class Hub:
         if cam.get("pet_notify"):
             self.notifier.send(f"{cam.get('name')}看到{word}", f"{datetime.now().strftime('%H:%M')} 看到{word}")
 
+    def analyze_pose(self, jpeg: bytes, objects: list[dict[str, Any]] | None = None, detect: bool = False) -> list[dict[str, Any]]:
+        """姿勢：先問 Jetson，問不到用樹莓派自己的模型。
+        姿勢模型沒抓到人、但物件辨識有框到人時，用框的底部中間當腳的位置（從上往下拍時姿勢模型常常抓不到）。"""
+        people = self.gpu.pose(jpeg)
+        if people is None:
+            people = self.pose.analyze(jpeg)
+        if people or not self.gpu.url:
+            return people
+        if objects is None and detect:
+            got = self.gpu.detect(jpeg)
+            objects = got["objects"] if got else None
+        boxes = [o for o in objects or [] if o.get("name") == "person" and float(o.get("score") or 0) >= GPU_PERSON_ON]
+        if not boxes:
+            return people
+        try:
+            from PIL import Image
+
+            W, H = Image.open(io.BytesIO(jpeg)).size
+        except Exception:  # noqa: BLE001
+            W, H = 1920, 1080
+        for o in boxes:
+            x, y, w, h = o["box"]
+            people.append({"score": float(o["score"]), "torso": None, "aspect": (h * H) / max(1e-6, w * W),
+                           "box": (int(x * W), int(y * H), int(w * W), int(h * H)), "foot": (min(1.0, x + w / 2), min(1.0, y + h)), "from": "box"})
+        return people
+
+    def analyze_faces(self, jpeg: bytes) -> list[dict[str, Any]]:
+        """找臉＋特徵：先問 Jetson（同一組模型，特徵跟登記的一樣），問不到用樹莓派自己的模型。"""
+        found = self.gpu.faces(jpeg)
+        return found if found is not None else self.face_engine.analyze(jpeg)
+
     async def _fall_check(self, cam: dict[str, Any], jpeg: bytes, now: float, people: list[dict[str, Any]] | None = None) -> None:
         if people is None:
             try:
-                people = await asyncio.to_thread(self.pose.analyze, jpeg)
+                people = await asyncio.to_thread(self.analyze_pose, jpeg)
             except Exception as err:  # noqa: BLE001
                 if self.face_error != f"姿勢：{err}":
                     _LOGGER.warning("姿勢判斷失敗：%s", err)
@@ -1527,7 +1559,7 @@ class Hub:
                     jpeg = await asyncio.to_thread(camera.snapshot, c)
                     if c.get("ignore"):
                         jpeg = await asyncio.to_thread(camera.mask, jpeg, c["ignore"])
-                    people = await asyncio.to_thread(self.pose.analyze, jpeg)
+                    people = await asyncio.to_thread(self.analyze_pose, jpeg, None, True)
                 except Exception:  # noqa: BLE001
                     break
                 now = time.time()
@@ -1641,7 +1673,7 @@ class Hub:
             people = None
             if person and (c.get("fall") or areas or c.get("lines")):
                 try:
-                    people = await asyncio.to_thread(self.pose.analyze, jpeg)
+                    people = await asyncio.to_thread(self.analyze_pose, jpeg, st.get("objects"))
                 except Exception as err:  # noqa: BLE001
                     if self.face_error != f"姿勢：{err}":
                         _LOGGER.warning("姿勢判斷失敗：%s", err)
@@ -1653,7 +1685,7 @@ class Hub:
             if not (enrolling or (person and c.get("faces", True))):
                 continue
             try:
-                found = await asyncio.to_thread(self.face_engine.analyze, jpeg)
+                found = await asyncio.to_thread(self.analyze_faces, jpeg)
                 self.face_error = None
             except Exception as err:  # noqa: BLE001
                 if self.face_error != str(err):
