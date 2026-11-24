@@ -499,3 +499,68 @@ def test_still_check_alerts(app_module, monkeypatch):
     hub.cameras.state["r"]["tracks"] = [{"id": 1, "box": [0.3, 0.5, 0.1, 0.3]}]  # 動了
     hub._still_check(cam, 1000.0 + 91 * 60)
     assert hub.cameras.state["r"]["still_info"]["gap"] == 0
+
+
+def _stream_mod():
+    spec = importlib.util.spec_from_file_location("stream_svc", Path(__file__).parent.parent / "vision" / "stream.py")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+def _kp(lw, rw, le=None, re=None):
+    """站著的人：鼻子 0.2、肩 0.3、髖 0.6；左肩在畫面右邊（面對攝影機）。lw/rw/le/re = (y, x)。"""
+    k = [[0.0, 0.0, 0.0] for _ in range(17)]
+    k[0] = [0.2, 0.5, 0.9]
+    k[5], k[6] = [0.3, 0.56, 0.9], [0.3, 0.44, 0.9]
+    k[11], k[12] = [0.6, 0.55, 0.9], [0.6, 0.45, 0.9]
+    k[7] = [*(le or (0.4, 0.58)), 0.9]
+    k[8] = [*(re or (0.4, 0.42)), 0.9]
+    k[9], k[10] = [*lw, 0.9], [*rw, 0.9]
+    return k
+
+
+def test_gesture_classify():
+    m = _stream_mod()
+    assert m.gesture(_kp((0.5, 0.58), (0.5, 0.42))) is None  # 手放下
+    assert m.gesture(_kp((0.1, 0.6), (0.5, 0.42), le=(0.2, 0.6))) == "one_up"
+    assert m.gesture(_kp((0.1, 0.6), (0.1, 0.4), le=(0.2, 0.6), re=(0.2, 0.4))) == "both_up"
+    assert m.gesture(_kp((0.4, 0.46), (0.4, 0.54))) == "cross"  # 左手腕跑到右邊
+    assert m.gesture(_kp((0.4, 0.54), (0.4, 0.46))) is None  # 沒交叉
+    k = _kp((0.1, 0.6), (0.5, 0.42))
+    k[9][2] = 0.1
+    assert m.gesture(k) is None  # 手腕看不清楚
+
+
+def test_gesture_hold_and_actions(app_module, monkeypatch):
+    m = _stream_mod()
+    cam = m.Cam.__new__(m.Cam)
+    cam.lock = __import__("threading").Lock()
+    cam.g_cur, cam.g_fired, cam.g_events = (None, 0.0, 0.0), False, m.deque()
+    up = [{"box": [0, 0, 10, 20], "kp": _kp((0.1, 0.6), (0.5, 0.42), le=(0.2, 0.6))}]
+    for i in range(9):  # 每 0.4 秒一次，舉 3.2 秒
+        cam._gesture(up, 100 + i * 0.4)
+    assert [e[1] for e in cam.g_events] == ["one_up"]
+    cam._gesture(up, 104.0)
+    assert len(cam.g_events) == 1  # 放下前不重複
+
+    hub = app_module.hub
+    toggled = []
+
+    async def gp(pid, on):
+        toggled.append((pid, on))
+
+    monkeypatch.setattr(hub, "_gesture_power", gp)
+    monkeypatch.setattr(hub, "_spawn", lambda coro: __import__("asyncio").run(coro))
+    plug = type("P", (), {"id": "lamp", "online": True, "is_on": False})()
+    monkeypatch.setattr(hub, "plugs", {"lamp": plug})
+    monkeypatch.setattr(hub, "name", lambda p: "客廳燈")
+    hub.store.data["settings"]["gestures"] = {"on": True, "cam": "r", "map": {"one_up": {"type": "plug", "id": "lamp"}}}
+    hub._face_cool = {}
+    c = {"id": "r", "name": "IN_HOUSE"}
+    hub.cameras.state["r"] = {"gestures": [[1.0, "one_up"], [2.0, "both_up"]]}
+    hub._gesture_events(c, 1000.0)
+    assert toggled == [("lamp", True)] and "手勢（舉一隻手）：打開客廳燈" in hub.face_log.items[-1]["name"]
+    hub.cameras.state["r"]["gestures"] = [[3.0, "one_up"]]
+    hub._gesture_events(c, 1005.0)
+    assert len(toggled) == 1  # 10 秒內只算一次

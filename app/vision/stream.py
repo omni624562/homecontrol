@@ -22,7 +22,36 @@ PERSON_MIN = 0.55  # 追蹤的人至少要這個分數（YOLOX-m；跟樹莓派�
 MATCH_IOU = 0.25  # 跟上一張的框重疊這麼多算同一個人
 LOST_S = 2.0  # 秒：多久沒看到就當作走了
 SAMPLES_KEEP = 20  # 秒：腳的位置的紀錄留多久
-POSE_EVERY = 0.4  # 秒：開了跌倒偵測、又有人時，多久算一次姿勢（每秒 2.5 次）
+POSE_EVERY = 0.4  # 秒：開了跌倒偵測或手勢、又有人時，多久算一次姿勢（每秒 2.5 次）
+GESTURE_HOLD = 3.0  # 秒：手勢要維持這麼久才算（伸懶腰、拿東西不會誤觸）
+GESTURE_GAP = 0.9  # 秒：中間看不清楚這麼短不算放下
+
+
+def gesture(kp: list[list[float]]) -> str | None:
+    """17 個關節點（y, x, 分數；0～1）→ 手勢：one_up 舉一隻手、both_up 舉雙手、cross 雙手在胸前交叉；都不是 → None。"""
+    def ok(i: int) -> bool:
+        return kp[i][2] >= 0.3
+
+    if not all(ok(i) for i in (5, 6, 9, 10)):
+        return None
+    y = lambda i: kp[i][0]  # noqa: E731
+    x = lambda i: kp[i][1]  # noqa: E731
+    sh = (y(5) + y(6)) / 2
+    sw = max(1e-3, abs(x(5) - x(6)))
+    hip = (y(11) + y(12)) / 2 if ok(11) and ok(12) else sh + 2.5 * sw
+    torso = max(1e-3, hip - sh)
+    head = y(0) if ok(0) else sh - 0.6 * torso
+    up_l = y(9) < head - 0.05 * torso and (not ok(7) or y(7) < sh)
+    up_r = y(10) < head - 0.05 * torso and (not ok(8) or y(8) < sh)
+    if up_l and up_r:
+        return "both_up"
+    if up_l or up_r:
+        low = 10 if up_l else 9
+        return "one_up" if y(low) > sh else None
+    chest = lambda v: sh - 0.1 * torso < v < sh + 0.8 * torso  # noqa: E731
+    if chest(y(9)) and chest(y(10)) and (x(9) - x(10)) * (x(5) - x(6)) < 0 and abs(x(9) - x(10)) < 1.2 * sw:
+        return "cross"
+    return None
 JPEG_Q = 85
 
 
@@ -91,8 +120,12 @@ class Cam:
         self.id, self.url, self.ignore = cid, url, ignore
         self.detect = detect
         self.pose, self.pose_on = pose, pose_on
+        self.gesture_on = False
         self.poses: deque = deque()  # (t, [姿勢])：跌倒偵測用
         self.pose_t = 0.0
+        self.g_cur: tuple[str | None, float, float] = (None, 0.0, 0.0)  # (手勢, 從什麼時候開始, 最後一次看到)
+        self.g_fired = False
+        self.g_events: deque = deque()  # (t, 手勢)：維持夠久的手勢
         self.stop = False
         self.lock = threading.Lock()
         self.frame: np.ndarray | None = None
@@ -147,9 +180,11 @@ class Cam:
         people = [o for o in objs if o["name"] == "person" and o["score"] >= PERSON_MIN]
         tracks = self.tracker.update(people, now)
         pose = None
-        if self.pose_on and self.pose and tracks and now - self.pose_t >= POSE_EVERY:
+        if (self.pose_on or self.gesture_on) and self.pose and tracks and now - self.pose_t >= POSE_EVERY:
             self.pose_t = now
             pose = self.pose(img)
+            if self.gesture_on and pose is not None:
+                self._gesture(pose, now)
         with self.lock:
             if pose is not None:
                 self.poses.append((round(now, 2), pose))
@@ -167,7 +202,28 @@ class Cam:
         with self.lock:
             return {"t": round(self.frame_t, 2), "ok": self.error is None and time.time() - self.frame_t < 5, "error": self.error, "fps": self.fps,
                     "person": round(self.person, 3), "objects": self.objects, "tracks": self.tracks,
-                    "samples": [s for s in self.samples if s[0] > since], "poses": [p for p in self.poses if p[0] > since]}
+                    "samples": [s for s in self.samples if s[0] > since], "poses": [p for p in self.poses if p[0] > since],
+                    "gestures": [g for g in self.g_events if g[0] > since],
+                    "gesture_now": {"name": self.g_cur[0], "held": round(self.g_cur[2] - self.g_cur[1], 1)} if self.g_cur[0] and time.time() - self.g_cur[2] < 2 else None}
+
+    def _gesture(self, people: list[dict[str, Any]], now: float) -> None:
+        """最大的那個人的手勢；同一個手勢維持 GESTURE_HOLD 秒算一次（放下前不重複）。"""
+        big = max((p for p in people if p.get("kp")), key=lambda p: p["box"][2] * p["box"][3], default=None)
+        g = gesture(big["kp"]) if big else None
+        name, since, last = self.g_cur
+        if g and g == name:
+            self.g_cur = (g, since, now)
+        elif g:
+            self.g_cur, self.g_fired = (g, now, now), False
+        elif name and now - last > GESTURE_GAP:
+            self.g_cur, self.g_fired = (None, 0.0, 0.0), False
+        name, since, last = self.g_cur
+        if name and not self.g_fired and last - since >= GESTURE_HOLD:
+            self.g_fired = True
+            with self.lock:
+                self.g_events.append((round(now, 2), name))
+                while self.g_events and now - self.g_events[0][0] > SAMPLES_KEEP:
+                    self.g_events.popleft()
 
     def jpeg(self) -> bytes | None:
         with self.lock:
@@ -202,9 +258,11 @@ class Streams:
                 else:
                     self.cams[cid].ignore = c.get("ignore") or []
                     self.cams[cid].pose_on = bool(c.get("pose"))
+                    self.cams[cid].gesture_on = bool(c.get("gesture"))
             for cid, c in want.items():
                 if cid not in self.cams:
                     self.cams[cid] = Cam(cid, c["url"], c.get("ignore") or [], self.detect, self.pose, bool(c.get("pose")))
+                    self.cams[cid].gesture_on = bool(c.get("gesture"))
             return sorted(self.cams)
 
     def get(self, cid: str) -> Cam | None:

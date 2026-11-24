@@ -56,6 +56,7 @@ CAMERA_SCORE = 1.5  # 攝影機看到人的房間，動靜分數至少這麼多�
 PROBE_EVERY = 60  # 路由器多久沒看到家人的手機，就由樹莓派直接問（ARP）
 PROBE_MAX_AGE = 24 * 3600  # 超過一天沒看到的就不問了
 PRESENCE_LOG_MAX = 50
+GESTURES = {"one_up": "舉一隻手", "both_up": "舉雙手", "cross": "雙手交叉"}
 ITEM_ONE = {"包裹", "垃圾袋", "推車"}  # 「多了一個包裹」
 ITEM_TAKEN = {"包裹", "袋子", "外送餐點", "垃圾袋"}  # 被拿走時可以另外決定要不要通知（act.taken）
 
@@ -1443,6 +1444,8 @@ class Hub:
                 self._empty_off(c, now)
             if (c.get("still") or {}).get("on"):
                 self._still_check(c, now)
+            if self.cameras.state.get(c["id"], {}).get("gestures"):
+                self._gesture_events(c, now)
         if getattr(self, "_dirty_cams", False):
             self._dirty_cams = False
             self.cameras.save()
@@ -2087,6 +2090,38 @@ class Hub:
             self.face_log.add({"camera": name, "kind": "zone", "name": f"{dur}沒看到人走動", "sim": None})
             self.notifier.send(f"⚠️ {name}：{dur}沒看到人走動",
                                f"{local.strftime('%H:%M')}・家裡有人（手機在家）" + (f"，平常最久大約 {usual} 分鐘" if usual else "") + "。打開 App 看現在的畫面", "urgent")
+
+    def _gesture_events(self, cam: dict[str, Any], now: float) -> None:
+        """Jetson 看到維持夠久的手勢：照設定開關插座、執行情境或全部關掉（同一個手勢 10 秒內只算一次）。"""
+        g = self.store.data["settings"].get("gestures") or {}
+        events = self.cameras.state[cam["id"]].pop("gestures", None) or []
+        if not g.get("on") or g.get("cam") != cam["id"]:
+            return
+        for _, name in events:
+            act = (g.get("map") or {}).get(name)
+            if not act or not self._face_once(f"gesture:{name}", 10, now):
+                continue
+            label = GESTURES.get(name, name)
+            if act.get("type") == "plug" and act.get("id") in self.plugs:
+                plug = self.plugs[act["id"]]
+                text = f"{'關掉' if plug.is_on else '打開'}{self.name(plug)}"
+                self._spawn(self._gesture_power(plug.id, not plug.is_on))
+            elif act.get("type") == "scene" and self.store.scene(act.get("id") or ""):
+                text = f"執行「{self.store.scene(act['id'])['name']}」"
+                self._spawn(self.run_scene(act["id"], remember="undo"))
+            elif act.get("type") == "off":
+                text = "全部關掉"
+                self._spawn(self.turn_off(remember="undo"))
+            else:
+                continue
+            self.face_log.add({"camera": cam.get("name"), "kind": "zone", "name": f"手勢（{label}）：{text}", "sim": None})
+
+    async def _gesture_power(self, plug_id: str, on: bool) -> None:
+        try:
+            SOURCE.set("gesture")
+            await self.set_power(plug_id, on)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("手勢沒有%s %s：%s", "打開" if on else "關掉", plug_id, err)
 
     def empty_cancel(self, cid: str) -> None:
         e = self.cameras.state.setdefault(cid, {}).setdefault("empty", {"done": False, "pending": None})

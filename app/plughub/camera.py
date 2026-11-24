@@ -349,7 +349,8 @@ class Cameras:
                     jpeg = mask(jpeg, cam["ignore"])
                 self.frames[cam["id"]] = jpeg
                 sc = live["scores"]
-                st.update(engine="stream", objects=live["objects"], tracks=live["tracks"], samples=live["samples"], poses=live.get("poses") or [])
+                st.update(engine="stream", objects=live["objects"], tracks=live["tracks"], samples=live["samples"], poses=live.get("poses") or [],
+                          gestures=live.get("gestures") or [], gesture_now=live.get("gesture_now"))
             else:
                 jpeg = snapshot(cam)
                 if cam.get("ignore"):
