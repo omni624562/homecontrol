@@ -745,7 +745,50 @@ function RecordingRows() {
 
 // 手勢遙控：對著攝影機舉手 3 秒，開關插座、執行情境或全部關掉
 type GAct = { type: "plug" | "scene" | "off"; id: string | null } | null;
-interface GestureCfg { on: boolean; cam: string | null; map: Record<string, GAct>; now?: { name: string; held: number } | null; live?: boolean }
+interface GestureCfg { on: boolean; cam: string | null; map: Record<string, GAct>; now?: { name: string; held: number } | null; live?: boolean; people?: { kp: number[][] }[] }
+// COCO 17 點的骨架連線
+const BONES: [number, number][] = [[5, 6], [5, 7], [7, 9], [6, 8], [8, 10], [5, 11], [6, 12], [11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [0, 5], [0, 6]];
+
+// 手勢「試試看」：攝影機現在的畫面＋ Jetson 看到的骨架；手腕舉過頭變綠色
+function GestureLive({ cam, g }: { cam: string; g: GestureCfg }) {
+  const [t, setT] = useState(Date.now());
+  useEffect(() => { const id = setInterval(() => setT(Date.now()), 1000); return () => clearInterval(id); }, []);
+  const p = g.people?.[0];
+  const ok = (i: number) => !!p && p.kp[i][2] >= 0.3;
+  const head = p ? (ok(0) ? p.kp[0][0] : (p.kp[5][0] + p.kp[6][0]) / 2 - 0.05) : 0;
+  const up = (w: number) => ok(w) && p!.kp[w][0] < head;
+  const sh = p && ok(5) && ok(6) ? (p.kp[5][0] + p.kp[6][0]) / 2 : null;
+  const hip = p && ok(11) && ok(12) ? (p.kp[11][0] + p.kp[12][0]) / 2 : null;
+  const lying = sh != null && hip != null && hip - sh < 0.05;
+  return (
+    <div className="space-y-2">
+      <div className="relative aspect-video w-full max-w-md overflow-hidden rounded-lg bg-muted">
+        <img src={`/api/cameras/${cam}/snapshot.jpg?t=${t}`} alt="攝影機現在的畫面" className="size-full object-cover" />
+        {p && (
+          <svg viewBox="0 0 1 1" preserveAspectRatio="none" className="absolute inset-0 size-full" aria-hidden>
+            {BONES.filter(([a, b]) => ok(a) && ok(b)).map(([a, b]) => (
+              <line key={`${a}-${b}`} x1={p.kp[a][1]} y1={p.kp[a][0]} x2={p.kp[b][1]} y2={p.kp[b][0]} stroke="#38bdf8" strokeWidth={3} vectorEffect="non-scaling-stroke" />
+            ))}
+            {[9, 10].filter(ok).map((i) => <ellipse key={i} cx={p.kp[i][1]} cy={p.kp[i][0]} rx={0.012} ry={0.021} fill={up(i) ? "#22c55e" : "#f59e0b"} stroke="#fff" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />)}
+          </svg>
+        )}
+        {g.now && (
+          <div className="absolute inset-x-2 bottom-2 rounded-md bg-black/60 px-2 py-1 text-xs text-white">
+            {GESTURES.find(([k]) => k === g.now!.name)?.[2].replace(" 3 秒", "")}
+            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-white/30"><div className="h-full bg-emerald-400" style={{ width: `${Math.min(100, (g.now.held / 3) * 100)}%` }} /></div>
+          </div>
+        )}
+      </div>
+      <p className="text-sm" aria-live="polite">
+        {!g.live ? "這台還沒在 Jetson 上即時看，等一下再試"
+          : !p ? "沒看到人：站到攝影機看得到的地方（上半身要入鏡）"
+          : lying ? "看起來是躺著或斜靠：手勢要坐正或站著比較認得出來"
+          : `看到人・左手 ${up(9) ? "舉起 ✓" : "放下"}・右手 ${up(10) ? "舉起 ✓" : "放下"}${g.now ? (g.now.held >= 3 ? "・算一次了" : `・再維持 ${Math.max(0, 3 - g.now.held).toFixed(1)} 秒`) : ""}`}
+      </p>
+      <p className="text-xs text-muted-foreground">藍線是 Jetson 看到的骨架（大約慢半秒）；手腕綠色＝舉過頭，橘色＝沒有。</p>
+    </div>
+  );
+}
 const GESTURES: [string, string, string][] = [["one_up", "🙋", "舉一隻手 3 秒"], ["both_up", "🙌", "舉雙手 3 秒"], ["cross", "🙅", "雙手在胸前交叉 3 秒"]];
 function GestureRows() {
   const { state } = useHub();
@@ -805,13 +848,10 @@ function GestureRows() {
             </div>
           ))}
           <div className="flex flex-wrap items-center gap-3">
-            <Button variant="outline" size="sm" className="bg-background" disabled={!!trying || !g.cam} onClick={() => setTrying(Date.now() + 30000)}>試試看：做一次手勢</Button>
-            {trying ? (
-              <span className="text-sm" aria-live="polite">
-                {!g.live ? "這台還沒在 Jetson 上即時看，等一下再試" : g.now ? `看到「${GESTURES.find(([k]) => k === g.now!.name)?.[2].replace(" 3 秒", "")}」${g.now.held >= 3 ? "，算一次了" : `，再維持 ${Math.max(0, 3 - g.now.held).toFixed(1)} 秒`}` : "還沒看到手勢，站在攝影機看得到的地方"}
-              </span>
-            ) : null}
+            <Button variant="outline" size="sm" className="bg-background" disabled={!!trying || !g.cam} onClick={() => setTrying(Date.now() + 60000)}>試試看：看攝影機看到什麼</Button>
+            {trying ? <Button variant="ghost" size="sm" onClick={() => setTrying(0)}>停止</Button> : null}
           </div>
+          {trying && g.cam ? <GestureLive cam={g.cam} g={g} /> : null}
           <p className="text-xs text-muted-foreground">做到了會記在攝影機的紀錄裡；開關插座的話，電器本身會有反應。「試試看」會跟著做，也就是真的會開關，想先練習就先選「不做事」。</p>
         </div>
       )}
