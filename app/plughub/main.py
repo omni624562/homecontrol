@@ -21,7 +21,7 @@ GET /api/sensing/replay     動靜回放：最近 24 小時每 5 分鐘一格
 GET /api/sensing/week       一週動靜：每間房「星期幾 × 幾點」有動靜的比例
 GET /api/net/events         斷線紀錄：外網、基地台卡住、Wi-Fi、插座、停電恢復
 GET /api/net/plug-health    插座連線健檢：斷幾次、訊號、建議
-GET/POST /api/cameras       網路攝影機（認人）；PUT/DELETE /api/cameras/{id}（room、enabled、alert、帳密）；GET …/{id}/snapshot.jpg 現在的畫面；POST …/{id}/segment 點一下就框；GET …/{id}/clip.mp4?t= 錄影片段；GET/PUT /api/recorder 錄影機
+GET/POST /api/cameras       網路攝影機（認人）；PUT/DELETE /api/cameras/{id}（room、enabled、alert、帳密）；GET …/{id}/snapshot.jpg 現在的畫面；POST …/{id}/segment 點一下就框；GET …/{id}/clip.mp4?t= 錄影片段；GET/PUT /api/recorder 錄影機；GET/PUT /api/vision GPU 辨識
 GET /api/faces              認臉：認得的人、動作、登記（POST/DELETE /api/faces/enroll）、紀錄；PUT /api/faces/actions、PUT/DELETE /api/faces/{id}
 PUT /api/cameras/access     誰可以看攝影機；POST …/access/send-code 驗證碼送到手機、POST …/access/claim 開通這台
 GET /api/report/monthly     每月報告預覽（上個月）
@@ -1157,6 +1157,22 @@ async def cameras_segment(cam_id: str, request: Request, body: dict = Body(...))
 CLIP_DIR = Path("/tmp/plughub-clips")
 
 
+def _lan_url(raw: Any) -> str:
+    """家裡網路的 http://IP:port（空字串 = 不用）；其他的擋掉。"""
+    import ipaddress
+
+    url = str(raw or "").strip().rstrip("/")
+    if url:
+        m = re.fullmatch(r"http://(\d{1,3}(?:\.\d{1,3}){3}):(\d{2,5})", url)
+        try:
+            ok = bool(m) and ipaddress.ip_address(m.group(1)).is_private
+        except ValueError:
+            ok = False
+        if not ok:
+            raise HTTPException(400, "要是家裡網路的位址，例如 http://10.0.2.99:8200")
+    return url
+
+
 @app.get("/api/recorder")
 async def recorder_get(request: Request) -> dict[str, Any]:
     """錄影機（另一台主機全天錄影）的狀態。"""
@@ -1168,17 +1184,30 @@ async def recorder_get(request: Request) -> dict[str, Any]:
 async def recorder_put(request: Request, body: dict = Body(...)) -> dict[str, Any]:
     """{"url": "http://10.0.2.99:8200"}（空字串＝不用錄影機）。只能是家裡網路的位址。"""
     _need_view(request)
-    url = str(body.get("url") or "").strip().rstrip("/")
-    if url:
-        m = re.fullmatch(r"http://(\d{1,3}(?:\.\d{1,3}){3}):(\d{2,5})", url)
-        import ipaddress
-
-        if not m or not ipaddress.ip_address(m.group(1)).is_private:
-            raise HTTPException(400, "要是家裡網路的位址，例如 http://10.0.2.99:8200")
+    url = _lan_url(body.get("url"))
     store.data["settings"]["recorder_url"] = url
     store.save()
     await asyncio.to_thread(hub.recorder.refresh, hub.cameras.list)
     return hub.recorder.public()
+
+
+@app.get("/api/vision")
+async def vision_get(request: Request) -> dict[str, Any]:
+    """GPU 辨識（另一台主機）的狀態；每台攝影機現在用哪個在認（gpu / cpu）。"""
+    _need_view(request)
+    engines = {cid: st.get("engine") for cid, st in hub.cameras.state.items()}
+    return {**hub.gpu.public(), "engines": engines}
+
+
+@app.put("/api/vision")
+async def vision_put(request: Request, body: dict = Body(...)) -> dict[str, Any]:
+    """{"url": "http://10.0.2.99:8210"}（空字串＝只用樹莓派自己的模型）。只能是家裡網路的位址。"""
+    _need_view(request)
+    url = _lan_url(body.get("url"))
+    store.data["settings"]["vision_url"] = url
+    store.save()
+    hub.gpu.error, hub.gpu._fail_at = None, 0.0
+    return {**hub.gpu.public(), "engines": {}}
 
 
 @app.get("/api/cameras/{cam_id}/clip.mp4")

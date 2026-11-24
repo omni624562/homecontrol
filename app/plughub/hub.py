@@ -27,6 +27,7 @@ from .sensing import INTERVAL as SENSE_INTERVAL, SAVE_EVERY as SENSE_SAVE_EVERY,
 from .notify import Notifier
 from .usage import Usage
 from .recorder import Recorder
+from .gpu import GpuVision
 from .daysoff import DaysOff
 from .alerts import Alerts, quake_age_h
 from .backup import Backup
@@ -146,6 +147,7 @@ class Hub:
         self.notifier = notifier
         self.usage = Usage(store.dir)
         self.recorder = Recorder(store.dir / "secrets.json", lambda: self.store.data["settings"])  # 另一台主機全天錄影
+        self.gpu = GpuVision(lambda: self.store.data["settings"], self.recorder.token)  # 另一台主機的 GPU 辨識
         notifier.on_send = lambda title: self.usage.hit("notify:" + _notify_key(title))
         self.backup = Backup(store.dir, lambda title, msg: notifier.send(title, msg, "high"))
         self.watchdog = Watchdog(store.dir, notifier.send_sync)
@@ -180,6 +182,7 @@ class Hub:
             pass
         self.sensing = Sensing()
         self.cameras = camera.Cameras(self.store.dir)
+        self.cameras.remote = self.gpu.detect
         self._cam_alert: dict[str, float] = {}  # 攝影機 ID → 上次「沒人在家卻看到人」通知的時間
         self._cam_pending: dict[str, float] = {}  # 攝影機 ID → 沒人在家時看到人的時間（等家人的手機連上 Wi-Fi）
         # 認臉

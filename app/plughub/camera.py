@@ -20,7 +20,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -256,6 +256,7 @@ class Cameras:
         self.state: dict[str, dict[str, Any]] = {}  # 攝影機 ID → 認人的狀態（不存檔）
         self.frames: dict[str, bytes] = {}  # 這一輪拿到的快照（給認臉用，用完就丟，不存檔）
         self.detector = Detector()
+        self.remote: Callable[[bytes], dict[str, Any] | None] | None = None  # GPU 辨識（另一台主機）；問不到就用 detector
         self.load()
 
     def load(self) -> None:
@@ -344,7 +345,13 @@ class Cameras:
             if cam.get("ignore"):
                 jpeg = mask(jpeg, cam["ignore"])
             self.frames[cam["id"]] = jpeg
-            sc = self.detector.scores(jpeg)
+            got = self.remote(jpeg) if self.remote else None
+            if got:
+                sc = got["scores"]
+                st.update(engine="gpu", objects=got["objects"])
+            else:
+                sc = self.detector.scores(jpeg)
+                st.update(engine="cpu", objects=None)
             score = sc["person"]
             if cam.get("pets", True):
                 pet_track(st, sc, now)

@@ -1,0 +1,15 @@
+# 在 Jetson 上：VISION_TOKEN=... docker compose up -d --build（deploy.sh 會帶）
+services:
+  vision:
+    build:
+      context: .
+      network: host  # 這台的 Docker bridge 解析不到網址
+    container_name: vision
+    network_mode: host
+    runtime: nvidia
+    restart: unless-stopped
+    environment:
+      - VISION_TOKEN=${VISION_TOKEN:?要給 VISION_TOKEN}
+      - VISION_MODEL=${VISION_MODEL:-yolox_m}
+    volumes:
+      - ./models:/models
