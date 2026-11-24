@@ -188,8 +188,8 @@ class GpuVision:
         """聽到警報、玻璃破掉…那一刻前後各 10 秒的聲音（WAV）。"""
         return self._get(f"/cams/{urllib.parse.quote(cid)}/sound/{int(t)}.wav", timeout=10)
 
-    def appearance(self, cid: str) -> Any:
-        """這台攝影機最新畫面裡最大的那個人的外觀特徵（numpy）；沒有人、連不上 → None。"""
+    def appearance(self, cid: str) -> dict[str, Any] | None:
+        """這台攝影機最新畫面裡最大的那個人：{"emb": 外觀特徵（numpy）, "box": [x, y, w, h]（0～1）}；沒有人、連不上 → None。"""
         import numpy as np
 
         res = self._post(f"/appearance?cam={urllib.parse.quote(cid)}", b"", soft=(404,))
@@ -197,7 +197,7 @@ class GpuVision:
         if not people:
             return None
         big = max(people, key=lambda p: p["box"][2] * p["box"][3])
-        return np.asarray(big["emb"], np.float32)
+        return {"emb": np.asarray(big["emb"], np.float32), "box": big["box"]}
 
     # ---- 錄影分析（Jetson 的 index.py）----
 

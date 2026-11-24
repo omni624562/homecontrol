@@ -737,3 +737,44 @@ def test_activity_api(app_module, monkeypatch):
     r = c.get("/api/activity", params={"range": "today"}).json()
     assert r["rooms"]["lr"]["seconds"] == 0 and r["cams"]["r"]["grid"][9 * 32 + 16] == 1
     assert c.get("/api/activity", params={"range": "compare"}).json()["range"] == "compare"
+
+
+def test_visitors_group_and_name(tmp_path):
+    import numpy as np
+
+    from plughub.visitors import Visitors
+
+    rng = np.random.default_rng(1)
+    a, b = rng.normal(size=768), rng.normal(size=768)
+    near = lambda v: v + rng.normal(size=768) * 0.15  # noqa: E731
+    vs = Visitors(tmp_path)
+    t0 = 1795488000.0
+    for i in range(3):
+        vs.add("g", t0 + i * 86400, near(a), b"jpg")
+    vs.add("g", t0 + 3600, b, None)
+    gs = vs.groups()
+    assert len(gs) == 1 and gs[0]["count"] == 3 and len(gs[0]["thumbs"]) == 3  # b 只來一次：不列
+    n = vs.name_group(gs[0]["id"], "清潔阿姨")
+    assert n["name"] == "清潔阿姨" and not vs.groups() and len(vs.visits) == 1
+    assert not list(tmp_path.glob("faces_thumbs/visitor_*.jpg"))  # 分好的小圖刪掉
+    assert vs.match_named(near(a))["name"] == "清潔阿姨" and vs.match_named(b) is None
+    vs.prune(t0 + 9 * 86400)
+    assert not vs.visits  # 7 天後刪
+    assert Visitors(tmp_path).named[0]["name"] == "清潔阿姨"
+
+
+def test_visit_end_uses_named_regular(app_module, monkeypatch):
+    import numpy as np
+
+    hub = app_module.hub
+    sent = []
+    monkeypatch.setattr(hub.notifier, "send", lambda *a, **k: sent.append(a))
+    hub.cameras.list = [{"id": "g", "name": "大門口", "host": "x", "enabled": True, "role": "entry"}]
+    hub._presence = {}
+    hub.visitors.visits, hub.visitors.named = [], [{"id": "n1", "name": "清潔阿姨", "emb": [1.0] * 768, "n": 3}]
+    e = np.ones(768, np.float32)
+    hub._visit_end("g", {"start": 1795488000.0, "known": set(), "maybe": set(), "app": [e, e]}, 1795488030.0)
+    assert hub.face_log.items[-1]["name"] == "清潔阿姨" and hub.face_log.items[-1]["kind"] == "guest" and not hub.visitors.visits
+    hub.visitors.named = []
+    hub._visit_end("g", {"start": 1795488100.0, "known": set(), "maybe": set(), "app": [e, e]}, 1795488130.0)
+    assert len(hub.visitors.visits) == 1  # 沒取名字：記下來等分群

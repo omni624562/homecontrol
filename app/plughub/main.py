@@ -1271,6 +1271,46 @@ async def activity_get(request: Request, range: str = "today") -> dict[str, Any]
     return {"range": rng, "cams": cams, "rooms": rooms}
 
 
+@app.get("/api/visitors")
+async def visitors_get(request: Request) -> dict[str, Any]:
+    """常來的人：自動分好的群（7 天內來 3 次以上、還沒取名字）和取了名字的。"""
+    _need_view(request)
+    v = hub.visitors
+    return {"groups": [{k: g[k] for k in ("id", "count", "first", "last", "weekdays", "hours", "thumbs")} for g in v.groups()],
+            "named": [{"id": n["id"], "name": n["name"], "n": n["n"]} for n in v.named]}
+
+
+@app.put("/api/visitors/{gid}")
+async def visitors_name(gid: str, request: Request, body: dict = Body(...)) -> dict[str, Any]:
+    """幫一群取名字：{"name": "清潔阿姨"} → 之後再來就是常來的人。"""
+    _need_view(request)
+    name = str(body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "要給名字")
+    if hub.visitors.name_group(gid, name) is None:
+        raise HTTPException(404, "找不到這一群（可能已經過 7 天）")
+    return await visitors_get(request)
+
+
+@app.delete("/api/visitors/named/{nid}")
+async def visitors_forget(nid: str, request: Request) -> dict[str, Any]:
+    _need_view(request)
+    if not hub.visitors.forget(nid):
+        raise HTTPException(404, "找不到")
+    return await visitors_get(request)
+
+
+@app.get("/api/visitors/thumb/{name}")
+async def visitors_thumb(name: str, request: Request) -> Response:
+    _need_view(request)
+    if not re.fullmatch(r"visitor_[0-9a-f]{10}\.jpg", name):
+        raise HTTPException(404, "沒有這張")
+    p = hub.visitors.thumbs / name
+    if not p.exists():
+        raise HTTPException(404, "沒有這張（可能已經過 7 天）")
+    return Response(p.read_bytes(), media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
+
+
 @app.get("/api/claude-vision")
 async def claude_vision_get(request: Request) -> dict[str, Any]:
     """Claude 看影像的設定和這個月看了幾次。"""

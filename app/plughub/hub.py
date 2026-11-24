@@ -30,6 +30,7 @@ from .usage import Usage
 from .recorder import Recorder
 from .gpu import GPU_PERSON_ON, GpuVision
 from .activity import Activity
+from .visitors import Visitors
 from .daysoff import DaysOff
 from .alerts import Alerts, quake_age_h
 from .backup import Backup
@@ -212,6 +213,7 @@ class Hub:
         self.face_error: str | None = None
         self._visits: dict[str, dict[str, Any]] = {}  # 攝影機 ID → 這次「有人」期間認到的臉
         self.repeats = reid.Repeats()  # 同一個陌生人今天又來了
+        self.visitors = Visitors(self.store.dir)  # 常來的人（自動分群、取名字）
         self._face_cool: dict[str, float] = {}  # 「誰:做什麼」→ 上次做的時間（同一件事不要一直做）
         self._face_arrived_at = 0.0  # 上次認臉認出家人回家的時間（Wi-Fi 的「回家情境」就不用再跑一次）
         self.enroll: dict[str, Any] | None = None  # 正在登記的臉：{"pid","name","kind","cam","until","cands"}
@@ -1835,10 +1837,12 @@ class Hub:
         if len(app) >= 6 or now - v.get("app_t", 0) < 2:
             return
         v["app_t"] = now
-        emb = await asyncio.to_thread(self.gpu.appearance, cam["id"])
-        if emb is not None:
-            app.append(emb)
-            v["app_jpeg"] = jpeg
+        got = await asyncio.to_thread(self.gpu.appearance, cam["id"])
+        if got is not None:
+            app.append(got["emb"])
+            big = max(got["box"][2] * got["box"][3], 0)
+            if big >= v.get("app_big", 0):  # 留人最大的那一張（全身小圖用）
+                v.update(app_jpeg=jpeg, app_box=got["box"], app_big=big)
 
     def _visit_end(self, cid: str, v: dict[str, Any], now: float) -> None:
         if len(v.get("app") or []) < 2:
@@ -1851,15 +1855,44 @@ class Hub:
             return
         if v["known"]:  # 認出訪客
             return
+        name = cam.get("name") or cid
+        regular = self.visitors.match_named(emb)
+        if regular is not None:  # 取了名字的常來的人：記名字，不當陌生人
+            self.face_log.add({"camera": name, "kind": "guest", "name": regular["name"], "sim": None, "by": "外觀"})
+            return
+        self.visitors.add(cid, v["start"], emb, self._person_thumb(v.get("app_jpeg"), v.get("app_box")))
         hit = self.repeats.add_visit(emb, v["start"])
         if not hit:
             return
-        name = cam.get("name") or cid
         times = "、".join(datetime.fromtimestamp(t).strftime("%H:%M") for t in hit["times"])
         n = len(hit["times"])
         thumb = self._zone_frame(v["app_jpeg"], {}) if v.get("app_jpeg") else None
         self.face_log.add({"camera": name, "kind": "stranger", "name": f"今天第 {n} 次出現（{times}）", "sim": None}, thumb or None)
         self.notifier.send(f"{name}：同一個不認得的人今天第 {n} 次出現", f"{times}；臉沒拍清楚，是用穿著、身形判斷的，可能是家人換了衣服")
+
+    @staticmethod
+    def _person_thumb(jpeg: bytes | None, box: list[float] | None) -> bytes | None:
+        """畫面裡那個人的全身小圖（常來的人分群給家人看）。"""
+        if not jpeg or not box:
+            return None
+        try:
+            import cv2
+            import numpy as np
+
+            img = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
+            h, w = img.shape[:2]
+            x, y, bw, bh = box
+            m = 0.1
+            x0, y0 = int(max(0, x - bw * m) * w), int(max(0, y - bh * m) * h)
+            x1, y1 = int(min(1, x + bw * (1 + m)) * w), int(min(1, y + bh * (1 + m)) * h)
+            crop = img[y0:y1, x0:x1]
+            if crop.size == 0:
+                return None
+            s = 160 / max(crop.shape[:2])
+            ok, buf = cv2.imencode(".jpg", cv2.resize(crop, None, fx=s, fy=s, interpolation=cv2.INTER_AREA), [cv2.IMWRITE_JPEG_QUALITY, 80])
+            return buf.tobytes() if ok else None
+        except Exception:  # noqa: BLE001
+            return None
 
     def _face_known(self, cam: dict[str, Any], v: dict[str, Any], pid: str, sim: float, now: float) -> None:
         g = self.gallery.people.get(pid) or {}

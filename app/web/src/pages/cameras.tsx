@@ -427,6 +427,7 @@ function TasksTab({ cam, faces, rules, plugs, scenes, setFaces, setRules, setCam
       <Task icon={UserRoundX} title="不認得的人通知我" on={cam.alert} onChange={(v) => upd({ alert: v }, v ? "會通知" : "不會通知")}
         hint={entry ? "看清楚的臉、跟登記的人都不像，在門口待 30 秒以上才通知；沒人在家或半夜是緊急通知" : "沒人在家或半夜才通知；家裡有人時只記紀錄（多半是客人）"}>
         <div className="space-y-2">
+          <VisitorGroups />
           <div className="text-sm font-medium">常來的人（不算陌生人）</div>
           {faces?.guests.map((g) => personRow(g, (
             <label className="flex items-center gap-1.5 text-sm"><Switch checked={g.notify !== false} onCheckedChange={(v) => facesCall("PUT", `/api/faces/${g.id}`, { notify: v }, v ? `${g.name} 來了會通知` : `${g.name} 來了不通知`)} aria-label={`${g.name} 來了通知`} />來了通知</label>
@@ -653,5 +654,46 @@ function HeatCard({ cam }: { cam: Cam }) {
       </div>
       <p className="text-xs text-muted-foreground">紅色越深，人越常站在那裡（算的是腳的位置）。家中地圖頁的「活動」圖層可以看每個區域、跟上週比。</p>
     </Card>
+  );
+}
+
+
+// 常來的人（自動分群）：7 天內同一個人（看穿著、身形）來了 3 次以上，給他取名字就不再當陌生人
+interface VGroup { id: string; count: number; first: number; last: number; weekdays: number[]; hours: number[]; thumbs: string[] }
+function VisitorGroups() {
+  const [d, setD] = useState<{ groups: VGroup[]; named: { id: string; name: string; n: number }[] } | null>(null);
+  const [names, setNames] = useState<Record<string, string>>({});
+  useEffect(() => { api<typeof d>("GET", "/api/visitors").then(setD).catch(() => setD(null)); }, []);
+  if (!d || (!d.groups.length && !d.named.length)) return null;
+  const DAYS = "一二三四五六日";
+  const save = async (gid: string) => {
+    const r = await call<typeof d>("PUT", `/api/visitors/${gid}`, { name: names[gid] }, `記住了：「${names[gid]}」之後再來不會當陌生人`);
+    if (r) setD(r);
+  };
+  return (
+    <div className="space-y-2 rounded-lg border bg-background p-3">
+      <div className="text-sm font-medium">常來的人（自動分群）</div>
+      {d.groups.map((g) => {
+        const wd = [...new Set(g.weekdays)].sort().map((i) => DAYS[i]).join("、");
+        return (
+          <div key={g.id} className="flex flex-wrap items-center gap-2">
+            <span className="flex gap-1">{g.thumbs.map((t) => <img key={t} src={`/api/visitors/thumb/${t}`} alt="" className="h-12 w-8 rounded object-cover" loading="lazy" />)}</span>
+            <span className="min-w-0 flex-1 basis-32 text-sm">最近 7 天來了 {g.count} 次<span className="block text-xs text-muted-foreground">多在週{wd}・{g.hours[0]}～{g.hours[1] + 1} 點</span></span>
+            <form className="flex gap-1.5" onSubmit={(e) => { e.preventDefault(); if (names[g.id]?.trim()) save(g.id); }}>
+              <Input id={`vname-${g.id}`} className="h-8 w-28 bg-background" placeholder="例如：清潔阿姨" value={names[g.id] || ""} onChange={(e) => setNames({ ...names, [g.id]: e.target.value })} aria-label="取名字" />
+              <Button type="submit" size="sm" disabled={!names[g.id]?.trim()}>取名字</Button>
+            </form>
+          </div>
+        );
+      })}
+      {d.named.map((n) => (
+        <div key={n.id} className="flex items-center gap-2 text-sm">
+          <span className="flex-1">{n.name}<span className="ml-2 text-xs text-muted-foreground">看穿著、身形認</span></span>
+          <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive" aria-label={`忘記 ${n.name}`}
+            onClick={async () => { const r = await call<typeof d>("DELETE", `/api/visitors/named/${n.id}`, undefined, "已忘記"); if (r) setD(r); }}><Trash2 /></Button>
+        </div>
+      ))}
+      <p className="text-xs text-muted-foreground">臉沒拍清楚時用穿著、身形判斷，換了衣服可能認不出來。小圖和特徵只存在家裡、7 天後刪。</p>
+    </div>
   );
 }
