@@ -808,7 +808,7 @@ def test_finger_gestures_hold_and_filter(app_module, monkeypatch):
     still = [{"box": [0, 0, 10, 20], "kp": _kp((0.5, 0.58), (0.5, 0.42))}]  # 手放下：沒有舉手的手勢
     reply = {"h": [{"px": 190, "presence": 0.97, "gesture": "open", "points": []}]}
     cam.hands = lambda img, people: reply["h"]
-    for i in range(6):  # 每 0.4 秒，維持 2 秒
+    for i in range(6):  # 每 0.4 秒，維持 2 秒（要 1 秒就夠）
         cam._gesture(still, 100 + i * 0.4, img=object())
     assert [e[1] for e in cam.g_events] == ["f_open"]
     cam.g_cur, cam.g_fired, cam.g_events = (None, 0.0, 0.0), False, m.deque()
@@ -830,10 +830,26 @@ def test_finger_gestures_hold_and_filter(app_module, monkeypatch):
     monkeypatch.setattr(hub, "name", lambda p: "客廳燈")
     hub.store.data["settings"]["gestures"] = {"on": True, "cam": "r", "map": {"f_open": {"type": "plug_on", "id": "lamp"}, "f_fist": {"type": "plug_off", "id": "lamp"}}}
     hub._face_cool = {}
+    hub._gesture_t = 0.0
     hub.cameras.state["r"] = {"gestures": [[1.0, "f_open"], [2.0, "f_fist"]]}
     hub._gesture_events({"id": "r", "name": "IN_HOUSE"}, 1000.0)
     assert toggled == [("lamp", True), ("lamp", False)]  # 張開＝開（就算已經開著）、握拳＝關
     assert "手勢（握拳）：關掉客廳燈" in hub.face_log.items[-1]["name"]
+    hub._face_cool = {}
+    hub.cameras.state["r"] = {"gestures": [[1.0, "f_open"], [2.0, "f_fist"]]}  # 快、慢兩條路都拿到同一筆：不重複
+    hub._gesture_events({"id": "r", "name": "IN_HOUSE"}, 1030.0)
+    assert len(toggled) == 2
+
+    cam_list = [{"id": "r", "name": "IN_HOUSE", "enabled": True}]
+    monkeypatch.setattr(hub.cameras, "list", cam_list)
+    monkeypatch.setattr(type(hub.gpu), "url", property(lambda s: "http://x"))
+    monkeypatch.setattr(hub.gpu, "gestures", lambda cid, since: [[3.0, "f_open"]])
+    hub._face_cool = {}
+    later = []
+    monkeypatch.setattr(hub, "_spawn", later.append)
+    asyncio.run(hub._gesture_tick())  # 快的那條路：直接處理
+    asyncio.run(later[0])
+    assert toggled[-1] == ("lamp", True) and hub._gesture_t == 3.0
 
 
 def test_more_finger_gestures():

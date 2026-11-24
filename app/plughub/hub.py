@@ -61,6 +61,7 @@ PRESENCE_LOG_MAX = 50
 SOUNDS = {"alarm": "聽到煙霧／火災警報聲", "glass": "聽到玻璃破掉的聲音", "scream": "聽到有人大叫、呼救", "dog": "狗一直叫（超過 2 分鐘）"}
 SOUND_DEFAULT = {"alarm": "urgent", "glass": "urgent", "scream": "urgent", "dog": "normal"}
 GESTURES = {"f_open": "張開手掌", "f_fist": "握拳", "f_v": "比 YA", "f_point": "比 1", "f_thumbs": "比讚", "f_three": "比 3", "f_rock": "搖滾", "f_call": "打電話"}  # 舉手的手勢拿掉了（只留手指）
+GESTURE_EVERY = 0.25  # 秒：開了手勢的那台多久問一次 Jetson 有沒有新手勢
 ITEM_ONE = {"包裹", "垃圾袋", "推車"}  # 「多了一個包裹」
 ITEM_TAKEN = {"包裹", "袋子", "外送餐點", "垃圾袋"}  # 被拿走時可以另外決定要不要通知（act.taken）
 
@@ -225,6 +226,7 @@ class Hub:
         self._sense_path = store.dir / "sensing.json.gz"
         self.sensing.load(self._sense_path)
         self._sense_saved = time.monotonic()
+        self._gesture_t = 0.0  # 最後處理過的手勢（Jetson 的時間）：快、慢兩條路拿到同一筆只算一次
         self._room_active: dict[str, float] = {}  # 房間 → 最後一次有動靜的時間
         self._room_cover: dict[str, float] = {}
         self._room_watch = time.time()  # 從什麼時候開始看房間動靜（判斷「一直很安靜」要看夠久）
@@ -414,6 +416,7 @@ class Hub:
             asyncio.create_task(self._loop(self._save_runtime, 60)),
             asyncio.create_task(self._loop(self._sense_tick, SENSE_INTERVAL)),
             asyncio.create_task(self._loop(self._camera_tick, camera.EVERY)),
+            asyncio.create_task(self._loop(self._gesture_tick, GESTURE_EVERY)),
             asyncio.create_task(self._loop(self._local_tick, 15)),
             asyncio.create_task(self.router.run()),
             asyncio.create_task(self._loop(self._probe_tick, 120)),
@@ -2233,10 +2236,24 @@ class Hub:
 
         self._spawn(go())
 
+    async def _gesture_tick(self) -> None:
+        """手勢要反應快：開了手勢的那台另外每 0.25 秒問一次 Jetson（每秒一次的攝影機巡邏太慢）。"""
+        g = self.store.data["settings"].get("gestures") or {}
+        cam = next((c for c in self.cameras.list if c["id"] == g.get("cam") and c.get("enabled")), None) if g.get("on") else None
+        if cam is None or not self.gpu.url:
+            return
+        events = await asyncio.to_thread(self.gpu.gestures, cam["id"], max(self._gesture_t, time.time() - 5))
+        if events:
+            self.cameras.state.setdefault(cam["id"], {})["gestures"] = events
+            self._gesture_events(cam, time.time())
+
     def _gesture_events(self, cam: dict[str, Any], now: float) -> None:
         """Jetson 看到維持夠久的手勢：照設定開關插座、執行情境或全部關掉（同一個手勢 10 秒內只算一次）。"""
         g = self.store.data["settings"].get("gestures") or {}
-        events = self.cameras.state[cam["id"]].pop("gestures", None) or []
+        events = [e for e in self.cameras.state[cam["id"]].pop("gestures", None) or [] if float(e[0]) > self._gesture_t]  # 快、慢兩條路都會拿到：同一筆只算一次
+        if not events:
+            return
+        self._gesture_t = max(float(e[0]) for e in events)
         if not g.get("on") or g.get("cam") != cam["id"]:
             return
         for _, name in events:

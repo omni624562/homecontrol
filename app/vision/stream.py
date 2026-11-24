@@ -22,10 +22,11 @@ PERSON_MIN = 0.55  # 追蹤的人至少要這個分數（YOLOX-m；跟樹莓派�
 MATCH_IOU = 0.25  # 跟上一張的框重疊這麼多算同一個人
 LOST_S = 2.0  # 秒：多久沒看到就當作走了
 SAMPLES_KEEP = 20  # 秒：腳的位置的紀錄留多久
-POSE_EVERY = 0.4  # 秒：開了跌倒偵測或手勢、又有人時，多久算一次姿勢（每秒 2.5 次）
+POSE_EVERY = 0.4  # 秒：開了跌倒偵測、又有人時，多久算一次姿勢（每秒 2.5 次）
+GESTURE_POSE_EVERY = 0.2  # 秒：開了手勢的那台每張都看（每秒 5 次），反應才快
 GESTURE_HOLD = 3.0  # 秒：手勢要維持這麼久才算（伸懶腰、拿東西不會誤觸）
 GESTURE_GAP = 0.9  # 秒：中間看不清楚這麼短不算放下
-FINGER_HOLD = 2.0  # 秒：手指手勢維持這麼久才算
+FINGER_HOLD = 1.0  # 秒：手指手勢維持這麼久才算（手要夠大、夠清楚已經擋掉大部分誤觸）
 FINGER_MIN_PX = 100  # 手（裁下來的那一塊）至少這麼大：太遠的、房間裡別人隨手的動作不算
 FINGER_MIN_P = 0.85  # 手部模型「這是手」的把握
 FINGERS = {"open": "f_open", "fist": "f_fist", "v": "f_v", "point": "f_point", "thumbs_up": "f_thumbs", "three": "f_three", "rock": "f_rock", "call": "f_call"}
@@ -210,7 +211,7 @@ class Cam:
         people = [o for o in objs if o["name"] == "person" and o["score"] >= PERSON_MIN]
         tracks = self.tracker.update(people, now)
         pose = None
-        if (self.pose_on or self.gesture_on) and self.pose and tracks and now - self.pose_t >= POSE_EVERY:
+        if (self.pose_on or self.gesture_on) and self.pose and tracks and now - self.pose_t >= (GESTURE_POSE_EVERY if self.gesture_on else POSE_EVERY) - 0.02:
             self.pose_t = now
             pose = self.pose(seen)
             if self.gesture_on and pose is not None:

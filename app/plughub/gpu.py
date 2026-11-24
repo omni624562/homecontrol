@@ -178,6 +178,14 @@ class GpuVision:
                 "poses": st.get("poses") or [], "gestures": st.get("gestures") or [], "gesture_now": st.get("gesture_now"),
                 "sounds": st.get("sounds") or [], "sound_error": st.get("sound_error"), "jpeg": jpeg}
 
+    def gestures(self, cid: str, since: float) -> list[list[Any]]:
+        """只問手勢（每 0.25 秒一次、很小）：since 之後 Jetson 認到的手勢 [[時間, 名字], …]；連不上 → []。"""
+        raw = self._get(f"/cams/{urllib.parse.quote(cid)}/state?since={since:.2f}", timeout=2)
+        try:
+            return (json.loads(raw).get("gestures") or []) if raw else []
+        except ValueError:
+            return []
+
     def classify(self, jpeg: bytes, box: list[float]) -> str | None:
         """框裡多的是什麼（包裹、袋子、鞋子…）；看不出來、連不上 → None。"""
         q = ",".join(f"{v:.4f}" for v in box)
