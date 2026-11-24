@@ -499,7 +499,7 @@ class Hub:
             if not _is_plug(device):
                 await _quiet_disconnect(device)
                 continue
-            if not device.children and device.device_type.name == "Strip":  # 延長線這次沒回報插孔：下次再試，不要把整條當成一個插座
+            if not device.children and getattr(getattr(device, "device_type", None), "name", "") == "Strip":  # 延長線這次沒回報插孔：下次再試，不要把整條當成一個插座
                 await _quiet_disconnect(device)
                 continue
             entry = DeviceEntry(device)
