@@ -878,3 +878,40 @@ def test_face_log_inserts_late_items_in_order(tmp_path):
     log.add({"t": b + 30, "kind": "zone"})
     log.add({"t": b + 10, "kind": "stranger"})  # 人走了才記：照來的時間排
     assert [x["t"] - b for x in log.items] == [0, 10, 30]
+
+
+def test_home_door_visit_counts_as_family(app_module, monkeypatch):
+    import numpy as np
+
+    from plughub import zones as zl
+
+    door = [[0.0732, 0.2342], [0.1331, 0.2178], [0.2206, 0.5864], [0.155, 0.611]]  # 大門口的「大門」
+    assert zl.near((0.22, 0.52), door, 0.06) and not zl.near((0.5, 0.8), door, 0.06)
+
+    hub = app_module.hub
+    sent = []
+    monkeypatch.setattr(hub.notifier, "send", lambda *a, **k: sent.append(a))
+    cam = {"id": "g", "name": "大門口", "host": "x", "enabled": True, "role": "entry", "zones": [{"id": "door", "name": "大門", "kind": "door", "poly": door}]}
+    hub.cameras.list = [cam]
+    hub._presence = {}
+    hub.visitors.visits, hub.visitors.named = [], []
+    monkeypatch.setattr(hub, "people_report", lambda: [{"id": "mom", "home": True}])
+    e = np.ones(768, np.float32)
+    stairs, at_door = [(0.6, 0.85)], [(0.21, 0.55)]
+
+    def visit(start, path):
+        return {"start": start, "known": set(), "maybe": set(), "app": [e, e], "feet": [(start + i * 0.2, p) for i, p in enumerate(path)]}
+
+    now = 1795488000.0
+    hub.repeats = __import__("sys").modules["plughub.reid"].Repeats()
+    for i in range(3):  # 從樓梯上來、走進家門：家人
+        hub._visit_end("g", visit(now + i * 600, [stairs] * 10 + [at_door] * 10), now + i * 600 + 30)
+    assert not sent and not hub.visitors.visits
+    hub.repeats = __import__("sys").modules["plughub.reid"].Repeats()
+    for i in range(3):  # 送貨：樓梯上來、站在門口、又從樓梯走：照樣算陌生人
+        hub._visit_end("g", visit(now + i * 600, [stairs] * 10 + [at_door] * 20 + [stairs] * 10), now + i * 600 + 30)
+    assert len(sent) == 1 and len(hub.visitors.visits) == 3
+    monkeypatch.setattr(hub, "people_report", lambda: [{"id": "mom", "home": False}])
+    hub.visitors.visits = []
+    hub._visit_end("g", visit(now + 5000, [stairs] * 5 + [at_door] * 5), now + 5030)  # 家裡沒人、有人走進家門：不能當家人
+    assert len(hub.visitors.visits) == 1

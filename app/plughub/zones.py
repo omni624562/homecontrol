@@ -15,6 +15,22 @@ LINE_MATCH = 0.25  # 前後兩張裡的同一個人，腳的位置最多移動�
 LINE_GAP = 20  # 秒：同一條線同一個方向，這麼久內只算一次
 
 
+def near(pt: tuple[float, float] | list[float], poly: list[list[float]], d: float) -> bool:
+    """點在多邊形裡，或離它的邊不到 d。"""
+    if inside(pt, poly):
+        return True
+    x, y = pt
+    n = len(poly)
+    for i in range(n):
+        x1, y1 = poly[i]
+        x2, y2 = poly[(i + 1) % n]
+        dx, dy = x2 - x1, y2 - y1
+        k = max(0.0, min(1.0, ((x - x1) * dx + (y - y1) * dy) / ((dx * dx + dy * dy) or 1e-9)))
+        if (x - x1 - k * dx) ** 2 + (y - y1 - k * dy) ** 2 <= d * d:
+            return True
+    return False
+
+
 def inside(pt: tuple[float, float] | list[float], poly: list[list[float]]) -> bool:
     """點在不在多邊形裡（射線法）。"""
     x, y = pt
