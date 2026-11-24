@@ -1,7 +1,7 @@
 """影像模型服務：跑在 Jetson 上。樹莓派把攝影機畫面丟過來，所有用到模型的判斷都在這裡算。
 
 - 認人、認物：YOLOX（Apache 2.0，Megvii），TensorRT FP16，GPU
-- 點一下就框：MobileSAM 編碼器 TensorRT FP16（GPU）；有引擎檔就用，沒有就用 OpenCV；解碼器用 OpenCV
+- 點一下就框：MobileSAM 編碼器 TensorRT FP16（GPU）；解碼器用 onnxruntime（很輕，CPU 就夠；這台的 OpenCV 4.8 讀不了這兩個模型）
 - 姿勢（MoveNet）、找臉（YuNet）＋臉的特徵（SFace）：跟樹莓派同一份程式（plughub/vision.py、faces.py）、同一組模型，
   算出來的結果一模一樣（已經登記的臉不用重登）；比對是誰、存家人的臉特徵，還是在樹莓派
 - 只有樹莓派能用：每個請求都要帶 token（跟錄影機同一組，VISION_TOKEN）
@@ -97,10 +97,11 @@ class Trt:
             return hout.copy()
 
 
-def build(onnx: Path, plan: Path, *extra: str) -> Path:
+def build(onnx: Path, plan: Path, *extra: str, fp16: bool = True) -> Path:
     if not plan.exists():
         LOG.info("第一次用 %s：轉成 TensorRT 引擎（要好幾分鐘）", onnx.name)
-        subprocess.run(["/usr/src/tensorrt/bin/trtexec", f"--onnx={onnx}", f"--saveEngine={plan}", "--fp16", *extra], check=True, capture_output=True)
+        subprocess.run(["/usr/src/tensorrt/bin/trtexec", f"--onnx={onnx}", f"--saveEngine={plan}", *(["--fp16"] if fp16 else []), *extra],
+                       check=True, capture_output=True)
     return plan
 
 
@@ -140,16 +141,27 @@ class Detector:
 
 
 class Segmenter(seg_mod.Segmenter):
-    """MobileSAM：編碼器有 TensorRT 引擎就用 GPU，不然跟樹莓派一樣用 OpenCV；解碼器用 OpenCV。"""
+    """MobileSAM：編碼器 TensorRT FP32（GPU；FP16 算出來的特徵不對，實測過）；解碼器 onnxruntime。
+    輸入固定 16:9，其他比例先補黑邊。啟動時跟 CPU 版比一次，GPU 的結果不對就改用 CPU（約 3 秒）。"""
 
     def __init__(self) -> None:
         super().__init__()
-        plan = MODELS / f"sam_encoder_{SAM_H}x{SAM_W}.fp16.engine"
+        import onnxruntime as ort
+
+        self.ort = ort.InferenceSession(str(seg_mod.DECODER), providers=["CPUExecutionProvider"])
+        self.cpu = ort.InferenceSession(str(seg_mod.ENCODER), providers=["CPUExecutionProvider"])
         self.gpu: Trt | None = None
         try:
-            self.gpu = Trt(build(seg_mod.ENCODER, plan, f"--shapes=input_image:{SAM_H}x{SAM_W}x3"))
+            self.gpu = Trt(build(seg_mod.ENCODER, MODELS / f"sam_encoder_{SAM_H}x{SAM_W}.fp32.engine", f"--shapes=input_image:{SAM_H}x{SAM_W}x3", fp16=False))
+            test = np.ascontiguousarray(np.tile(np.linspace(0, 255, SAM_W, dtype=np.float32)[None, :, None], (SAM_H, 1, 3)))
+            a, b = self.gpu.infer(test), self.cpu.run(None, {"input_image": test})[0]
+            diff = float(np.abs(a - b).mean() / (np.abs(b).mean() + 1e-6))
+            if not diff < 0.05:
+                LOG.warning("MobileSAM 的 GPU 結果跟 CPU 差太多（%.2f），改用 CPU", diff)
+                self.gpu = None
         except Exception as err:  # noqa: BLE001
-            LOG.warning("MobileSAM 編碼器沒辦法用 GPU，改用 OpenCV：%s", err)
+            LOG.warning("MobileSAM 編碼器沒辦法用 GPU，改用 CPU：%s", err)
+            self.gpu = None
 
     def free_if_idle(self) -> None:  # 這台記憶體夠：模型一直留著
         pass
@@ -159,13 +171,29 @@ class Segmenter(seg_mod.Segmenter):
         if img is None:
             raise ValueError("不是 JPEG")
         h, w = img.shape[:2]
-        if self.gpu is None or round(h * SAM_W / w) != SAM_H:  # 不是 16:9：用 OpenCV（任何大小都可以）
-            return super().encode(key, jpeg)
-        small = cv2.cvtColor(cv2.resize(img, (SAM_W, SAM_H)), cv2.COLOR_BGR2RGB).astype(np.float32)
-        emb = self.gpu.infer(small)
+        s = min(SAM_W / w, SAM_H / h)
+        canvas = np.zeros((SAM_H, SAM_W, 3), np.uint8)  # 不是 16:9 就補黑邊（點的座標照長邊縮放，跟 SAM 的做法一樣）
+        canvas[: round(h * s), : round(w * s)] = cv2.resize(img, (round(w * s), round(h * s)))
+        x = cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB).astype(np.float32)
+        emb = self.gpu.infer(x) if self.gpu else self.cpu.run(None, {"input_image": x})[0]
         with self._lock:
-            self._emb[key] = (time.time(), emb, (h, w))
+            self._emb[key] = (time.time(), emb, (h, w, s))
             self._used = time.time()
+
+    def segment(self, key: str, x: float, y: float) -> list[dict]:
+        with self._lock:
+            _, emb, (h, w, s) = self._emb[key]
+            masks, scores = self.ort.run(["masks", "iou_predictions"], {
+                "image_embeddings": emb,
+                "point_coords": np.array([[[x * w * s, y * h * s], [0, 0]]], np.float32),
+                "point_labels": np.array([[1, -1]], np.float32),
+                "mask_input": np.zeros((1, 1, 256, 256), np.float32),
+                "has_mask_input": np.zeros(1, np.float32),
+                "orig_im_size": np.array([h, w], np.float32),
+            })
+            self._used = time.time()
+        ms = [(masks[0, k] > 0).astype(np.uint8) for k in range(masks.shape[1])]
+        return seg_mod.pick(ms, [float(v) for v in scores.ravel()])
 
 
 class Stat:
@@ -254,7 +282,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/status":
             self._json(200, {"model": MODEL, "ready": detector is not None and segmenter is not None,
-                             "sam_gpu": bool(segmenter and segmenter.gpu), "stats": stat.public()})
+                             "sam": "gpu" if segmenter and segmenter.gpu else "cpu" if segmenter else None, "stats": stat.public()})
             return
         self._json(404, {"error": "沒有這個"})
 
@@ -285,8 +313,11 @@ def main() -> None:
     detector.detect(_decode(blank))  # 暖機
     pose.analyze(blank)
     faces.analyze(blank)
-    segmenter = Segmenter()
-    LOG.info("準備好了（MobileSAM 編碼器：%s）", "GPU" if segmenter.gpu else "OpenCV")
+    try:
+        segmenter = Segmenter()
+    except Exception:  # noqa: BLE001  點一下就框不能用，其他照常（樹莓派會自己算）
+        LOG.exception("MobileSAM 載入失敗")
+    LOG.info("準備好了（點一下就框：%s）", "GPU" if segmenter and segmenter.gpu else "CPU" if segmenter else "不能用")
     threading.Event().wait()
 
 
