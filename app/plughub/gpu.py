@@ -43,6 +43,9 @@ class GpuVision:
         self.count = 0
         self.total_ms = 0.0
         self.last_ok = 0.0
+        self._pushed: str | None = None
+        self._pushed_at = 0.0
+        self._since: dict[str, float] = {}  # 攝影機 → 上次拿到的最新時間（只拿之後的腳的位置）
 
     @property
     def url(self) -> str:
@@ -112,6 +115,62 @@ class GpuVision:
         if res.get("_status") == 409:
             return "need"  # type: ignore[return-value]
         return res.get("shapes") or []
+
+    # ---- 直接看影片（Jetson 的 stream.py）----
+
+    def _get(self, path: str, timeout: float = TIMEOUT) -> bytes | None:
+        if not self.url or time.time() - self._fail_at < RETRY:
+            return None
+        try:
+            req = urllib.request.Request(self.url + path, headers={"Authorization": f"Bearer {self._token()}"})
+            with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310  只連家裡網路的主機
+                return r.read()
+        except urllib.error.HTTPError as err:
+            if err.code == 404:  # 還沒在看這台：不算連不上
+                self._pushed = None
+                return None
+            return self._failed(err)
+        except Exception as err:  # noqa: BLE001
+            return self._failed(err)
+
+    def push_streams(self, cams: list[dict[str, Any]]) -> None:
+        """告訴 Jetson 直接看哪些攝影機的影片（網址、不要看的地方）；一樣的話 5 分鐘才再送一次（Jetson 重開也補得上）。"""
+        from .recorder import rtsp_url
+
+        if not self.url or time.time() - self._fail_at < RETRY:
+            return
+        want = {c["id"]: {"url": rtsp_url(c), "ignore": c.get("ignore") or []} for c in cams if c.get("enabled") and c.get("host")}
+        sig = json.dumps(want, sort_keys=True)
+        if sig == self._pushed and time.time() - self._pushed_at < 300:
+            return
+        try:
+            req = urllib.request.Request(self.url + "/config", data=json.dumps({"cams": want}).encode(), method="PUT",
+                                         headers={"Authorization": f"Bearer {self._token()}", "Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=TIMEOUT) as r:  # noqa: S310
+                r.read()
+            self._pushed, self._pushed_at = sig, time.time()
+        except Exception as err:  # noqa: BLE001
+            self._pushed = None
+            self._failed(err)
+
+    def stream(self, cid: str) -> dict[str, Any] | None:
+        """這台攝影機在 Jetson 上的最新狀態＋畫面：{"scores", "objects", "tracks", "samples", "jpeg"}；串流不正常 → None（改成自己抓畫面）。"""
+        raw = self._get(f"/cams/{urllib.parse.quote(cid)}/state?since={self._since.get(cid, 0):.2f}")
+        if raw is None:
+            return None
+        try:
+            st = json.loads(raw)
+        except ValueError:
+            return None
+        if not st.get("ok"):
+            return None
+        jpeg = self._get(f"/cams/{urllib.parse.quote(cid)}/frame.jpg")
+        if not jpeg:
+            return None
+        self._since[cid] = float(st.get("t") or 0)
+        self.last_ok = time.time()
+        objs = [o for o in st.get("objects") or [] if float(o.get("score") or 0) >= KEEP]
+        return {"scores": normalize(objs), "objects": objs[:20], "tracks": st.get("tracks") or [], "samples": st.get("samples") or [], "jpeg": jpeg}
 
     def public(self) -> dict[str, Any]:
         if not self.url:

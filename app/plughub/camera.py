@@ -257,6 +257,7 @@ class Cameras:
         self.frames: dict[str, bytes] = {}  # 這一輪拿到的快照（給認臉用，用完就丟，不存檔）
         self.detector = Detector()
         self.remote: Callable[[bytes], dict[str, Any] | None] | None = None  # GPU 辨識（另一台主機）；問不到就用 detector
+        self.stream: Callable[[str], dict[str, Any] | None] | None = None  # 另一台主機直接看影片的結果；沒有就自己抓畫面
         self.load()
 
     def load(self) -> None:
@@ -341,17 +342,26 @@ class Cameras:
         if st.get("ok") is False and now - (st.get("at") or 0) < RETRY:
             return None
         try:
-            jpeg = snapshot(cam)
-            if cam.get("ignore"):
-                jpeg = mask(jpeg, cam["ignore"])
-            self.frames[cam["id"]] = jpeg
-            got = self.remote(jpeg) if self.remote else None
-            if got:
-                sc = got["scores"]
-                st.update(engine="gpu", objects=got["objects"])
+            live = self.stream(cam["id"]) if self.stream else None
+            if live:  # Jetson 直接看影片：每秒 5 張的辨識、追蹤，畫面也從那裡拿（不用再跟攝影機要）
+                jpeg = live["jpeg"]
+                if cam.get("ignore"):
+                    jpeg = mask(jpeg, cam["ignore"])
+                self.frames[cam["id"]] = jpeg
+                sc = live["scores"]
+                st.update(engine="stream", objects=live["objects"], tracks=live["tracks"], samples=live["samples"])
             else:
-                sc = self.detector.scores(jpeg)
-                st.update(engine="cpu", objects=None)
+                jpeg = snapshot(cam)
+                if cam.get("ignore"):
+                    jpeg = mask(jpeg, cam["ignore"])
+                self.frames[cam["id"]] = jpeg
+                got = self.remote(jpeg) if self.remote else None
+                if got:
+                    sc = got["scores"]
+                    st.update(engine="gpu", objects=got["objects"], tracks=None, samples=None)
+                else:
+                    sc = self.detector.scores(jpeg)
+                    st.update(engine="cpu", objects=None, tracks=None, samples=None)
             score = sc["person"]
             if cam.get("pets", True):
                 pet_track(st, sc, now)

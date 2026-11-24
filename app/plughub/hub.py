@@ -184,6 +184,7 @@ class Hub:
         self.sensing = Sensing()
         self.cameras = camera.Cameras(self.store.dir)
         self.cameras.remote = self.gpu.detect
+        self.cameras.stream = self.gpu.stream
         self._cam_alert: dict[str, float] = {}  # 攝影機 ID → 上次「沒人在家卻看到人」通知的時間
         self._cam_pending: dict[str, float] = {}  # 攝影機 ID → 沒人在家時看到人的時間（等家人的手機連上 Wi-Fi）
         # 認臉
@@ -1467,6 +1468,12 @@ class Hub:
                            "box": (int(x * W), int(y * H), int(w * W), int(h * H)), "foot": (min(1.0, x + w / 2), min(1.0, y + h)), "from": "box"})
         return people
 
+    @staticmethod
+    def _track_people(tracks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Jetson 追蹤中的人 → 跟姿勢一樣的格式（只有腳的位置和框；跌倒要姿勢，不能用這個）。"""
+        return [{"score": float(t.get("score") or 0), "torso": None, "aspect": float(t["box"][3]) / max(1e-6, float(t["box"][2])) * 9 / 16,
+                 "box": tuple(t["box"]), "foot": tuple(t["foot"]), "track": t.get("id"), "from": "track"} for t in tracks]
+
     def analyze_faces(self, jpeg: bytes) -> list[dict[str, Any]]:
         """找臉＋特徵：先問 Jetson（同一組模型，特徵跟登記的一樣），問不到用樹莓派自己的模型。"""
         found = self.gpu.faces(jpeg)
@@ -1537,6 +1544,12 @@ class Hub:
                 word = {"more": "多了東西", "less": "東西不見了", "changed": "有東西變了"}[ev]
                 self._zone_fire(cam, z, f"{z['name']}{word}", z.get("act") or {}, now, jpeg)
         lst = st.setdefault("lines", {})
+        if st.get("engine") == "stream" and cam.get("lines"):
+            # Jetson 每秒 5 張的腳的位置，一張一張照順序算（走很快也不會跳過線）
+            for t, pts in st.get("samples") or []:
+                for ln in cam["lines"]:
+                    self._line_feed(cam, ln, lst.setdefault(ln["id"], {}), [(x, y) for _, x, y in pts], float(t), jpeg)
+            return
         if someone or any((lst.get(ln["id"]) or {}).get("prev") for ln in cam.get("lines") or []):
             for ln in cam.get("lines") or []:
                 self._line_feed(cam, ln, lst.setdefault(ln["id"], {}), feet if someone else [], now, jpeg)
@@ -1551,6 +1564,8 @@ class Hub:
         """有人經過畫了線的攝影機時，每秒多看兩張（走很快的人才不會跳過線）。"""
         for c in cams:
             if not c.get("lines") or not self.cameras.state.get(c["id"], {}).get("person"):
+                continue
+            if self.cameras.state[c["id"]].get("engine") == "stream":  # Jetson 已經每秒看 5 張
                 continue
             lst = self.cameras.state[c["id"]].setdefault("lines", {})
             for _ in range(2):
@@ -1671,7 +1686,9 @@ class Hub:
             person = st.get("person")
             areas = [z for z in c.get("zones") or [] if z.get("kind") == "area"]
             people = None
-            if person and (c.get("fall") or areas or c.get("lines")):
+            tracked = st.get("tracks") if st.get("engine") == "stream" else None
+            walkers = self._track_people(tracked) if tracked is not None else None  # 區域、過線：用 Jetson 追蹤的人的腳
+            if person and (c.get("fall") or (walkers is None and (areas or c.get("lines")))):
                 try:
                     people = await asyncio.to_thread(self.analyze_pose, jpeg, st.get("objects"))
                 except Exception as err:  # noqa: BLE001
@@ -1680,7 +1697,7 @@ class Hub:
                     self.face_error = f"姿勢：{err}"
             if people is not None and c.get("fall"):
                 await self._fall_check(c, jpeg, now, people)
-            await self._zones_check(c, st, jpeg, now, people or [], bool(person))
+            await self._zones_check(c, st, jpeg, now, walkers if walkers is not None else (people or []), bool(person))
             enrolling = self.enroll is not None and self.enroll["cam"] == c["id"]
             if not (enrolling or (person and c.get("faces", True))):
                 continue
@@ -2342,6 +2359,7 @@ class Hub:
     async def _recorder_tick(self) -> None:
         """錄影機：同步要錄哪些攝影機、更新狀態（沒設定就什麼都不做）。"""
         await asyncio.to_thread(self.recorder.refresh, self.cameras.list)
+        await asyncio.to_thread(self.gpu.push_streams, self.cameras.list)
 
     async def _probe_tick(self) -> None:
         """路由器也說不出名字的裝置：直接在家裡網路問它一下是什麼（只讀，不登入）。問過的記在樹莓派上，一週後才再問。"""
