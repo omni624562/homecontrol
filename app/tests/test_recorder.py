@@ -564,3 +564,14 @@ def test_gesture_hold_and_actions(app_module, monkeypatch):
     hub.cameras.state["r"]["gestures"] = [[3.0, "one_up"]]
     hub._gesture_events(c, 1005.0)
     assert len(toggled) == 1  # 10 秒內只算一次
+
+
+def test_drop_strip_ghost(app_module):
+    hub = app_module.hub
+    Plug = __import__("sys").modules["plughub.hub"].Plug
+    hub.plugs["40ae30fc3be5"] = Plug("40ae30fc3be5", "40:AE:30:FC:3B:E5", "TP-LINK_Power Strip_3BE5", "KP303", "10.0.2.248", online=False)
+    hub.store.data["plugs"]["40ae30fc3be5"] = {"name": None}
+    hub.store.data["plug_order"] = ["x", "40ae30fc3be5"]
+    hub._drop_ghost("40ae30fc3be5")
+    assert "40ae30fc3be5" not in hub.plugs and "40ae30fc3be5" not in hub.store.data["plugs"] and hub.store.data["plug_order"] == ["x"]
+    hub._drop_ghost("nope")  # 沒有的話不出錯

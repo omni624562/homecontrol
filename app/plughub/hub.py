@@ -499,9 +499,13 @@ class Hub:
             if not _is_plug(device):
                 await _quiet_disconnect(device)
                 continue
+            if not device.children and device.device_type.name == "Strip":  # 延長線這次沒回報插孔：下次再試，不要把整條當成一個插座
+                await _quiet_disconnect(device)
+                continue
             entry = DeviceEntry(device)
             self.devices[key] = entry
             if device.children:
+                self._drop_ghost(_plug_id(device.mac))  # 以前誤把整條延長線當成一個插座存下來的：清掉
                 for i, child in enumerate(device.children):
                     pid = _plug_id(child.device_id)
                     entry.plugs.append(pid)
@@ -521,6 +525,16 @@ class Hub:
             _LOGGER.info("找到插座 %s（%s，%s）", device.alias, device.model, host)
         if added:
             await self.changed()
+
+    def _drop_ghost(self, pid: str) -> None:
+        """延長線本體不是插座（沒有開關）：清單和設定裡有的話拿掉。"""
+        if self.plugs.pop(pid, None) is not None or pid in self.store.data["plugs"]:
+            self.store.data["plugs"].pop(pid, None)
+            order = self.store.data.get("plug_order")
+            if isinstance(order, list) and pid in order:
+                order.remove(pid)
+            self._dirty = True
+            _LOGGER.info("拿掉延長線本體的舊紀錄 %s（只留它的插孔）", pid)
 
     # ---- 更新狀態 ----
 
