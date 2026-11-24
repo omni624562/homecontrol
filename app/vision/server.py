@@ -2,8 +2,11 @@
 
 - 認人、認物：YOLOX（Apache 2.0，Megvii），TensorRT FP16，GPU
 - 點一下就框：MobileSAM 編碼器 TensorRT FP16（GPU）；解碼器用 onnxruntime（很輕，CPU 就夠；這台的 OpenCV 4.8 讀不了這兩個模型）
-- 姿勢（MoveNet）、找臉（YuNet）＋臉的特徵（SFace）：跟樹莓派同一份程式（plughub/vision.py、faces.py）、同一組模型，
-  算出來的結果一模一樣（已經登記的臉不用重登）；比對是誰、存家人的臉特徵，還是在樹莓派
+- 姿勢：RTMO-s（Apache 2.0，OpenMMLab），onnxruntime GPU（TensorRT 轉不過它的後處理）；從上往下拍也抓得到人。
+  輸出跟樹莓派的 MoveNet（plughub/vision.py）同一個格式；RTMO 載入失敗就用 MoveNet
+- 找臉：YuNet（MIT）用 onnxruntime GPU，原始解析度切成 640×640 的小塊找（樹莓派是整張縮一半），小臉、遠的臉抓得到
+- 臉的特徵：SFace（Apache 2.0），跟樹莓派同一個模型、同一個對齊方法（OpenCV），已經登記的臉不用重登；
+  比對是誰、存家人的臉特徵，還是在樹莓派。GPU 找臉載入失敗就整個用樹莓派那份程式（plughub/faces.py）
 - 只有樹莓派能用：每個請求都要帶 token（跟錄影機同一組，VISION_TOKEN）
 - 影像只在記憶體裡，不存檔
 
@@ -152,7 +155,7 @@ class Segmenter(seg_mod.Segmenter):
         super().__init__()
         import onnxruntime as ort
 
-        self.ort = ort.InferenceSession(str(seg_mod.DECODER), providers=["CPUExecutionProvider"])
+        self.ort = ort.InferenceSession(str(seg_mod.DECODER), providers=GPU)
         self.cpu = ort.InferenceSession(str(seg_mod.ENCODER), providers=["CPUExecutionProvider"])
         self.gpu: Trt | None = None
         try:
@@ -214,7 +217,104 @@ class Stat:
 
 
 detector: Detector | None = None
-pose = vision_mod.Pose()
+GPU = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+POSE_MIN = 0.3  # RTMO：人的分數至少這樣
+
+
+class RtmoPose:
+    """RTMO：一次找出所有人和 17 個關節點（COCO 順序，跟 MoveNet 一樣）。"""
+
+    def __init__(self) -> None:
+        import onnxruntime as ort
+
+        self.s = ort.InferenceSession(str(MODELS / "rtmo_s.onnx"), providers=GPU)
+        self.lock = threading.Lock()
+
+    def analyze(self, jpeg: bytes) -> list[dict]:
+        img = _decode(jpeg)
+        h, w = img.shape[:2]
+        r = min(640 / h, 640 / w)
+        pad = np.full((640, 640, 3), 114, np.uint8)
+        pad[: int(h * r), : int(w * r)] = cv2.resize(img, (int(w * r), int(h * r)))
+        with self.lock:
+            dets, kps = self.s.run(None, {"input": np.ascontiguousarray(pad.transpose(2, 0, 1)[None], dtype=np.float32)})
+        people = []
+        for b, kp in zip(dets[0], kps[0]):
+            if float(b[4]) < POSE_MIN:
+                continue
+            x0, y0, x1, y1 = (float(v) / r for v in b[:4])
+            k = [[float(p[1]) / r / h, float(p[0]) / r / w, float(p[2])] for p in kp]  # → (y, x, 分數)，0～1，跟 MoveNet 一樣
+            bw, bh = max(1e-6, x1 - x0), max(1e-6, y1 - y0)
+            ank = [q for q in (k[15], k[16]) if q[2] >= 0.3]
+            ft = (sum(q[1] for q in ank) / len(ank), sum(q[0] for q in ank) / len(ank)) if ank else ((x0 + x1) / 2 / w, y1 / h)
+            people.append({"score": round(float(b[4]), 3), "torso": vision_mod.torso_deg(k), "aspect": bh / bw,
+                           "box": (int(x0), int(y0), int(bw), int(bh)), "foot": (min(1.0, max(0.0, ft[0])), min(1.0, max(0.0, ft[1])))})
+        return people
+
+
+class FaceGpu:
+    """YuNet 找臉（GPU，切塊、原始解析度）＋ SFace 特徵（OpenCV）。輸出跟 plughub/faces.Engine.analyze 一樣。"""
+
+    TILE = 640
+    MIN_SCORE = 0.7
+
+    def __init__(self) -> None:
+        import onnxruntime as ort
+
+        self.det = ort.InferenceSession(str(faces_mod.DET_MODEL), providers=GPU)
+        self.rec = cv2.FaceRecognizerSF.create(str(faces_mod.REC_MODEL), "")
+        self.lock = threading.Lock()
+
+    def _tiles(self, w: int, h: int) -> list[tuple[int, int]]:
+        def starts(n: int) -> list[int]:
+            if n <= self.TILE:
+                return [0]
+            k = -(-(n - 128) // (self.TILE - 128))  # 每塊重疊 128 像素：邊上的臉不會被切掉
+            return [round(i * (n - self.TILE) / (k - 1)) for i in range(k)] if k > 1 else [0]
+        return [(x, y) for y in starts(h) for x in starts(w)]
+
+    def _decode(self, outs: dict, ox: int, oy: int) -> list[list[float]]:
+        faces = []
+        for st in (8, 16, 32):
+            n = self.TILE // st
+            cls, obj = outs[f"cls_{st}"][0, :, 0], outs[f"obj_{st}"][0, :, 0]
+            score = np.sqrt(np.clip(cls, 0, 1) * np.clip(obj, 0, 1))
+            for i in np.nonzero(score >= self.MIN_SCORE)[0]:
+                r, c = divmod(int(i), n)
+                b, k = outs[f"bbox_{st}"][0, i], outs[f"kps_{st}"][0, i]
+                cx, cy, bw, bh = (c + b[0]) * st, (r + b[1]) * st, np.exp(b[2]) * st, np.exp(b[3]) * st
+                pts = [((c + k[2 * j]) * st + ox, (r + k[2 * j + 1]) * st + oy) for j in range(5)]
+                faces.append([cx - bw / 2 + ox, cy - bh / 2 + oy, bw, bh, *[v for p in pts for v in p], float(score[i])])
+        return faces
+
+    def analyze(self, jpeg: bytes) -> list[dict]:
+        img = _decode(jpeg)
+        h, w = img.shape[:2]
+        found: list[list[float]] = []
+        names = [o.name for o in self.det.get_outputs()]
+        with self.lock:
+            for ox, oy in self._tiles(w, h):
+                tile = np.zeros((self.TILE, self.TILE, 3), np.uint8)
+                part = img[oy:oy + self.TILE, ox:ox + self.TILE]
+                tile[: part.shape[0], : part.shape[1]] = part
+                outs = dict(zip(names, self.det.run(None, {"input": np.ascontiguousarray(tile.transpose(2, 0, 1)[None], dtype=np.float32)})))
+                found += self._decode(outs, ox, oy)
+        if not found:
+            return []
+        keep = cv2.dnn.NMSBoxes([f[:4] for f in found], [f[14] for f in found], self.MIN_SCORE, 0.3)
+        out = []
+        for i in np.array(keep).ravel():
+            f = np.array(found[i], np.float32)
+            feat = faces_mod._norm(self.rec.feature(self.rec.alignCrop(img, f)))
+            wpx, score = float(f[2]), float(f[14])
+            out.append({"w": wpx, "score": score, "clear": wpx >= faces_mod.CLEAR_W and score >= faces_mod.CLEAR_SCORE, "feat": feat,
+                        "box": tuple(int(x) for x in f[:4])})
+        return out
+
+
+face_gpu: FaceGpu | None = None
+pose = vision_mod.Pose()  # MoveNet：RTMO 不能用時的備案
+rtmo: RtmoPose | None = None
 faces = faces_mod.Engine()
 segmenter: Segmenter | None = None
 streams: Streams | None = None
@@ -236,9 +336,9 @@ def handle(path: str, q: dict[str, str], body: bytes) -> tuple[int, dict]:
         img = _decode(body)
         out = {"w": img.shape[1], "h": img.shape[0], "objects": detector.detect(img)}
     elif path == "/pose":
-        out = {"people": pose.analyze(body)}
+        out = {"people": (rtmo or pose).analyze(body)}
     elif path == "/faces":
-        found = faces.analyze(body)
+        found = (face_gpu or faces).analyze(body)
         out = {"faces": [{**f, "feat": [round(float(v), 6) for v in f["feat"]]} for f in found]}
     elif path == "/segment":
         if segmenter is None:
@@ -288,7 +388,7 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         if u.path == "/status":
             cams = {cid: {k: v for k, v in c.state(time.time()).items() if k in ("ok", "error", "fps", "t")} for cid, c in (streams.cams.items() if streams else [])}
-            self._json(200, {"model": MODEL, "ready": detector is not None and segmenter is not None,
+            self._json(200, {"model": MODEL, "pose": "rtmo-gpu" if rtmo else "movenet-cpu", "faces": "yunet-gpu" if face_gpu else "opencv", "ready": detector is not None and segmenter is not None,
                              "sam": "gpu" if segmenter and segmenter.gpu else "cpu" if segmenter else None, "stats": stat.public(), "streams": cams})
             return
         parts = u.path.strip("/").split("/")
@@ -357,8 +457,22 @@ def main() -> None:
     blank = cv2.imencode(".jpg", np.zeros((1080, 1920, 3), np.uint8))[1].tobytes()
     detector.detect(_decode(blank))  # 暖機
     streams = Streams(detector.detect)
-    pose.analyze(blank)
-    faces.analyze(blank)
+    global rtmo
+    try:
+        rtmo = RtmoPose()
+        rtmo.analyze(blank)
+    except Exception:  # noqa: BLE001
+        LOG.exception("RTMO 載入失敗，姿勢改用 MoveNet")
+        rtmo = None
+        pose.analyze(blank)
+    global face_gpu
+    try:
+        face_gpu = FaceGpu()
+        face_gpu.analyze(blank)
+    except Exception:  # noqa: BLE001
+        LOG.exception("GPU 找臉載入失敗，改用 OpenCV")
+        face_gpu = None
+        faces.analyze(blank)
     try:
         segmenter = Segmenter()
     except Exception:  # noqa: BLE001  點一下就框不能用，其他照常（樹莓派會自己算）
