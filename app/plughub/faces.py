@@ -192,7 +192,10 @@ class FaceLog:
         item = {"id": uuid.uuid4().hex[:10], "t": round(time.time()), **item, "thumb": bool(thumb)}
         if thumb:
             self._write(f"{item['id']}.jpg", thumb)
-        self.items.append(item)
+        i = len(self.items)
+        while i and self.items[i - 1]["t"] > item["t"]:  # 晚一點才記的（例如人走了才判斷）：照發生的時間插進去
+            i -= 1
+        self.items.insert(i, item)
         self.prune()
         return item
 
