@@ -795,7 +795,8 @@ function GestureLive({ cam, g }: { cam: string; g: GestureCfg }) {
     </div>
   );
 }
-const FINGER_GESTURES: [string, string, string][] = [["f_open", "✋", "張開手掌"], ["f_fist", "✊", "握拳"], ["f_v", "✌️", "比 YA"], ["f_point", "☝️", "比 1"], ["f_thumbs", "👍", "比讚"]];
+const FINGER_GESTURES: [string, string, string][] = [["f_open", "✋", "張開手掌"], ["f_fist", "✊", "握拳"], ["f_v", "✌️", "比 YA"], ["f_point", "☝️", "比 1"],
+  ["f_three", "🤟", "比 3"], ["f_rock", "🤘", "搖滾"], ["f_call", "🤙", "打電話"], ["f_thumbs", "👍", "比讚"]];
 const GESTURES = FINGER_GESTURES;
 // 手的 21 點連線（MediaPipe）
 const HAND_BONES: [number, number][] = [[0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8], [5, 9], [9, 10], [10, 11], [11, 12], [9, 13], [13, 14], [14, 15], [15, 16], [13, 17], [17, 18], [18, 19], [19, 20], [0, 17]];

@@ -1,6 +1,6 @@
 """手指手勢（測試中）：用姿勢模型找到手腕，沿著前臂方向把手那一塊裁出來放大，交給 MediaPipe 手部關節模型（Apache 2.0，21 個點）。
 
-回傳每隻手：大概幾像素大、有沒有手（模型的把握）、五根手指哪幾根伸直、看起來是什麼手勢（張開、握拳、比讚、比 YA、比 1…）。
+回傳每隻手：大概幾像素大、有沒有手（模型的把握）、五根手指哪幾根伸直、看起來是什麼手勢（張開、握拳、比讚、比 YA、比 1、比 3、搖滾、打電話…）。
 影像不存檔（只有測試時加 save=1 才把裁下來的小圖存在 /index/handtest，給開發者看）。
 """
 from __future__ import annotations
@@ -40,6 +40,12 @@ def gesture(f: list[bool], lm: np.ndarray) -> str:
         return "fist" if not thumb else "thumb"
     if f[1] and f[2] and n == 2:
         return "v"
+    if f[1] and f[2] and f[3] and n == 3:
+        return "three"
+    if f[1] and f[4] and n == 2:
+        return "rock"
+    if thumb and f[4] and n == 1:
+        return "call"
     if f[1] and n == 1:
         return "point"
     return f"n{n + int(thumb)}"
