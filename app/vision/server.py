@@ -22,6 +22,7 @@ API（都要 Authorization: Bearer <token>；POST 的 body 都是 JPEG）：
   GET  /summary?day=YYYY-MM-DD   那天錄影分析的結果（有人來的時段、各種東西出現幾次；index.py）
   POST /search                {"q": "穿紅衣服的人", "days": 7, "cam": null} → 最像的時間點
   POST /index/run?day=        馬上分析那天的錄影（平常半夜 2 點自己做）
+  POST /appearance?cam=       這台攝影機最新畫面裡追蹤中的人，每個人的外觀特徵（SigLIP 2；認「同一個陌生人又來了」用）
 """
 from __future__ import annotations
 
@@ -434,6 +435,29 @@ class Handler(BaseHTTPRequestHandler):
                 return
         self._json(404, {"error": "沒有這個"})
 
+    def _appearance(self, cid: str) -> tuple[int, dict]:
+        """追蹤中的人（夠大的）裁下來算外觀特徵；特徵是數字，看不出原本的樣子。"""
+        cam = streams.get(cid) if streams else None
+        if index is None or cam is None:
+            return 404, {"error": "沒有在看這台"}
+        with cam.lock:
+            img, tracks = cam.frame, list(cam.tracks)
+        if img is None:
+            return 404, {"error": "還沒有畫面"}
+        h, w = img.shape[:2]
+        crops, meta = [], []
+        for t in tracks:
+            x, y, bw, bh = t["box"]
+            x0, y0, x1, y1 = int(x * w), int(y * h), int((x + bw) * w), int((y + bh) * h)
+            if y1 - y0 < 60 or x1 - x0 < 20:  # 太小看不出穿著
+                continue
+            crops.append(img[max(0, y0):y1, max(0, x0):x1])
+            meta.append(t)
+        if not crops:
+            return 200, {"people": []}
+        embs = index._img_emb(crops)
+        return 200, {"people": [{"id": t["id"], "box": t["box"], "emb": [round(float(v), 4) for v in e]} for t, e in zip(meta, embs)]}
+
     def _index_post(self, u, data: bytes) -> tuple[int, dict]:
         if index is None:
             return 503, {"error": "錄影分析還沒載入"}
@@ -484,6 +508,9 @@ class Handler(BaseHTTPRequestHandler):
         if not self._auth():
             return
         u = urlparse(self.path)
+        if u.path == "/appearance":
+            self._json(*self._appearance(parse_qs(u.query).get("cam", [""])[0]))
+            return
         if u.path in ("/search", "/index/run"):
             self._json(*self._index_post(u, data))
             return

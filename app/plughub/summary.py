@@ -38,7 +38,7 @@ def build_summary(d: date, cams: list[dict[str, Any]], log: list[dict[str, Any]]
                     highlights.append({"t": x["t"], "kind": "object", "text": label, "id": x["id"], "thumb": x.get("thumb", False)})
             elif kind == "stranger":
                 counts["陌生人"] = counts.get("陌生人", 0) + 1
-                highlights.append({"t": x["t"], "kind": "stranger", "text": "不認得的人", "id": x["id"], "thumb": x.get("thumb", False)})
+                highlights.append({"t": x["t"], "kind": "stranger", "text": "不認得的人" + (f"・{x['name']}" if x.get("name") else ""), "id": x["id"], "thumb": x.get("thumb", False)})
             elif kind == "family":
                 counts[f"認出{x.get('name')}"] = counts.get(f"認出{x.get('name')}", 0) + 1
             elif kind == "fall":

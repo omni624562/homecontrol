@@ -172,6 +172,17 @@ class GpuVision:
         objs = [o for o in st.get("objects") or [] if float(o.get("score") or 0) >= KEEP]
         return {"scores": normalize(objs), "objects": objs[:20], "tracks": st.get("tracks") or [], "samples": st.get("samples") or [], "jpeg": jpeg}
 
+    def appearance(self, cid: str) -> Any:
+        """這台攝影機最新畫面裡最大的那個人的外觀特徵（numpy）；沒有人、連不上 → None。"""
+        import numpy as np
+
+        res = self._post(f"/appearance?cam={urllib.parse.quote(cid)}", b"", soft=(404,))
+        people = (res or {}).get("people") or []
+        if not people:
+            return None
+        big = max(people, key=lambda p: p["box"][2] * p["box"][3])
+        return np.asarray(big["emb"], np.float32)
+
     # ---- 錄影分析（Jetson 的 index.py）----
 
     def summary(self, day: str) -> dict[str, Any] | None:
