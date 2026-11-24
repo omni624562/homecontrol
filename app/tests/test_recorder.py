@@ -575,3 +575,68 @@ def test_drop_strip_ghost(app_module):
     hub._drop_ghost("40ae30fc3be5")
     assert "40ae30fc3be5" not in hub.plugs and "40ae30fc3be5" not in hub.store.data["plugs"] and hub.store.data["plug_order"] == ["x"]
     hub._drop_ghost("nope")  # 沒有的話不出錯
+
+
+def test_claude_vision_gating(app_module, monkeypatch):
+    import asyncio
+
+    hub = app_module.hub
+    cv = hub.claude
+    monkeypatch.setattr(type(hub.assistant), "configured", property(lambda self: True))
+    monkeypatch.setattr(hub.assistant, "status", lambda: {"cap": 5.0, "month_usd": 0.0, "model": "claude-haiku-5-5"})
+    hub.store.data["settings"]["claude_vision"] = {"on": False, "cams": ["g"]}
+    assert not cv.allowed("describe", "g")  # 總開關關著：完全不送
+    hub.store.data["settings"]["claude_vision"] = {"on": True, "cams": ["g"]}
+    assert cv.allowed("describe", "g") and not cv.allowed("describe", "r") and not cv.allowed("second", "g")  # 預設：second 關
+    monkeypatch.setattr(hub.assistant, "status", lambda: {"cap": 5.0, "month_usd": 5.1, "model": "x"})
+    assert not cv.allowed("describe", "g")  # 到上限
+    called = []
+
+    async def fake_create(*a, **k):
+        called.append(k)
+    monkeypatch.setattr(cv, "allowed", lambda f, c=None: False)
+    assert asyncio.run(cv.look("describe", "g", [b"j"], "q")) is None and not called
+
+
+def test_describe_and_second_opinion(app_module, monkeypatch):
+    import asyncio
+
+    hub = app_module.hub
+    sent = []
+    monkeypatch.setattr(hub.notifier, "send", lambda *a, **k: sent.append(a))
+    asked = []
+
+    async def look(feature, cam_id, jpegs, prompt, max_tokens=400):
+        asked.append((feature, len(jpegs)))
+        return "一位穿藍色外套的人把紙箱放在門口後離開" if feature == "describe" else "看起來是坐在沙發上"
+
+    monkeypatch.setattr(hub.claude, "look", look)
+    monkeypatch.setattr(hub.claude, "allowed", lambda f, c=None: True)
+    monkeypatch.setattr(hub, "_entry_frames", lambda e: [b"a", b"b"])
+    entry = hub.face_log.add({"camera": "大門口", "kind": "zone", "name": "門口地板多了一個包裹", "sim": None})
+    asyncio.run(hub._describe_entry({"id": "g"}, entry, ("大門口：門口地板多了一個包裹", "14:12")))
+    assert entry["desc"].startswith("一位穿藍色外套") and sent[-1] == ("大門口：門口地板多了一個包裹", "14:12・一位穿藍色外套的人把紙箱放在門口後離開")
+    monkeypatch.setattr(hub, "_spawn", lambda coro: asyncio.run(coro))
+    hub._second_opinion({"id": "r", "name": "IN_HOUSE"}, "可能有人跌倒", b"jpeg")
+    assert sent[-1] == ("IN_HOUSE：Claude 看了", "看起來是坐在沙發上") and asked[-1] == ("second", 1)
+    # Claude 失敗：照原本的通知送
+    async def fail(*a, **k):
+        return None
+    monkeypatch.setattr(hub.claude, "look", fail)
+    asyncio.run(hub._describe_entry({"id": "g"}, {"id": "x", "name": "電梯開了"}, ("大門口：電梯開了", "09:00")))
+    assert sent[-1] == ("大門口：電梯開了", "09:00")
+
+
+def test_claude_vision_api_and_ask_tools(app_module, monkeypatch):
+    hub = app_module.hub
+    hub.cameras.list = [{"id": "g", "name": "大門口", "host": "x", "enabled": True, "role": "entry"}, {"id": "r", "name": "IN_HOUSE", "host": "y", "enabled": True}]
+    c, dev = _client(app_module)
+    hub.cameras.viewers = [dev["id"]]
+    r = c.put("/api/claude-vision", json={"on": True, "cams": ["g", "nope"], "second": True}).json()
+    assert r["on"] and r["cams"] == ["g"] and r["second"] and r["describe"]
+    monkeypatch.setattr(type(hub.assistant), "configured", property(lambda self: True))
+    monkeypatch.setattr(hub.assistant, "status", lambda: {"cap": 5.0, "month_usd": 0.0, "model": "claude-haiku-5-5"})
+    names = [t.name for t in hub.assistant._tools([])]
+    assert "look_camera" in names and "search_recordings" in names
+    c.put("/api/claude-vision", json={"on": False})
+    assert "look_camera" not in [t.name for t in hub.assistant._tools([])]  # 總開關關：問家裡看不到攝影機

@@ -586,7 +586,7 @@ function LogTab({ faces, cam }: { faces: FaceRep | null; cam: Cam }) {
             <li key={x.id} className="flex items-center gap-3 px-4 py-2.5">
               <span className="w-24 shrink-0 text-sm tabular-nums text-muted-foreground">{hhmm(x.t)}</span>
               <span className={cn("size-2.5 shrink-0 rounded-full", tone(x.kind))} aria-hidden />
-              <span className={cn("min-w-0 flex-1 text-sm", (x.kind === "stranger" || x.kind === "fall") && "font-semibold text-orange-600 dark:text-orange-400")}>{text(x)}{x.sim != null && <span className="ml-1 text-xs text-muted-foreground">相似度 {x.sim}</span>}</span>
+              <span className={cn("min-w-0 flex-1 text-sm", (x.kind === "stranger" || x.kind === "fall") && "font-semibold text-orange-600 dark:text-orange-400")}>{text(x)}{x.sim != null && <span className="ml-1 text-xs text-muted-foreground">相似度 {x.sim}</span>}{x.desc && <span className="block text-xs font-normal text-muted-foreground">{x.desc}</span>}</span>
               {x.thumb && (
                 <button type="button" onClick={() => setPlay({ cam: cam.id, t: x.t, title: text(x), photos: { id: x.id, frames: x.frames || 0 } })} className="relative shrink-0 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={`看${text(x)}的畫面`}>
                   <img src={`/api/faces/log/${x.id}.jpg`} alt="" className={cn("rounded-md object-cover", x.kind === "zone" ? "h-12 w-20" : "size-12")} loading="lazy" />

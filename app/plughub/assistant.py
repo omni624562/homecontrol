@@ -11,6 +11,7 @@ Claude 只能用這裡開給它的工具，全部走家庭中控原本的功能�
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -541,5 +542,80 @@ class Assistant:
                          "link_passes_rooms：這條訊號線經過的區域，某裝置有動靜時，人應該在這些區域之一",
             }, ensure_ascii=False)
 
-        return [get_home, set_power, set_timer, run_scene, turn_off_all, get_weather, get_energy, query_usage, get_history,
-                get_schedules, propose_schedule, propose_scene, get_signal_map]
+        tools = [get_home, set_power, set_timer, run_scene, turn_off_all, get_weather, get_energy, query_usage, get_history,
+                 get_schedules, propose_schedule, propose_scene, get_signal_map]
+        cv = getattr(hub, "claude", None)
+        if cv is not None and cv.allowed("ask"):
+            tools += self._camera_tools(actions)
+        return tools
+
+    def _camera_tools(self, actions: list[dict[str, Any]]) -> list[Any]:
+        """「Claude 看影像 → 問家裡看得到畫面」開著才有：只看得到「可以送」的攝影機；看了什麼都記在 actions（畫面上會標出來）。"""
+        from . import camera as camera_mod
+        from .claude_vision import image_block
+
+        hub = self.hub
+        cv = hub.claude
+        allowed = {c["id"]: c for c in hub.cameras.list if c["id"] in (cv.cfg.get("cams") or [])}
+
+        def cam(cid: str) -> dict[str, Any]:
+            c = allowed.get(cid) or next((x for x in allowed.values() if x.get("name") == cid), None)
+            if c is None:
+                raise ValueError(f"看不到攝影機 {cid}（只有：{'、'.join(x.get('name') or x['id'] for x in allowed.values()) or '沒有'}）")
+            return c
+
+        def note(text: str) -> None:
+            actions.append({"kind": "look", "label": text})
+            month = date.today().strftime("%Y-%m")
+            cur = hub.store.data.setdefault("assistant_usage", {}).setdefault(month, {"usd": 0.0, "count": 0})
+            cur["vision"] = cur.get("vision", 0) + 1
+
+        @beta_async_tool
+        async def list_cameras() -> str:
+            """可以看的攝影機（ID、名稱、門口或房間、現在有沒有人）。"""
+            return json.dumps([{"id": c["id"], "name": c.get("name"), "role": c.get("role"), "person_now": bool(hub.cameras.state.get(c["id"], {}).get("person"))}
+                               for c in allowed.values()], ensure_ascii=False)
+
+        @beta_async_tool
+        async def look_camera(camera_id: str) -> list[dict[str, Any]]:
+            """看這台攝影機「現在」的畫面（一張照片）。問「門口現在有沒有包裹」「客廳有人嗎」這類現在的狀況時用。"""
+            c = cam(camera_id)
+            jpeg = await asyncio.to_thread(camera_mod.snapshot, c)
+            note(f"看了{c.get('name')}現在的畫面")
+            return [image_block(jpeg), {"type": "text", "text": f"{c.get('name')} 現在 {datetime.now().strftime('%H:%M')} 的畫面"}]
+
+        @beta_async_tool
+        async def look_recording(camera_id: str, time: str) -> list[dict[str, Any]]:
+            """看錄影裡某個時間點的畫面（一張照片）。time 是「YYYY-MM-DD HH:MM」或今天的「HH:MM」。錄影：全部留幾天、有事的片段留比較久。"""
+            c = cam(camera_id)
+            try:
+                when = datetime.strptime(time, "%Y-%m-%d %H:%M") if len(time) > 5 else datetime.combine(date.today(), datetime.strptime(time, "%H:%M").time())
+            except ValueError:
+                return [{"type": "text", "text": "時間格式要是 YYYY-MM-DD HH:MM 或 HH:MM"}]
+            if not hub.recorder.url:
+                return [{"type": "text", "text": "沒有錄影機"}]
+            try:
+                jpeg = await asyncio.to_thread(hub.recorder.frame, c["id"], when.timestamp(), 800)
+            except Exception:  # noqa: BLE001
+                return [{"type": "text", "text": f"{when:%m/%d %H:%M} 沒有錄到"}]
+            note(f"看了{c.get('name')} {when:%m/%d %H:%M} 的錄影")
+            return [image_block(jpeg), {"type": "text", "text": f"{c.get('name')} {when:%m/%d %H:%M} 的錄影畫面"}]
+
+        @beta_async_tool
+        async def camera_events(days: int = 1) -> str:
+            """攝影機最近幾天記下的事（門開了、有人來、多了包裹、認出誰、不認得的人…），每筆有時間；要看當時的畫面再用 look_recording。"""
+            since = time.time() - max(1, min(7, days)) * 86400
+            names = {c.get("name") for c in allowed.values()}
+            ev = [{"t": datetime.fromtimestamp(x["t"]).strftime("%m/%d %H:%M"), "camera": x.get("camera"), "kind": x.get("kind"),
+                   "what": x.get("name"), "desc": x.get("desc")} for x in hub.face_log.items if x["t"] >= since and x.get("camera") in names]
+            return json.dumps(ev[-80:], ensure_ascii=False)
+
+        @beta_async_tool
+        async def search_recordings(query: str, days: int = 7) -> str:
+            """用描述找錄影（例如「穿紅衣服的人」「狗」「背包」）：回傳最像的時間點；只找得到人、動物、包包、車，門、電梯這種固定的東西找不到。再用 look_recording 看。"""
+            res = await asyncio.to_thread(hub.gpu.search, query, max(1, min(31, days)), None)
+            hits = [{"camera": allowed[h["cam"]].get("name"), "camera_id": h["cam"], "time": datetime.fromtimestamp(h["t"]).strftime("%Y-%m-%d %H:%M"), "what": h["cls"]}
+                    for h in (res or {}).get("hits") or [] if h["cam"] in allowed]
+            return json.dumps(hits[:8], ensure_ascii=False) if hits else "沒找到（或錄影分析還沒做好）"
+
+        return [list_cameras, look_camera, look_recording, camera_events, search_recordings]
