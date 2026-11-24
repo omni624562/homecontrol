@@ -1,4 +1,4 @@
-// 攝影機頁：每台一張卡片（即時畫面、在做什麼、還差哪一步）；點進去分三頁：畫面（框門、不要看的地方、基本設定）、要做什麼、紀錄
+// 攝影機頁：每台一張卡片（即時畫面、在做什麼、還差哪一步）；點進去同一頁：畫面＋偵測、要做什麼、紀錄、設定（電腦左右兩欄，手機上面有快速跳轉）
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Cat, ChevronLeft, ChevronRight, DoorOpen, Lightbulb, Loader2, Plus, ScanFace, ShieldAlert, Trash2, UserRoundX } from "lucide-react";
 import { toast } from "sonner";
@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { JumpChips } from "@/components/jump-chips";
 import { PageHeader } from "@/components/app-shell";
 import { DetectEditor } from "@/components/cam-detect";
 import { CamAccessBox, CamLive, SLOT, hhmm, type Cam, type CamAccess, type FacePerson, type FaceRep } from "@/components/camera-bits";
@@ -22,7 +23,8 @@ import type { Plug } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 type Room = { id: string; name: string };
-type Tab = "view" | "tasks" | "log";
+type Tab = "c-view" | "c-tasks" | "c-log" | "c-set";
+const SECTIONS: [Tab, string][] = [["c-view", "畫面"], ["c-tasks", "要做什麼"], ["c-log", "紀錄"], ["c-set", "設定"]];
 const PET = { cat: "貓", dog: "狗" } as Record<string, string>;
 const WINDOWS: [string, string, string][] = [["all", "", "整天"], ["evening", "18:00-06:00", "晚上 18:00～06:00"], ["night", "23:00-06:00", "半夜 23:00～06:00"]];
 const winOf = (r: MotionRule) => (!r.start ? "all" : WINDOWS.find(([, v]) => v === `${r.start}-${r.end}`)?.[0] || "custom");
@@ -79,14 +81,14 @@ function summary(c: Cam, rule: MotionRule | undefined): string[] {
 function todos(c: Cam, faces: FaceRep | null): { text: string; tab: Tab }[] {
   const out: { text: string; tab: Tab }[] = [];
   if (!c.enabled) return out;
-  if (!c.room) out.push({ text: "選拍的區域", tab: "view" });
+  if (!c.room) out.push({ text: "選拍的區域", tab: "c-set" });
   if (c.faces !== false && faces?.family.length) {
     const done = faces.family.filter((p) => p.samples > 0).length;
-    if (done < faces.family.length) out.push({ text: `登記家人的臉（${done}/${faces.family.length}）`, tab: "tasks" });
+    if (done < faces.family.length) out.push({ text: `登記家人的臉（${done}/${faces.family.length}）`, tab: "c-tasks" });
   }
   const doors = (c.zones || []).filter((z) => z.kind === "door");
-  if (doors.some((z) => !z.day)) out.push({ text: "記住門關著的樣子", tab: "view" });
-  else if (doors.some((z) => !z.night)) out.push({ text: "晚上再記一次門關著的樣子", tab: "view" });
+  if (doors.some((z) => !z.day)) out.push({ text: "記住門關著的樣子", tab: "c-view" });
+  else if (doors.some((z) => !z.night)) out.push({ text: "晚上再記一次門關著的樣子", tab: "c-view" });
   return out;
 }
 
@@ -131,7 +133,7 @@ export function CamerasPage() {
   const cam = sel ? cams?.find((c) => c.id === sel.id) : null;
   if (cam && can) {
     return (
-      <CamDetail key={cam.id} cam={cam} tab={sel!.tab} setTab={(tab) => setSel({ id: cam.id, tab })} onBack={() => setSel(null)}
+      <CamDetail key={cam.id} cam={cam} tab={sel!.tab} onBack={() => setSel(null)}
         rooms={rooms} faces={faces} rules={rules} plugs={state?.plugs || []} scenes={state?.scenes || []}
         setCams={setCams} setFaces={setFaces} setRules={setRules} />
     );
@@ -162,7 +164,7 @@ export function CamerasPage() {
               return (
                 <Card key={c.id} className="gap-0 overflow-hidden py-0">
                   <button className="block w-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-default" disabled={!can}
-                    onClick={() => setSel({ id: c.id, tab: "tasks" })} aria-label={`${c.name} 的設定`}>
+                    onClick={() => setSel({ id: c.id, tab: "c-view" })} aria-label={`${c.name} 的設定`}>
                     <div className="p-2 pb-0">
                       {can ? <Thumb cam={c}>{chips}</Thumb> : <div className="relative aspect-video rounded-lg bg-muted">{chips}<span className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground">開通後才看得到畫面</span></div>}
                     </div>
@@ -228,44 +230,51 @@ function AddCamera({ onAdded }: { onAdded: () => void }) {
 // ---- 一台攝影機的詳細頁 ----
 
 interface DetailProps {
-  cam: Cam; tab: Tab; setTab: (t: Tab) => void; onBack: () => void; rooms: Room[]; faces: FaceRep | null; rules: MotionRule[]; plugs: Plug[];
+  cam: Cam; tab: Tab; onBack: () => void; rooms: Room[]; faces: FaceRep | null; rules: MotionRule[]; plugs: Plug[];
   scenes: { id: string; name: string }[];
   setCams: (c: Cam[]) => void; setFaces: (f: FaceRep) => void; setRules: (r: MotionRule[]) => void;
 }
 
+const go = (id: Tab) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+
 function CamDetail(p: DetailProps) {
-  const { cam, tab, setTab } = p;
+  const { cam, tab } = p;
   const upd = async (body: object, ok?: string) => {
     const r = await call<{ cameras: Cam[] }>("PUT", `/api/cameras/${cam.id}`, body, ok);
     if (r) p.setCams(r.cameras);
   };
+  // 從卡片的「去設定」點進來：捲到那一段
+  useEffect(() => {
+    if (tab === "c-view") return;
+    const t = setTimeout(() => document.getElementById(tab)?.scrollIntoView({ block: "start" }), 50);
+    return () => clearTimeout(t);
+  }, [tab]);
+  const log = <LogTab faces={p.faces} cam={cam} />;
   return (
     <>
       <PageHeader title={cam.name} sub={`${cam.model ? `${cam.model}・` : ""}${cam.host}`}
         lead={<Button variant="ghost" className="-ml-2 h-9" onClick={p.onBack}><ChevronLeft />全部攝影機</Button>}
         actions={<Button variant="ghost" className="h-9 max-lg:hidden" onClick={p.onBack}><ChevronLeft />全部攝影機</Button>}
-        chips={(["view", "tasks", "log"] as Tab[]).map((t) => (
-          <button key={t} onClick={() => setTab(t)} aria-pressed={tab === t}
-            className={cn("shrink-0 rounded-full border px-4 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", tab === t ? "border-primary bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:bg-muted")}>
-            {t === "view" ? "畫面" : t === "tasks" ? "要做什麼" : "紀錄"}
-          </button>
-        ))} />
-      <div className="mx-auto max-w-3xl space-y-4 px-4 py-4 sm:px-6">
-        {tab === "view" && <ViewTab {...p} upd={upd} />}
-        {tab === "tasks" && <TasksTab {...p} upd={upd} />}
-        {tab === "log" && <LogTab faces={p.faces} cam={cam} />}
+        chips={<JumpChips sections={SECTIONS} />} chipsClassName="lg:hidden" />
+      <div className="mx-auto grid max-w-[112rem] items-start gap-4 px-4 py-4 sm:px-6 lg:grid-cols-[1.25fr_1fr] lg:px-8">
+        <div className="min-w-0 space-y-4">
+          <section id="c-view" className="scroll-mt-28 space-y-4"><DetectEditor cam={cam} scenes={p.scenes} setCams={p.setCams} upd={upd} /></section>
+          <div className="max-lg:hidden">{log}</div>
+        </div>
+        <div className="min-w-0 space-y-4">
+          <section id="c-tasks" className="scroll-mt-28 space-y-4"><TasksTab {...p} upd={upd} /></section>
+          <section id="c-log" className="scroll-mt-28 lg:hidden">{log}</section>
+          <section id="c-set" className="scroll-mt-28 space-y-2"><div className="px-1 text-lg font-bold">這台的設定</div><CamSettings {...p} upd={upd} /></section>
+        </div>
       </div>
     </>
   );
 }
 
-// 畫面：偵測（門、有人進來、東西、線、不要看的地方）＋基本設定
-function ViewTab({ cam, rooms, scenes, setCams, upd, onBack }: DetailProps & { upd: (b: object, ok?: string) => Promise<void> }) {
+// 這台的設定：拍的是門口還是房間、區域、名稱、啟用、移除
+function CamSettings({ cam, rooms, setCams, upd, onBack }: DetailProps & { upd: (b: object, ok?: string) => Promise<void> }) {
   const [name, setName] = useState(cam.name);
   return (
-    <>
-      <DetectEditor cam={cam} scenes={scenes} setCams={setCams} upd={upd} />
-
       <Card className="gap-0 divide-y py-0">
         <div className="space-y-2 px-4 py-3.5">
           <div className="font-medium">這台拍的是？</div>
@@ -310,7 +319,6 @@ function ViewTab({ cam, rooms, scenes, setCams, upd, onBack }: DetailProps & { u
           </AlertDialog>
         </div>
       </Card>
-    </>
   );
 }
 
@@ -328,8 +336,9 @@ function Task({ icon: I, title, hint, on, onChange, children, disabled }: { icon
   );
 }
 
-function TasksTab({ cam, faces, rules, plugs, scenes, setFaces, setRules, setCams, setTab, upd }: DetailProps & { upd: (b: object, ok?: string) => Promise<void> }) {
+function TasksTab({ cam, faces, rules, plugs, scenes, setFaces, setRules, setCams, upd }: DetailProps & { upd: (b: object, ok?: string) => Promise<void> }) {
   const [guest, setGuest] = useState("");
+  const [openP, setOpenP] = useState<string | null>(null); // 展開哪位家人的回家情境
   const entry = cam.role === "entry";
   const rule = rules.find((r) => cam.room && r.room === cam.room);
   const facesCall = async (method: string, path: string, body?: object, ok?: string) => { const r = await call<FaceRep>(method, path, body, ok); if (r) setFaces(r); };
@@ -377,9 +386,15 @@ function TasksTab({ cam, faces, rules, plugs, scenes, setFaces, setRules, setCam
           return (
             <div key={pp.id} className="space-y-2 rounded-lg border bg-background p-3">
               {personRow(pp)}
-              {entry && (
+              {entry && openP !== pp.id && (
+                <button type="button" onClick={() => setOpenP(pp.id)} className="flex w-full items-center gap-2 rounded-md text-left text-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                  <span className="min-w-0 flex-1 truncate">{SLOT.filter(([k]) => a[k]).map(([k, label]) => `${label}：${scenes.find((sc) => sc.id === a[k])?.name || "?"}`).join("・") || "回家時不做事"}{a.notify ? "・會通知大家" : ""}</span>
+                  <span className="shrink-0 font-medium text-primary">回家要做什麼 ›</span>
+                </button>
+              )}
+              {entry && openP === pp.id && (
                 <>
-                  <div className="grid gap-2 sm:grid-cols-3">
+                  <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3">
                     {SLOT.map(([k, label]) => (
                       <label key={k} className="flex items-center gap-2 text-sm">
                         <span className="w-20 shrink-0 text-muted-foreground">{label}回家</span>
@@ -391,6 +406,7 @@ function TasksTab({ cam, faces, rules, plugs, scenes, setFaces, setRules, setCam
                     ))}
                   </div>
                   <label className="flex items-center gap-2 text-sm"><Switch checked={!!a.notify} onCheckedChange={(v) => facesCall("PUT", "/api/faces/actions", { [pp.id]: { notify: v } }, v ? `${pp.name} 回家時會通知` : "不通知")} aria-label={`${pp.name} 回家時通知`} />回家時通知大家</label>
+                  <Button variant="ghost" size="sm" className="h-7 px-2 text-muted-foreground" onClick={() => setOpenP(null)}>收起</Button>
                 </>
               )}
             </div>
@@ -423,17 +439,17 @@ function TasksTab({ cam, faces, rules, plugs, scenes, setFaces, setRules, setCam
       </Task>
 
       <Task icon={DoorOpen} title="開門時通知" on={doors.some((z) => z.act.notify !== "off")}
-        hint={doors.length ? doors.map((z) => `${z.name}：${z.act.notify === "always" ? "每次開了都通知" : z.act.notify === "away" ? "沒人在家時開了才通知" : "不通知"}`).join("・") : "先到「畫面」按「新增偵測」選「門」"}
+        hint={doors.length ? doors.map((z) => `${z.name}：${z.act.notify === "always" ? "每次開了都通知" : z.act.notify === "away" ? "沒人在家時開了才通知" : "不通知"}`).join("・") : "先在畫面下面按「新增偵測」選「門」"}
         onChange={async (v) => {
-          if (!doors.length) { setTab("view"); toast("在畫面上按「新增偵測」，選「門」"); return; }
+          if (!doors.length) { go("c-view"); toast("在畫面上按「新增偵測」，選「門」"); return; }
           const r = await call<{ cameras: Cam[] }>("PUT", `/api/cameras/${cam.id}/zones`, { zones: (cam.zones || []).map((z) => (z.kind === "door" ? { ...z, act: { ...z.act, notify: v ? "away" : "off" } } : z)) }, v ? "沒人在家時開門會通知" : "開門不通知");
           if (r) setCams(r.cameras);
         }}>
-        <p className="text-sm text-muted-foreground">每個門什麼時候通知、要不要執行情境，在「畫面」點那個門就能改。沒人在家時門開了，會先等 3 分鐘：有家人的手機連上 Wi-Fi、或門口認出家人，就不通知。</p>
+        <p className="text-sm text-muted-foreground">每個門什麼時候通知、要不要執行情境，在畫面上點那個門就能改。沒人在家時門開了，會先等 3 分鐘：有家人的手機連上 Wi-Fi、或門口認出家人，就不通知。</p>
       </Task>
 
       <Task icon={Lightbulb} title="有人就開燈" on={!!rule?.enabled} disabled={!cam.room}
-        hint={cam.room ? "看到人就開，沒人一陣子自動關；手動關掉後要等安靜夠久才會再自動開" : "先到「畫面」選這台拍的區域"}
+        hint={cam.room ? "看到人就開，沒人一陣子自動關；手動關掉後要等安靜夠久才會再自動開" : "先在下面「這台的設定」選拍的區域"}
         onChange={(v) => setRule({ enabled: v }, v ? "有人就會開燈" : "不會自動開燈")}>
         {rule && (
           <div className="grid gap-2 sm:grid-cols-2">
@@ -475,12 +491,14 @@ function TasksTab({ cam, faces, rules, plugs, scenes, setFaces, setRules, setCam
 }
 
 function LogTab({ faces, cam }: { faces: FaceRep | null; cam: Cam }) {
-  const items = (faces?.log || []).filter((x) => x.camera === cam.name);
+  const [all, setAll] = useState(false);
+  const every = (faces?.log || []).filter((x) => x.camera === cam.name);
+  const items = all ? every : every.slice(0, 5);
   const tone = (k: string) => (k === "stranger" || k === "fall" ? "bg-orange-500" : k === "family" ? "bg-emerald-500" : k === "door" ? "bg-primary" : "bg-muted-foreground");
   const text = (x: (typeof items)[number]) => x.kind === "stranger" ? "不認得的人" : x.kind === "guest" ? `${x.name}（訪客）` : x.kind === "pet" ? `看到${x.name}` : x.kind === "fall" ? "可能有人跌倒" : x.kind === "door" ? "門打開了" : `認出 ${x.name}`;
   return (
     <Card className="gap-0 py-0">
-      <div className="border-b px-4 py-3 font-semibold">最近 7 天</div>
+      <div className="border-b px-4 py-3 font-semibold">紀錄<span className="ml-2 text-sm font-normal text-muted-foreground">最近 7 天</span></div>
       {items.length === 0 ? <p className="px-4 py-6 text-sm text-muted-foreground">還沒有紀錄。</p> : (
         <ul className="divide-y">
           {items.map((x) => (
@@ -493,6 +511,7 @@ function LogTab({ faces, cam }: { faces: FaceRep | null; cam: Cam }) {
           ))}
         </ul>
       )}
+      {every.length > 5 && <button type="button" onClick={() => setAll(!all)} className="w-full border-t px-4 py-2.5 text-left text-sm font-medium text-primary hover:bg-muted/60">{all ? "只看最近幾筆" : `看全部 ${every.length} 筆`}</button>}
       <p className="border-t px-4 py-2.5 text-xs text-muted-foreground">只有陌生人和跌倒會存小圖，7 天後自動刪掉；家人、訪客只記名字。</p>
     </Card>
   );
