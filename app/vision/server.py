@@ -257,7 +257,8 @@ class RtmoPose:
             ank = [q for q in (k[15], k[16]) if q[2] >= 0.3]
             ft = (sum(q[1] for q in ank) / len(ank), sum(q[0] for q in ank) / len(ank)) if ank else ((x0 + x1) / 2 / w, y1 / h)
             people.append({"score": round(float(b[4]), 3), "torso": vision_mod.torso_deg(k), "aspect": bh / bw,
-                           "box": (int(x0), int(y0), int(bw), int(bh)), "foot": (min(1.0, max(0.0, ft[0])), min(1.0, max(0.0, ft[1])))})
+                           "box": (int(x0), int(y0), int(bw), int(bh)), "foot": (min(1.0, max(0.0, ft[0])), min(1.0, max(0.0, ft[1]))),
+                           "kp": [[round(q[0], 4), round(q[1], 4), round(q[2], 3)] for q in k]})  # 17 個關節點（y, x, 分數）：手勢用
         return people
 
 

@@ -607,6 +607,7 @@ function CameraLinkCard() {
     <SCard id="s-cam" icon={Cctv} title="攝影機">
       <LinkRow label="攝影機和認臉" hint="即時畫面、這台要幫我做什麼、誰可以看畫面、紀錄，都在「攝影機」頁" href="#cameras" />
       <RecordingRows />
+      <GestureRows />
     </SCard>
   );
 }
@@ -660,6 +661,82 @@ function RecordingRows() {
             <span><i className="mr-1 inline-block size-2 rounded-sm bg-amber-500 align-middle" />更早的有事片段 {Math.round(d.event_gb || 0)} GB</span>
             <span>硬碟剩 {Math.round(d.free_gb)} GB／{Math.round(d.total_gb)} GB</span>
           </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+// 手勢遙控：對著攝影機舉手 3 秒，開關插座、執行情境或全部關掉
+type GAct = { type: "plug" | "scene" | "off"; id: string | null } | null;
+interface GestureCfg { on: boolean; cam: string | null; map: Record<string, GAct>; now?: { name: string; held: number } | null; live?: boolean }
+const GESTURES: [string, string, string][] = [["one_up", "🙋", "舉一隻手 3 秒"], ["both_up", "🙌", "舉雙手 3 秒"], ["cross", "🙅", "雙手在胸前交叉 3 秒"]];
+function GestureRows() {
+  const { state } = useHub();
+  const [g, setG] = useState<GestureCfg | null>(null);
+  const [cams, setCams] = useState<{ id: string; name: string }[]>([]);
+  const [trying, setTrying] = useState(0);
+  useEffect(() => {
+    api<GestureCfg>("GET", "/api/gestures").then(setG).catch(() => setG(null));
+    api<{ cameras: { id: string; name: string }[] }>("GET", "/api/cameras").then((r) => setCams(r.cameras)).catch(() => {});
+  }, []);
+  useEffect(() => {
+    if (!trying) return;
+    const t = setInterval(() => {
+      if (Date.now() > trying) { setTrying(0); return; }
+      api<GestureCfg>("GET", "/api/gestures").then(setG).catch(() => {});
+    }, 500);
+    return () => clearInterval(t);
+  }, [trying]);
+  if (!g || !cams.length) return null;
+  const put = async (patch: Partial<GestureCfg>, ok = "已更新") => {
+    try {
+      setG(await api<GestureCfg>("PUT", "/api/gestures", { on: g.on, cam: g.cam, map: g.map, ...patch }));
+      toast.success(ok);
+    } catch (e) {
+      toast.error("沒有成功", { description: (e as Error).message });
+    }
+  };
+  const plugs = state?.plugs || [], scenes = state?.scenes || [];
+  const val = (a: GAct) => (!a ? "_none" : a.type === "off" ? "off" : `${a.type}:${a.id}`);
+  const parse = (v: string): GAct => (v === "_none" ? null : v === "off" ? { type: "off", id: null } : { type: v.split(":")[0] as "plug" | "scene", id: v.slice(v.indexOf(":") + 1) });
+  return (
+    <>
+      <SRow label="手勢遙控" hint="對著攝影機做手勢，開關電器或執行情境；要維持 3 秒，同一個手勢 10 秒內只算一次">
+        <Switch checked={g.on} onCheckedChange={(v) => put({ on: v, cam: g.cam || cams[cams.length - 1]?.id || null }, v ? "手勢遙控打開了" : "手勢遙控關了")} aria-label="手勢遙控" />
+      </SRow>
+      {g.on && (
+        <div className="space-y-3 border-t px-4 py-3.5 sm:px-5">
+          <label className="flex items-center gap-2 text-sm"><span className="w-16 shrink-0 text-muted-foreground">用哪台</span>
+            <Select value={g.cam || ""} onValueChange={(v) => put({ cam: v })}>
+              <SelectTrigger className="h-8 w-40 bg-background" aria-label="用哪台攝影機"><SelectValue placeholder="選攝影機" /></SelectTrigger>
+              <SelectContent>{cams.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
+            </Select>
+          </label>
+          {GESTURES.map(([k, icon, text]) => (
+            <div key={k} className="flex flex-wrap items-center gap-2 text-sm">
+              <span className={cn("flex size-10 items-center justify-center rounded-lg border text-xl", g.now?.name === k && "border-primary bg-primary/10")} aria-hidden>{icon}</span>
+              <span className="w-36 shrink-0">{text}</span>
+              <Select value={val(g.map[k] || null)} onValueChange={(v) => put({ map: { ...g.map, [k]: parse(v) } })}>
+                <SelectTrigger className="h-8 min-w-0 flex-1 bg-background sm:max-w-56" aria-label={`${text}要做什麼`}><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="_none">不做事</SelectItem>
+                  <SelectItem value="off">全部關掉</SelectItem>
+                  {plugs.map((p) => <SelectItem key={p.id} value={`plug:${p.id}`}>開關 {p.name}</SelectItem>)}
+                  {scenes.map((sc) => <SelectItem key={sc.id} value={`scene:${sc.id}`}>執行 {sc.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          ))}
+          <div className="flex flex-wrap items-center gap-3">
+            <Button variant="outline" size="sm" className="bg-background" disabled={!!trying || !g.cam} onClick={() => setTrying(Date.now() + 30000)}>試試看：做一次手勢</Button>
+            {trying ? (
+              <span className="text-sm" aria-live="polite">
+                {!g.live ? "這台還沒在 Jetson 上即時看，等一下再試" : g.now ? `看到「${GESTURES.find(([k]) => k === g.now!.name)?.[2].replace(" 3 秒", "")}」${g.now.held >= 3 ? "，算一次了" : `，再維持 ${Math.max(0, 3 - g.now.held).toFixed(1)} 秒`}` : "還沒看到手勢，站在攝影機看得到的地方"}
+              </span>
+            ) : null}
+          </div>
+          <p className="text-xs text-muted-foreground">做到了會記在攝影機的紀錄裡；開關插座的話，電器本身會有反應。「試試看」會跟著做，也就是真的會開關，想先練習就先選「不做事」。</p>
         </div>
       )}
     </>

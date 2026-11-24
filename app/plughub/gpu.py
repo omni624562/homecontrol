@@ -139,7 +139,9 @@ class GpuVision:
 
         if not self.url or time.time() - self._fail_at < RETRY:
             return
-        want = {c["id"]: {"url": rtsp_url(c), "ignore": c.get("ignore") or [], "pose": bool(c.get("fall"))} for c in cams if c.get("enabled") and c.get("host")}
+        g = self._settings().get("gestures") or {}
+        want = {c["id"]: {"url": rtsp_url(c), "ignore": c.get("ignore") or [], "pose": bool(c.get("fall")),
+                          "gesture": bool(g.get("on")) and g.get("cam") == c["id"]} for c in cams if c.get("enabled") and c.get("host")}
         sig = json.dumps(want, sort_keys=True)
         if sig == self._pushed and time.time() - self._pushed_at < 300:
             return
@@ -171,7 +173,7 @@ class GpuVision:
         self.last_ok = time.time()
         objs = [o for o in st.get("objects") or [] if float(o.get("score") or 0) >= KEEP]
         return {"scores": normalize(objs), "objects": objs[:20], "tracks": st.get("tracks") or [], "samples": st.get("samples") or [],
-                "poses": st.get("poses") or [], "jpeg": jpeg}
+                "poses": st.get("poses") or [], "gestures": st.get("gestures") or [], "gesture_now": st.get("gesture_now"), "jpeg": jpeg}
 
     def classify(self, jpeg: bytes, box: list[float]) -> str | None:
         """框裡多的是什麼（包裹、袋子、鞋子…）；看不出來、連不上 → None。"""

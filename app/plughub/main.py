@@ -1217,6 +1217,34 @@ async def cameras_empty_cancel(cam_id: str, request: Request) -> dict[str, Any]:
     return {"cameras": hub.cameras.public()}
 
 
+@app.get("/api/gestures")
+async def gestures_get(request: Request) -> dict[str, Any]:
+    """手勢遙控的設定＋那台攝影機現在看到的手勢（「試試看」用）。"""
+    _need_view(request)
+    g = store.data["settings"].get("gestures") or {"on": False, "cam": None, "map": {}}
+    st = hub.cameras.state.get(g.get("cam") or "", {})
+    return {**g, "now": st.get("gesture_now"), "live": st.get("engine") == "stream"}
+
+
+@app.put("/api/gestures")
+async def gestures_put(request: Request, body: dict = Body(...)) -> dict[str, Any]:
+    """{"on", "cam", "map": {"one_up"|"both_up"|"cross": {"type": "plug"|"scene"|"off", "id"} | null}}"""
+    _need_view(request)
+    cams = {c["id"] for c in hub.cameras.list}
+    m = {}
+    for k, a in (body.get("map") or {}).items():
+        if k not in ("one_up", "both_up", "cross") or not isinstance(a, dict):
+            continue
+        t = a.get("type")
+        if t == "plug" and a.get("id") in hub.plugs or t == "scene" and store.scene(a.get("id") or "") or t == "off":
+            m[k] = {"type": t, "id": a.get("id") if t != "off" else None}
+    store.data["settings"]["gestures"] = {"on": bool(body.get("on")), "cam": body.get("cam") if body.get("cam") in cams else None, "map": m}
+    store.save()
+    hub.gpu._pushed = None  # 馬上告訴 Jetson 要不要看手勢
+    await asyncio.to_thread(hub.gpu.push_streams, hub.cameras.list)
+    return await gestures_get(request)
+
+
 @app.get("/api/recorder")
 async def recorder_get(request: Request) -> dict[str, Any]:
     """錄影機（另一台主機全天錄影）的狀態。"""
