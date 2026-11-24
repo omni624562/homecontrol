@@ -19,6 +19,9 @@ API（都要 Authorization: Bearer <token>；POST 的 body 都是 JPEG）：
   PUT  /config                {"cams": {"id": {"url": "rtsp://...", "ignore": [...]}}}：直接看哪些攝影機的影片（stream.py）
   GET  /cams/{id}/state?since=   最新的物件、追蹤中的人、since 之後每一張的腳的位置
   GET  /cams/{id}/frame.jpg      最新一張畫面
+  GET  /summary?day=YYYY-MM-DD   那天錄影分析的結果（有人來的時段、各種東西出現幾次；index.py）
+  POST /search                {"q": "穿紅衣服的人", "days": 7, "cam": null} → 最像的時間點
+  POST /index/run?day=        馬上分析那天的錄影（平常半夜 2 點自己做）
 """
 from __future__ import annotations
 
@@ -29,6 +32,7 @@ import os
 import subprocess
 import threading
 import time
+from datetime import date, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -47,6 +51,7 @@ from plughub import faces as faces_mod  # noqa: E402  跟樹莓派同一份程�
 from plughub import segment as seg_mod  # noqa: E402
 from plughub import vision as vision_mod  # noqa: E402
 from stream import Streams  # noqa: E402
+from index import Index  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 LOG = logging.getLogger("vision")
@@ -318,6 +323,7 @@ rtmo: RtmoPose | None = None
 faces = faces_mod.Engine()
 segmenter: Segmenter | None = None
 streams: Streams | None = None
+index: Index | None = None
 stat = Stat()
 
 
@@ -386,10 +392,21 @@ class Handler(BaseHTTPRequestHandler):
         if not self._auth():
             return
         u = urlparse(self.path)
+        if u.path == "/summary":
+            if index is None:
+                self._json(503, {"error": "錄影分析還沒載入"})
+                return
+            try:
+                day = date.fromisoformat((parse_qs(u.query).get("day") or [""])[0])
+            except ValueError:
+                day = date.today() - timedelta(days=1)
+            self._json(200, index.summary(day))
+            return
         if u.path == "/status":
             cams = {cid: {k: v for k, v in c.state(time.time()).items() if k in ("ok", "error", "fps", "t")} for cid, c in (streams.cams.items() if streams else [])}
             self._json(200, {"model": MODEL, "pose": "rtmo-gpu" if rtmo else "movenet-cpu", "faces": "yunet-gpu" if face_gpu else "opencv", "ready": detector is not None and segmenter is not None,
-                             "sam": "gpu" if segmenter and segmenter.gpu else "cpu" if segmenter else None, "stats": stat.public(), "streams": cams})
+                             "sam": "gpu" if segmenter and segmenter.gpu else "cpu" if segmenter else None, "stats": stat.public(), "streams": cams,
+                             "index": index.status if index else None})
             return
         parts = u.path.strip("/").split("/")
         if len(parts) == 3 and parts[0] == "cams" and streams:
@@ -417,6 +434,37 @@ class Handler(BaseHTTPRequestHandler):
                 return
         self._json(404, {"error": "沒有這個"})
 
+    def _index_post(self, u, data: bytes) -> tuple[int, dict]:
+        if index is None:
+            return 503, {"error": "錄影分析還沒載入"}
+        if u.path == "/search":
+            try:
+                b = json.loads(data or b"{}")
+                return 200, index.search(str(b.get("q") or ""), int(b.get("days") or 7), b.get("cam"))
+            except Exception as err:  # noqa: BLE001
+                LOG.exception("找錄影失敗")
+                return 500, {"error": str(err)[:200]}
+        try:
+            day = date.fromisoformat((parse_qs(u.query).get("day") or [""])[0])
+        except ValueError:
+            return 400, {"error": "要給 day=YYYY-MM-DD"}
+        if index.status.get("running"):
+            return 409, {"error": "正在分析"}
+
+        def go() -> None:
+            index.status.update(running=True, day=str(day))
+            try:
+                index.run_day(day)
+                index.status.update(last=str(day), error=None)
+            except Exception as err:  # noqa: BLE001
+                index.status["error"] = str(err)[:200]
+                LOG.exception("分析錄影失敗")
+            finally:
+                index.status["running"] = False
+
+        threading.Thread(target=go, daemon=True).start()
+        return 200, {"ok": True, "day": str(day)}
+
     def do_PUT(self) -> None:  # noqa: N802
         data = self.rfile.read(min(int(self.headers.get("Content-Length") or 0), MAX_BODY))
         if not self._auth():
@@ -436,6 +484,9 @@ class Handler(BaseHTTPRequestHandler):
         if not self._auth():
             return
         u = urlparse(self.path)
+        if u.path in ("/search", "/index/run"):
+            self._json(*self._index_post(u, data))
+            return
         try:
             code, obj = handle(u.path, {k: v[0] for k, v in parse_qs(u.query).items()}, data)
         except ValueError as err:
@@ -457,6 +508,11 @@ def main() -> None:
     blank = cv2.imencode(".jpg", np.zeros((1080, 1920, 3), np.uint8))[1].tobytes()
     detector.detect(_decode(blank))  # 暖機
     streams = Streams(detector.detect)
+    global index
+    try:
+        index = Index(detector.detect, GPU)
+    except Exception:  # noqa: BLE001  摘要、找錄影不能用，其他照常
+        LOG.exception("錄影分析載入失敗")
     global rtmo
     try:
         rtmo = RtmoPose()

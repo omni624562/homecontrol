@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { track } from "@/lib/usage";
 import { SetupNudge } from "@/components/setup-bits";
+import { SummaryCard } from "@/components/clip-player";
 import { DndContext, KeyboardSensor, PointerSensor, closestCorners, useDroppable, useSensor, useSensors, type DragEndEvent, type DragOverEvent } from "@dnd-kit/core";
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -507,6 +508,7 @@ export function HomePage() {
       />
       <div className="mx-auto max-w-[112rem] px-4 pt-2 sm:px-6 lg:px-8">
         <MorningCard onLeave={() => setLeave(true)} onSheet={setSheet} />
+        <SummaryCard />
         <SetupNudge />
         {/* 不放進標題列時：在畫面外量情境按鈕要多寬，用來判斷放不放得下 */}
         {!compact && <div aria-hidden className="pointer-events-none invisible fixed top-0 -left-[9999px]">{sceneBar}</div>}

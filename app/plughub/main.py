@@ -60,7 +60,7 @@ import secrets
 import time
 import uuid
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -79,6 +79,7 @@ from . import tls as tlsmod
 from .locate import MIN_SAMPLES as LOCATE_MIN, TRAIN_S as LOCATE_TRAIN_S
 from .assistant import MODELS as ASSISTANT_MODELS, Assistant
 from .hub import APP_VERSION, SOURCE, Hub, Locked
+from .summary import build_summary
 from .notify import LineError, Notifier
 from .store import Store, _hms
 
@@ -1229,6 +1230,53 @@ async def vision_put(request: Request, body: dict = Body(...)) -> dict[str, Any]
     store.save()
     hub.gpu.error, hub.gpu._fail_at = None, 0.0
     return {**hub.gpu.public(), "engines": {}}
+
+
+@app.get("/api/cameras/{cam_id}/frame.jpg")
+async def cameras_frame(cam_id: str, request: Request, t: float, w: int = 640) -> Response:
+    """錄影裡 t（秒，epoch）那一刻的一張畫面（搜尋結果、摘要的縮圖）。只有「可以看攝影機」的裝置拿得到。"""
+    _need_view(request)
+    if not hub.cameras.get(cam_id) or not hub.recorder.url:
+        raise HTTPException(404, "沒有錄影")
+    w = 320 if w <= 320 else 640 if w <= 640 else 1280
+    CLIP_DIR.mkdir(mode=0o700, exist_ok=True)
+    safe = re.sub(r"[^\w-]", "", cam_id)
+    path = CLIP_DIR / f"{safe}-{int(t)}-{w}.jpg"
+    if not path.exists():
+        try:
+            data = await asyncio.to_thread(hub.recorder.frame, cam_id, t, w)
+        except Exception as err:  # noqa: BLE001
+            code = getattr(err, "code", None)
+            raise HTTPException(404 if code == 404 else 502, "那個時間沒有錄到" if code == 404 else "錄影機連不上") from None
+        path.write_bytes(data)
+    return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
+
+
+@app.get("/api/recordings/search")
+async def recordings_search(request: Request, q: str, days: int = 7, cam: str | None = None) -> dict[str, Any]:
+    """打字找錄影：{"hits": [{"cam", "name", "t", "cls", "box", "score"}]}。"""
+    _need_view(request)
+    q = q.strip()[:80]
+    if not q:
+        return {"hits": []}
+    res = await asyncio.to_thread(hub.gpu.search, q, max(1, min(8, days)), cam)
+    if res is None:
+        raise HTTPException(503, "錄影分析連不上（Jetson）")
+    names = {c["id"]: c.get("name") or c["id"] for c in hub.cameras.list}
+    hub.usage.hit("view:search", every=0)
+    return {"hits": [{**h, "name": names.get(h["cam"], h["cam"])} for h in res.get("hits") or [] if h["cam"] in names], "classes": res.get("classes") or []}
+
+
+@app.get("/api/summary")
+async def summary_get(request: Request, day: str | None = None) -> dict[str, Any]:
+    """某一天（預設昨天）每台攝影機的摘要：紀錄裡的事件＋Jetson 半夜重看錄影的結果。"""
+    _need_view(request)
+    try:
+        d = date.fromisoformat(day) if day else date.today() - timedelta(days=1)
+    except ValueError:
+        raise HTTPException(400, "日期格式是 YYYY-MM-DD") from None
+    vis = await asyncio.to_thread(hub.gpu.summary, d.isoformat())
+    return build_summary(d, hub.cameras.list, hub.face_log.items, vis)
 
 
 @app.get("/api/cameras/{cam_id}/clip.mp4")
