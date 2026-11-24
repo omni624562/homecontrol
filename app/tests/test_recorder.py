@@ -814,3 +814,41 @@ def test_gestures_live_pose(app_module):
     assert r["live"] and r["people"][0]["kp"] == kp
     hub.cameras.state["r"]["pose_last"]["t"] = _t.time() - 10  # 太舊：不畫
     assert c.get("/api/gestures").json()["people"] == []
+
+
+def test_finger_gestures_hold_and_filter(app_module, monkeypatch):
+    import asyncio
+
+    m = _stream_mod()
+    cam = m.Cam.__new__(m.Cam)
+    cam.lock = __import__("threading").Lock()
+    cam.g_cur, cam.g_fired, cam.g_events, cam.g_hand = (None, 0.0, 0.0), False, m.deque(), None
+    still = [{"box": [0, 0, 10, 20], "kp": _kp((0.5, 0.58), (0.5, 0.42))}]  # 手放下：沒有舉手的手勢
+    reply = {"h": [{"px": 190, "presence": 0.97, "gesture": "open", "points": []}]}
+    cam.hands = lambda img, people: reply["h"]
+    for i in range(6):  # 每 0.4 秒，維持 2 秒
+        cam._gesture(still, 100 + i * 0.4, img=object())
+    assert [e[1] for e in cam.g_events] == ["f_open"]
+    cam.g_cur, cam.g_fired, cam.g_events = (None, 0.0, 0.0), False, m.deque()
+    reply["h"] = [{"px": 50, "presence": 0.7, "gesture": "open", "points": []}]  # 別人的小手：不算
+    for i in range(10):
+        cam._gesture(still, 200 + i * 0.4, img=object())
+    assert not cam.g_events
+
+    hub = app_module.hub
+    toggled = []
+
+    async def gp(pid, on):
+        toggled.append((pid, on))
+
+    monkeypatch.setattr(hub, "_gesture_power", gp)
+    monkeypatch.setattr(hub, "_spawn", lambda coro: asyncio.run(coro))
+    plug = type("P", (), {"id": "lamp", "online": True, "is_on": True})()
+    monkeypatch.setattr(hub, "plugs", {"lamp": plug})
+    monkeypatch.setattr(hub, "name", lambda p: "客廳燈")
+    hub.store.data["settings"]["gestures"] = {"on": True, "cam": "r", "map": {"f_open": {"type": "plug_on", "id": "lamp"}, "f_fist": {"type": "plug_off", "id": "lamp"}}}
+    hub._face_cool = {}
+    hub.cameras.state["r"] = {"gestures": [[1.0, "f_open"], [2.0, "f_fist"]]}
+    hub._gesture_events({"id": "r", "name": "IN_HOUSE"}, 1000.0)
+    assert toggled == [("lamp", True), ("lamp", False)]  # 張開＝開（就算已經開著）、握拳＝關
+    assert "手勢（握拳）：關掉客廳燈" in hub.face_log.items[-1]["name"]

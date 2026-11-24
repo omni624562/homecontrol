@@ -329,6 +329,7 @@ faces = faces_mod.Engine()
 segmenter: Segmenter | None = None
 streams: Streams | None = None
 index: Index | None = None
+hands = None  # 手指手勢（測試中，第一次用到才載入）
 stat = Stat()
 
 
@@ -449,6 +450,22 @@ class Handler(BaseHTTPRequestHandler):
                     since = 0.0
                 ear = streams.ears.get(parts[1])
                 self._json(200, {**cam.state(since), "sounds": ear.recent(since) if ear else [], "sound_error": ear.error if ear else None})
+                return
+            if parts[2] == "hands":  # 手指手勢（測試中）：最新畫面＋最近一次的姿勢
+                global hands
+                if hands is None:
+                    from hands import Hands
+
+                    hands = Hands()
+                with cam.lock:
+                    img = cam.frame
+                    poses = list(cam.poses)
+                if img is None or not poses:
+                    self._json(200, {"hands": [], "note": "還沒有畫面或姿勢（要有人、而且這台開了手勢或跌倒偵測）"})
+                    return
+                t, people = poses[-1]
+                save = (parse_qs(u.query).get("save") or ["0"])[0] == "1"
+                self._json(200, {"t": t, "age": round(time.time() - t, 1), "hands": hands.analyze(img, people, save)})
                 return
             if parts[2] == "frame.jpg":
                 data = cam.jpeg()

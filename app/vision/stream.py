@@ -25,6 +25,10 @@ SAMPLES_KEEP = 20  # 秒：腳的位置的紀錄留多久
 POSE_EVERY = 0.4  # 秒：開了跌倒偵測或手勢、又有人時，多久算一次姿勢（每秒 2.5 次）
 GESTURE_HOLD = 3.0  # 秒：手勢要維持這麼久才算（伸懶腰、拿東西不會誤觸）
 GESTURE_GAP = 0.9  # 秒：中間看不清楚這麼短不算放下
+FINGER_HOLD = 2.0  # 秒：手指手勢維持這麼久才算
+FINGER_MIN_PX = 100  # 手（裁下來的那一塊）至少這麼大：太遠的、房間裡別人隨手的動作不算
+FINGER_MIN_P = 0.85  # 手部模型「這是手」的把握
+FINGERS = {"open": "f_open", "fist": "f_fist", "v": "f_v", "point": "f_point", "thumbs_up": "f_thumbs"}
 
 
 def gesture(kp: list[list[float]]) -> str | None:
@@ -149,6 +153,8 @@ class Cam:
         self.g_cur: tuple[str | None, float, float] = (None, 0.0, 0.0)  # (手勢, 從什麼時候開始, 最後一次看到)
         self.g_fired = False
         self.g_events: deque = deque()  # (t, 手勢)：維持夠久的手勢
+        self.g_hand: dict[str, Any] | None = None
+        self.hands: Callable[[np.ndarray, list], list] | None = None  # 手指手勢（Streams 給）
         self.stop = False
         self.lock = threading.Lock()
         self.frame: np.ndarray | None = None
@@ -208,7 +214,7 @@ class Cam:
             self.pose_t = now
             pose = self.pose(seen)
             if self.gesture_on and pose is not None:
-                self._gesture(pose, now)
+                self._gesture(pose, now, seen)
         with self.lock:
             if pose is not None:
                 self.poses.append((round(now, 2), pose))
@@ -228,12 +234,22 @@ class Cam:
                     "person": round(self.person, 3), "objects": self.objects, "tracks": self.tracks,
                     "samples": [s for s in self.samples if s[0] > since], "poses": [p for p in self.poses if p[0] > since],
                     "gestures": [g for g in self.g_events if g[0] > since],
-                    "gesture_now": {"name": self.g_cur[0], "held": round(self.g_cur[2] - self.g_cur[1], 1)} if self.g_cur[0] and time.time() - self.g_cur[2] < 2 else None}
+                    "gesture_now": {"name": self.g_cur[0], "held": round(self.g_cur[2] - self.g_cur[1], 1),
+                                    "need": FINGER_HOLD if self.g_cur[0].startswith("f_") else GESTURE_HOLD,
+                                    "hand": {k: self.g_hand[k] for k in ("points", "px", "presence")} if self.g_hand else None}
+                    if self.g_cur[0] and time.time() - self.g_cur[2] < 2 else None}
 
-    def _gesture(self, people: list[dict[str, Any]], now: float) -> None:
-        """最大的那個人的手勢；同一個手勢維持 GESTURE_HOLD 秒算一次（放下前不重複）。"""
+    def _gesture(self, people: list[dict[str, Any]], now: float, img: np.ndarray | None = None) -> None:
+        """最大的那個人的手勢（舉手優先，沒有才看手指）；同一個手勢維持夠久算一次（放下前不重複）。"""
         big = max((p for p in people if p.get("kp")), key=lambda p: p["box"][2] * p["box"][3], default=None)
         g = gesture(big["kp"]) if big else None
+        hand = None
+        if g is None and img is not None and self.hands is not None:
+            found = [h for h in self.hands(img, people) if h["px"] >= FINGER_MIN_PX and h["presence"] >= FINGER_MIN_P and h["gesture"] in FINGERS]
+            if found:
+                hand = max(found, key=lambda h: h["px"])
+                g = FINGERS[hand["gesture"]]
+        self.g_hand = hand
         name, since, last = self.g_cur
         if g and g == name:
             self.g_cur = (g, since, now)
@@ -242,7 +258,7 @@ class Cam:
         elif name and now - last > GESTURE_GAP:
             self.g_cur, self.g_fired = (None, 0.0, 0.0), False
         name, since, last = self.g_cur
-        if name and not self.g_fired and last - since >= GESTURE_HOLD:
+        if name and not self.g_fired and last - since >= (FINGER_HOLD if name.startswith("f_") else GESTURE_HOLD):
             self.g_fired = True
             with self.lock:
                 self.g_events.append((round(now, 2), name))
@@ -266,6 +282,7 @@ class Streams:
         self.detect = detect
         self.pose = pose
         self.ears: dict[str, Any] = {}  # 攝影機 → sound.Listener（有開聲音偵測的）
+        self._hands = None
         self._sound_model = None
         self.cams: dict[str, Cam] = {}
         self.lock = threading.Lock()
@@ -304,7 +321,21 @@ class Streams:
                 if cid not in self.cams:
                     self.cams[cid] = Cam(cid, c["url"], c.get("ignore") or [], self.detect, self.pose, bool(c.get("pose")))
                     self.cams[cid].gesture_on = bool(c.get("gesture"))
+            for cam in self.cams.values():  # 開了手勢的攝影機也看手指
+                if cam.gesture_on and cam.hands is None:
+                    cam.hands = self._hand_fn()
             return sorted(self.cams)
+
+    def _hand_fn(self) -> Callable[[np.ndarray, list], list] | None:
+        if self._hands is None:
+            try:
+                from hands import Hands
+
+                self._hands = Hands()
+            except Exception:  # noqa: BLE001
+                LOG.exception("手部模型載入失敗，只用舉手的手勢")
+                return None
+        return self._hands.analyze
 
     def get(self, cid: str) -> Cam | None:
         return self.cams.get(cid)

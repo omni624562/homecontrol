@@ -60,7 +60,8 @@ PROBE_MAX_AGE = 24 * 3600  # 超過一天沒看到的就不問了
 PRESENCE_LOG_MAX = 50
 SOUNDS = {"alarm": "聽到煙霧／火災警報聲", "glass": "聽到玻璃破掉的聲音", "scream": "聽到有人大叫、呼救", "dog": "狗一直叫（超過 2 分鐘）"}
 SOUND_DEFAULT = {"alarm": "urgent", "glass": "urgent", "scream": "urgent", "dog": "normal"}
-GESTURES = {"one_up": "舉一隻手", "both_up": "舉雙手", "cross": "雙手交叉"}
+GESTURES = {"one_up": "舉一隻手", "both_up": "舉雙手", "cross": "雙手交叉",
+            "f_open": "張開手掌", "f_fist": "握拳", "f_v": "比 YA", "f_point": "比 1", "f_thumbs": "比讚"}
 ITEM_ONE = {"包裹", "垃圾袋", "推車"}  # 「多了一個包裹」
 ITEM_TAKEN = {"包裹", "袋子", "外送餐點", "垃圾袋"}  # 被拿走時可以另外決定要不要通知（act.taken）
 
@@ -2244,10 +2245,11 @@ class Hub:
             if not act or not self._face_once(f"gesture:{name}", 10, now):
                 continue
             label = GESTURES.get(name, name)
-            if act.get("type") == "plug" and act.get("id") in self.plugs:
+            if act.get("type") in ("plug", "plug_on", "plug_off") and act.get("id") in self.plugs:
                 plug = self.plugs[act["id"]]
-                text = f"{'關掉' if plug.is_on else '打開'}{self.name(plug)}"
-                self._spawn(self._gesture_power(plug.id, not plug.is_on))
+                on = {"plug": not plug.is_on, "plug_on": True, "plug_off": False}[act["type"]]
+                text = f"{'打開' if on else '關掉'}{self.name(plug)}"
+                self._spawn(self._gesture_power(plug.id, on))
             elif act.get("type") == "scene" and self.store.scene(act.get("id") or ""):
                 text = f"執行「{self.store.scene(act['id'])['name']}」"
                 self._spawn(self.run_scene(act["id"], remember="undo"))
