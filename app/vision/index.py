@@ -31,6 +31,7 @@ EVERY_KEY = 2  # 每幾張關鍵影格看一張（約 2.4 秒一張）
 MIN_SCORE = 0.45
 PERSON_MIN = 0.55  # 人：跟即時判斷「有人」同一個門檻（床上的被子 0.49 不算）
 VISIT_GAP = 20  # 秒：人不見這麼久才算這次結束
+VISIT_MIN = 2  # 至少幾張看到人才算一次「有人來」
 STATIC_S = 600  # 秒：同一個地方一直放著的東西（同類、框幾乎一樣），多久才再算一次特徵
 TEXT_IDLE = 600  # 秒：文字模型多久沒用就放掉（1 GB 多）
 DYNAMIC = {"person", "dog", "cat", "bird", "backpack", "handbag", "suitcase", "umbrella", "bicycle", "motorcycle", "car", "truck",
@@ -183,7 +184,7 @@ class Index:
             z = self._load(d.name, day)
             if z is None:
                 continue
-            v = visits(z["t"], z["cls"])
+            v = [x for x in visits(z["t"], z["cls"]) if x["n"] >= VISIT_MIN]  # 只有一張看到人的不算（扶手上掛的東西常被認成人）
             counts = {}
             for c in set(z["cls"].tolist()) - {"person"}:
                 if c in NAMES:
