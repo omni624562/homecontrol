@@ -606,7 +606,63 @@ function CameraLinkCard() {
   return (
     <SCard id="s-cam" icon={Cctv} title="攝影機">
       <LinkRow label="攝影機和認臉" hint="即時畫面、這台要幫我做什麼、誰可以看畫面、紀錄，都在「攝影機」頁" href="#cameras" />
+      <RecordingRows />
     </SCard>
+  );
+}
+
+// 錄影（另一台主機全天錄）：全部留幾天、有事的片段留幾天、硬碟用了多少
+interface RecInfo {
+  configured: boolean; ok?: boolean; error?: string | null; keep?: { all: number; event: number };
+  disk?: { free_gb: number; total_gb: number; rec_gb?: number; event_gb?: number }; cams?: Record<string, { recording: boolean }>;
+}
+function RecordingRows() {
+  const [r, setR] = useState<RecInfo | null>(null);
+  useEffect(() => { api<RecInfo>("GET", "/api/recorder").then(setR).catch(() => setR(null)); }, []);
+  if (!r?.configured || !r.keep) return null;
+  const keep = r.keep;
+  const put = async (body: object) => {
+    try {
+      setR(await api<RecInfo>("PUT", "/api/recorder", body));
+      toast.success("已更新", { description: "超過的錄影會在 5 分鐘內清掉" });
+    } catch (e) {
+      toast.error("沒有成功", { description: (e as Error).message });
+    }
+  };
+  const d = r.disk;
+  const camsOn = Object.values(r.cams || {}).filter((c) => c.recording).length;
+  const pct = (gb: number) => `${Math.min(100, (gb / Math.max(1, d?.total_gb || 1)) * 100)}%`;
+  return (
+    <>
+      <SRow label="錄影" hint={r.ok ? `${camsOn} 台正在錄（Jetson）` : `錄影機連不上${r.error ? `：${r.error}` : ""}`}>
+        <span className={cn("size-2.5 rounded-full", r.ok && camsOn ? "bg-red-500" : "bg-muted-foreground")} aria-hidden />
+      </SRow>
+      <SRow label="全部錄影留" hint="這幾天內任何時間都能回放">
+        <Select value={String(keep.all)} onValueChange={(v) => put({ keep_all: Number(v) })}>
+          <SelectTrigger className="w-28 bg-background" aria-label="全部錄影留幾天"><SelectValue /></SelectTrigger>
+          <SelectContent>{[1, 2, 3, 5, 7, 14].map((n) => <SelectItem key={n} value={String(n)}>{n} 天</SelectItem>)}</SelectContent>
+        </Select>
+      </SRow>
+      <SRow label="有事的片段留" hint="有人來、門開了、包裹…前後各 1 分鐘；找錄影也能找這麼久">
+        <Select value={String(keep.event)} onValueChange={(v) => put({ keep_event: Number(v) })}>
+          <SelectTrigger className="w-28 bg-background" aria-label="有事的片段留幾天"><SelectValue /></SelectTrigger>
+          <SelectContent>{[7, 14, 30, 60, 90].filter((n) => n >= keep.all).map((n) => <SelectItem key={n} value={String(n)}>{n} 天</SelectItem>)}</SelectContent>
+        </Select>
+      </SRow>
+      {d && d.rec_gb !== undefined && (
+        <div className="space-y-1.5 border-t px-4 py-3.5 sm:px-5">
+          <div className="flex h-3 overflow-hidden rounded bg-muted" role="img" aria-label={`錄影用了 ${d.rec_gb} GB，硬碟剩 ${d.free_gb} GB`}>
+            <i className="h-full bg-primary" style={{ width: pct((d.rec_gb || 0) - (d.event_gb || 0)) }} />
+            <i className="h-full bg-amber-500" style={{ width: pct(d.event_gb || 0) }} />
+          </div>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground tabular-nums">
+            <span><i className="mr-1 inline-block size-2 rounded-sm bg-primary align-middle" />最近 {keep.all} 天全部 {Math.round((d.rec_gb || 0) - (d.event_gb || 0))} GB</span>
+            <span><i className="mr-1 inline-block size-2 rounded-sm bg-amber-500 align-middle" />更早的有事片段 {Math.round(d.event_gb || 0)} GB</span>
+            <span>硬碟剩 {Math.round(d.free_gb)} GB／{Math.round(d.total_gb)} GB</span>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 

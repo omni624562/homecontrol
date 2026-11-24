@@ -1,7 +1,8 @@
 """攝影機錄影機：跑在 Jetson 上，全天錄、保留幾天，給樹莓派剪出某個時間前後的影片。
 
 - 每台攝影機一個 ffmpeg：RTSP 串流原封不動存成 1 分鐘一段的 MP4（-c copy，不重新壓縮，幾乎不吃 CPU；不錄聲音）
-- 超過 KEEP_DAYS 天、或硬碟剩不到 MIN_FREE_GB 時，從最舊的開始刪
+- 全部錄影留 keep.all 天；「有事的時段」（樹莓派送來的事件前後，存在 /data/windows.json）留 keep.event 天
+- 硬碟剩不到 MIN_FREE_GB 時：先從最舊的「沒事的」刪，還不夠才刪有事的
 - 只有樹莓派能用：每個請求都要帶 token（樹莓派用 PUT /config 設定攝影機時一起給；第一次由 RECORDER_TOKEN 環境變數決定）
 - 攝影機帳密只存在 /data/config.json（600），API 不會回傳
 
@@ -34,7 +35,43 @@ LOG = logging.getLogger("recorder")
 DATA = Path(os.environ.get("RECORDER_DATA", "/data"))
 REC = Path(os.environ.get("RECORDER_DIR", "/rec"))
 PORT = int(os.environ.get("RECORDER_PORT", "8200"))
-KEEP_DAYS = float(os.environ.get("RECORDER_KEEP_DAYS", "7"))
+KEEP_DAYS = float(os.environ.get("RECORDER_KEEP_DAYS", "7"))  # 樹莓派沒設定時：全部留幾天
+WINDOWS = DATA / "windows.json"
+win_lock = threading.Lock()
+
+
+def keep_days(cfg: dict) -> tuple[float, float]:
+    k = cfg.get("keep") or {}
+    a = min(30.0, max(1.0, float(k.get("all") or KEEP_DAYS)))
+    return a, min(90.0, max(a, float(k.get("event") or a)))
+
+
+def load_windows() -> dict[str, list[list[float]]]:
+    try:
+        return json.loads(WINDOWS.read_text("utf-8"))
+    except (FileNotFoundError, ValueError):
+        return {}
+
+
+def merge_windows(old: dict[str, list[list[float]]], new: dict[str, list[list[float]]], since: float) -> dict[str, list[list[float]]]:
+    """有事的時段：新舊合併、重疊的接起來，太舊的丟掉。"""
+    out = {}
+    for cam in set(old) | set(new):
+        ws = sorted([w[:2] for w in (old.get(cam) or []) + (new.get(cam) or []) if len(w) >= 2 and w[1] >= since and w[1] > w[0]])
+        merged: list[list[float]] = []
+        for a, b in ws:
+            if merged and a <= merged[-1][1]:
+                merged[-1][1] = max(merged[-1][1], b)
+            else:
+                merged.append([float(a), float(b)])
+        if merged:
+            out[cam] = merged
+    return out
+
+
+def in_window(ws: list[list[float]], t: float) -> bool:
+    """這一段（t 開始、SEG 秒）有沒有碰到有事的時段。"""
+    return any(a < t + SEG and b > t for a, b in ws)
 MIN_FREE_GB = float(os.environ.get("RECORDER_MIN_FREE_GB", "50"))
 SEG = 60  # 秒：一段多長
 MAX_CLIP = 300  # 秒：一次最多剪多長
@@ -134,24 +171,53 @@ def apply(cfg: dict) -> None:
 
 
 def cleanup() -> None:
-    """超過 KEEP_DAYS 天的刪掉；硬碟不夠時從最舊的開始刪。"""
+    """沒事的超過 keep.all 天刪掉、有事的超過 keep.event 天刪掉；硬碟不夠時先刪最舊的沒事的。"""
     while True:
         try:
-            cut = time.time() - KEEP_DAYS * 86400
-            allsegs = []
-            for d in REC.iterdir() if REC.is_dir() else []:
-                if d.is_dir():
-                    for t, p in segments(d.name):
-                        if t < cut:
-                            p.unlink(missing_ok=True)
-                        else:
-                            allsegs.append((t, p))
-            allsegs.sort()
-            while allsegs and shutil.disk_usage(REC).free < MIN_FREE_GB * 1e9:
-                allsegs.pop(0)[1].unlink(missing_ok=True)
+            prune()
         except Exception:  # noqa: BLE001
             LOG.exception("清理失敗")
         time.sleep(300)
+
+
+def prune(now: float | None = None) -> None:
+    now = now or time.time()
+    all_d, ev_d = keep_days(load_cfg())
+    with win_lock:
+        wins = merge_windows(load_windows(), {}, now - ev_d * 86400)
+    plain, kept = [], []
+    for d in REC.iterdir() if REC.is_dir() else []:
+        if not d.is_dir():
+            continue
+        ws = wins.get(d.name) or []
+        for t, p in segments(d.name):
+            age = now - t
+            event = in_window(ws, t)
+            if age > ev_d * 86400 or (age > all_d * 86400 and not event):
+                p.unlink(missing_ok=True)
+            else:
+                (kept if event else plain).append((t, p))
+    order = sorted(plain) + sorted(kept)  # 硬碟不夠：先刪沒事的
+    while order and shutil.disk_usage(REC).free < MIN_FREE_GB * 1e9:
+        order.pop(0)[1].unlink(missing_ok=True)
+
+
+def usage() -> dict:
+    """錄影用了多少：全部、其中「只因為有事才留著」（超過 keep.all 天）的。"""
+    all_d, _ = keep_days(load_cfg())
+    now = time.time()
+    total = old = 0
+    for d in REC.iterdir() if REC.is_dir() else []:
+        if d.is_dir():
+            for t, p in segments(d.name):
+                try:
+                    n = p.stat().st_size
+                except FileNotFoundError:
+                    continue
+                total += n
+                if now - t > all_d * 86400:
+                    old += n
+    return {"rec_gb": round(total / 1e9, 1), "event_gb": round(old / 1e9, 1)}
 
 
 def make_clip(cam: str, start: float, end: float) -> Path | None:
@@ -223,7 +289,9 @@ class Handler(BaseHTTPRequestHandler):
             du = shutil.disk_usage(REC)
             with lock:
                 st = {cid: c.status() for cid, c in cams.items()}
-            self._json(200, {"cams": st, "disk": {"free_gb": round(du.free / 1e9, 1), "total_gb": round(du.total / 1e9, 1)}, "keep_days": KEEP_DAYS})
+            all_d, ev_d = keep_days(load_cfg())
+            self._json(200, {"cams": st, "disk": {"free_gb": round(du.free / 1e9, 1), "total_gb": round(du.total / 1e9, 1), **usage()},
+                             "keep_days": all_d, "keep": {"all": all_d, "event": ev_d}})
             return
         if u.path == "/clip":
             try:
@@ -279,6 +347,16 @@ class Handler(BaseHTTPRequestHandler):
             return
         cfg = load_cfg()
         cfg["cams"] = {k: v for k, v in (body.get("cams") or {}).items() if CAM_ID.match(str(k)) and str(v).startswith("rtsp://")}
+        if isinstance(body.get("keep"), dict):
+            cfg["keep"] = {"all": float(body["keep"].get("all") or KEEP_DAYS), "event": float(body["keep"].get("event") or KEEP_DAYS)}
+        if isinstance(body.get("windows"), dict):  # 有事的時段：{"cam": [[開始, 結束], ...]}
+            new = {k: [[float(a), float(b)] for a, b in v[:2000]] for k, v in body["windows"].items() if CAM_ID.match(str(k)) and isinstance(v, list)}
+            _, ev_d = keep_days(cfg)
+            with win_lock:
+                w = merge_windows(load_windows(), new, time.time() - ev_d * 86400)
+                tmp = DATA / "windows.tmp"
+                tmp.write_text(json.dumps(w), "utf-8")
+                tmp.replace(WINDOWS)
         if not cfg.get("token"):
             cfg["token"] = os.environ.get("RECORDER_TOKEN", "")
         save_cfg(cfg)
@@ -290,7 +368,7 @@ def main() -> None:
     REC.mkdir(parents=True, exist_ok=True)
     apply(load_cfg())
     threading.Thread(target=cleanup, daemon=True).start()
-    LOG.info("錄影機啟動：port %s，保留 %s 天", PORT, KEEP_DAYS)
+    LOG.info("錄影機啟動：port %s，保留 %s", PORT, keep_days(load_cfg()))
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
 
 

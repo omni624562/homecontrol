@@ -17,7 +17,7 @@ def test_rtsp_url_quotes_password():
     assert url == "rtsp://admin:p%40ss%3A%2Fw@10.0.2.5:88/videoMain"
 
 
-def test_push_only_enabled_and_only_when_changed(tmp_path):
+def test_push_only_enabled_cams(tmp_path):
     settings = {"recorder_url": "http://10.0.2.99:8200"}
     r = rec_mod.Recorder(tmp_path / "secrets.json", lambda: settings)
     calls = []
@@ -26,7 +26,7 @@ def test_push_only_enabled_and_only_when_changed(tmp_path):
     r.refresh(cams)
     r.refresh(cams)
     puts = [c for c in calls if c[0] == "PUT"]
-    assert len(puts) == 1 and list(puts[0][2]["cams"]) == ["a"]
+    assert len(puts) == 2 and list(puts[0][2]["cams"]) == ["a"] and puts[0][2]["keep"] == {"all": 3, "event": 30}  # 每分鐘送（有事的時段會變）
     assert r.public()["ok"] and "token" not in json.dumps(r.public()) and "rtsp" not in json.dumps(r.public())
     tok = r.token()
     assert tok == r.token() and json.loads((tmp_path / "secrets.json").read_text())["recorder_token"] == tok
@@ -364,3 +364,48 @@ def test_object_zone_names_item_and_taken(app_module, monkeypatch):
     asyncio.run(hub._zones_check(cam, st, b"j", 1000.0 + 4 * 3600 + 28 * 60, [], False))
     assert fired[0] == ("門口地板多了一個包裹", "always")
     assert fired[1][0] == "門口地板的包裹被拿走了（放了 4 小時 28 分）" and fired[1][1] == "off"  # 被拿走不通知（只記紀錄）
+
+
+def test_service_prune_keeps_event_windows(tmp_path, monkeypatch):
+    import os
+    from datetime import datetime
+
+    svc = _service(tmp_path, monkeypatch)
+    (tmp_path / "data").mkdir(exist_ok=True)
+    svc.save_cfg({"keep": {"all": 3, "event": 30}})
+    d = tmp_path / "rec" / "g"
+    d.mkdir(parents=True)
+    now = datetime(2026, 12, 20, 12, 0).timestamp()
+    def seg(days_ago, minute):
+        t = now - days_ago * 86400 + minute * 60
+        p = d / (datetime.fromtimestamp(t).strftime("%Y%m%d-%H%M%S") + ".mp4")
+        p.write_bytes(b"x")
+        return t, p
+    recent = seg(1, 0)
+    old_plain = seg(5, 0)
+    old_event_t, old_event = seg(5, 10)
+    too_old_t, too_old = seg(40, 0)
+    svc.WINDOWS.write_text(__import__("json").dumps({"g": [[old_event_t + 20, old_event_t + 30], [too_old_t, too_old_t + 30]]}))
+    monkeypatch.setattr(svc.shutil, "disk_usage", lambda p: os.statvfs_result if False else type("U", (), {"free": 10**15})())
+    svc.prune(now)
+    assert recent[1].exists() and old_event.exists()
+    assert not old_plain[1].exists() and not too_old.exists()
+    assert svc.merge_windows({"g": [[1, 5]]}, {"g": [[4, 9], [20, 30]]}, 0) == {"g": [[1.0, 9.0], [20.0, 30.0]]}
+    assert svc.keep_days({"keep": {"all": 5, "event": 2}}) == (5.0, 5.0)  # 有事的不會比全部短
+
+
+def test_event_windows_and_keep_api(app_module, monkeypatch):
+    import time as _t
+
+    hub = app_module.hub
+    hub.cameras.list = [{"id": "g", "name": "大門口", "host": "x", "enabled": True}]
+    hub.face_log.items = [{"id": "a", "t": _t.time() - 100, "camera": "大門口", "kind": "zone"}, {"id": "b", "t": _t.time() - 5 * 86400, "camera": "大門口", "kind": "zone"}]
+    monkeypatch.setattr(hub.gpu, "summary", lambda day: {"cams": {"g": {"visits": [{"start": 1000.0, "end": 1010.0}]}}})
+    w = hub._event_windows()
+    assert len(w["g"]) == 3 and [940.0, 1070.0] in w["g"]  # 紀錄一筆（太舊的不送）＋兩天的有人來
+    c, dev = _client(app_module)
+    hub.cameras.viewers = [dev["id"]]
+    app_module.store.data["settings"]["recorder_url"] = "http://10.0.2.99:8200"
+    monkeypatch.setattr(hub.recorder, "refresh", lambda cams, windows=None: None)
+    r = c.put("/api/recorder", json={"keep_all": 7, "keep_event": 5}).json()
+    assert r["keep"] == {"all": 7, "event": 7}
