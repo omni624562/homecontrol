@@ -101,6 +101,29 @@ class Tracker:
         return {"id": t["id"], "box": t["box"], "score": t["score"], "foot": t["foot"], "since": round(t["since"], 2), "age": round(t["seen"] - t["since"], 1)}
 
 
+ENHANCE = {"on": True}  # 樹莓派送設定時會改（設定頁「夜間畫面增強」）
+DARK = 80  # 畫面平均亮度低於這個算暗
+_clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+
+
+def is_dark(img: np.ndarray) -> bool:
+    """太暗，或攝影機切到夜視（紅外線，幾乎沒有顏色）。"""
+    small = cv2.resize(img, (160, 90), interpolation=cv2.INTER_AREA)
+    gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+    hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
+    return float(gray.mean()) < DARK or float(hsv[..., 1].mean()) < 12
+
+
+def enhance(img: np.ndarray) -> np.ndarray:
+    """夜間畫面增強：亮度做局部對比強化（CLAHE）再去一點雜訊；只用來辨識，錄影和看到的畫面不變。"""
+    if not ENHANCE["on"] or not is_dark(img):
+        return img
+    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    l = cv2.fastNlMeansDenoising(_clahe.apply(l), None, 5, 7, 21) if img.shape[0] <= 720 else _clahe.apply(l)
+    return cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2BGR)
+
+
 def mask(img: np.ndarray, polys: list[list[list[float]]]) -> np.ndarray:
     """不要看的地方塗成灰色（跟樹莓派 camera.mask 一樣）。"""
     if not polys:
@@ -176,13 +199,14 @@ class Cam:
             time.sleep(delay)
 
     def _process(self, img: np.ndarray, now: float) -> None:
-        objs = self.detect(mask(img, self.ignore))
+        seen = enhance(img)  # 天黑時先提亮再辨識
+        objs = self.detect(mask(seen, self.ignore))
         people = [o for o in objs if o["name"] == "person" and o["score"] >= PERSON_MIN]
         tracks = self.tracker.update(people, now)
         pose = None
         if (self.pose_on or self.gesture_on) and self.pose and tracks and now - self.pose_t >= POSE_EVERY:
             self.pose_t = now
-            pose = self.pose(img)
+            pose = self.pose(seen)
             if self.gesture_on and pose is not None:
                 self._gesture(pose, now)
         with self.lock:
@@ -247,7 +271,8 @@ class Streams:
         self.lock = threading.Lock()
 
     def configure(self, cfg: dict[str, Any]) -> list[str]:
-        """{"cams": {"id": {"url": "rtsp://...", "ignore": [[[x, y], ...], ...]}}}"""
+        """{"cams": {"id": {"url": "rtsp://...", "ignore": [[[x, y], ...], ...]}}, "enhance": 夜間畫面增強}"""
+        ENHANCE["on"] = cfg.get("enhance") is not False
         want = {}
         for cid, c in (cfg.get("cams") or {}).items():
             if isinstance(c, dict) and str(c.get("url", "")).startswith("rtsp://") and cid.replace("-", "").replace("_", "").isalnum():

@@ -607,6 +607,7 @@ function CameraLinkCard() {
   return (
     <SCard id="s-cam" icon={Cctv} title="攝影機">
       <LinkRow label="攝影機和認臉" hint="即時畫面、這台要幫我做什麼、誰可以看畫面、紀錄，都在「攝影機」頁" href="#cameras" />
+      <NightEnhanceRow />
       <RecordingRows />
       <GestureRows />
     </SCard>
@@ -667,6 +668,25 @@ function ClaudeVisionRows() {
         </>
       )}
     </div>
+  );
+}
+
+// 夜間畫面增強：天黑時 Jetson 先提亮再辨識（錄影和看到的畫面不變）
+function NightEnhanceRow() {
+  const { state } = useHub();
+  const on = (state?.settings as Record<string, unknown> | undefined)?.night_enhance !== false;
+  const put = async (v: boolean) => {
+    try {
+      await api("PUT", "/api/settings", { night_enhance: v });
+      toast.success(v ? "天黑時會先提亮再辨識" : "夜間畫面增強關了");
+    } catch (e) {
+      toast.error("沒有成功", { description: (e as Error).message });
+    }
+  };
+  return (
+    <SRow label="夜間畫面增強" hint="天黑或夜視黑白時，Jetson 先把畫面提亮、拉出細節再認人、認臉；錄影和 App 上看到的畫面不變">
+      <Switch checked={on} onCheckedChange={put} aria-label="夜間畫面增強" />
+    </SRow>
   );
 }
 

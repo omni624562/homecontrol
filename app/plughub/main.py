@@ -1913,6 +1913,9 @@ async def set_settings(body: dict = Body(...)) -> dict[str, Any]:
         settings["weekly"] = bool(body["weekly"])
     if "matter_scenes" in body:  # 情境也放到 Google Home（打開 = 執行）
         settings["matter_scenes"] = bool(body["matter_scenes"])
+    if "night_enhance" in body:  # 夜間畫面增強（Jetson 辨識前先提亮；錄影和看到的畫面不變）
+        settings["night_enhance"] = bool(body["night_enhance"])
+        hub.gpu._pushed = None
     if isinstance(body.get("router"), dict):
         r = body["router"]
         host = str(r.get("host", "")).strip()

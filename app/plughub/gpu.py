@@ -143,11 +143,12 @@ class GpuVision:
         want = {c["id"]: {"url": rtsp_url(c), "ignore": c.get("ignore") or [], "pose": bool(c.get("fall")),
                           "gesture": bool(g.get("on")) and g.get("cam") == c["id"], "sound": bool((c.get("sound") or {}).get("on"))}
                 for c in cams if c.get("enabled") and c.get("host")}
-        sig = json.dumps(want, sort_keys=True)
+        sig = json.dumps([want, self._settings().get("night_enhance") is not False], sort_keys=True)
         if sig == self._pushed and time.time() - self._pushed_at < 300:
             return
         try:
-            req = urllib.request.Request(self.url + "/config", data=json.dumps({"cams": want}).encode(), method="PUT",
+            body = {"cams": want, "enhance": self._settings().get("night_enhance") is not False}
+            req = urllib.request.Request(self.url + "/config", data=json.dumps(body).encode(), method="PUT",
                                          headers={"Authorization": f"Bearer {self._token()}", "Content-Type": "application/json"})
             with urllib.request.urlopen(req, timeout=TIMEOUT) as r:  # noqa: S310
                 r.read()

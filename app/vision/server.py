@@ -52,7 +52,7 @@ os.environ.setdefault("PLUGHUB_MODEL", str(Path(os.environ.get("VISION_MODELS", 
 from plughub import faces as faces_mod  # noqa: E402  跟樹莓派同一份程式
 from plughub import segment as seg_mod  # noqa: E402
 from plughub import vision as vision_mod  # noqa: E402
-from stream import Streams  # noqa: E402
+from stream import ENHANCE, Streams  # noqa: E402
 from index import Index  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -346,11 +346,17 @@ def handle(path: str, q: dict[str, str], body: bytes) -> tuple[int, dict]:
             return 503, {"error": "模型還在載入"}
         img = _decode(body)
         out = {"w": img.shape[1], "h": img.shape[0], "objects": detector.detect(img)}
-    elif path == "/pose":
-        out = {"people": (rtmo or pose).analyze(body)}
-    elif path == "/faces":
-        found = (face_gpu or faces).analyze(body)
-        out = {"faces": [{**f, "feat": [round(float(v), 6) for v in f["feat"]]} for f in found]}
+    elif path in ("/pose", "/faces"):
+        from stream import enhance, is_dark
+
+        img = _decode(body)
+        if ENHANCE["on"] and is_dark(img):  # 天黑時先提亮再看姿勢、找臉
+            body = cv2.imencode(".jpg", enhance(img), [cv2.IMWRITE_JPEG_QUALITY, 90])[1].tobytes()
+        if path == "/pose":
+            out = {"people": (rtmo or pose).analyze(body)}
+        else:
+            found = (face_gpu or faces).analyze(body)
+            out = {"faces": [{**f, "feat": [round(float(v), 6) for v in f["feat"]]} for f in found]}
     elif path == "/segment":
         if segmenter is None:
             return 503, {"error": "模型還在載入"}

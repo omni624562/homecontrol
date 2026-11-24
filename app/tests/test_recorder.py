@@ -684,3 +684,20 @@ def test_sound_events_hub(app_module, monkeypatch):
     hub.cameras.state["r"]["sounds"] = [[1000.0, "alarm", 0.8]]  # 同一個事件再來一次：不重複
     hub._sound_events(cam)
     assert len(sent) == 1
+
+
+def test_night_enhance():
+    import numpy as np
+
+    m = _stream_mod()
+    dark = np.full((90, 160, 3), 30, np.uint8)
+    dark[40:50, 70:90] = 60
+    bright = np.zeros((90, 160, 3), np.uint8)
+    bright[..., 1] = 180
+    bright[..., 2] = 120
+    assert m.is_dark(dark) and not m.is_dark(bright)
+    out = m.enhance(dark)
+    assert out.mean() > dark.mean() and m.enhance(bright) is bright  # 亮的不動
+    m.ENHANCE["on"] = False
+    assert m.enhance(dark) is dark
+    m.ENHANCE["on"] = True
