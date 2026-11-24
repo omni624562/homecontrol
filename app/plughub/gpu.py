@@ -173,6 +173,12 @@ class GpuVision:
         return {"scores": normalize(objs), "objects": objs[:20], "tracks": st.get("tracks") or [], "samples": st.get("samples") or [],
                 "poses": st.get("poses") or [], "jpeg": jpeg}
 
+    def classify(self, jpeg: bytes, box: list[float]) -> str | None:
+        """框裡多的是什麼（包裹、袋子、鞋子…）；看不出來、連不上 → None。"""
+        q = ",".join(f"{v:.4f}" for v in box)
+        res = self._post(f"/classify?box={q}", jpeg, timeout=20)
+        return (res or {}).get("label")
+
     def appearance(self, cid: str) -> Any:
         """這台攝影機最新畫面裡最大的那個人的外觀特徵（numpy）；沒有人、連不上 → None。"""
         import numpy as np

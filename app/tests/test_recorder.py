@@ -338,3 +338,29 @@ def test_stream_poses_detect_fall(app_module, monkeypatch):
     for t, p in poses:
         asyncio.run(hub._fall_check(cam, b"j", t, [{**x, "box": tuple(x["box"]), "foot": tuple(x["foot"])} for x in p]))
     assert sent and "跌倒" in sent[0][0]
+
+
+def test_object_zone_names_item_and_taken(app_module, monkeypatch):
+    import asyncio
+
+    import numpy as np
+
+    hub = app_module.hub
+    fired = []
+    monkeypatch.setattr(hub, "_zone_fire", lambda cam, item, label, act, now, jpeg=None: fired.append((label, act.get("notify"))))
+    vis = __import__("sys").modules["plughub.vision"]
+    zl = __import__("sys").modules["plughub.zones"]
+    monkeypatch.setattr(vis, "door_sig", lambda jpeg, rect, poly=None: np.ones((4, 4), np.float32))
+    monkeypatch.setattr(vis, "door_score", lambda sig, refs: 0.1)
+    monkeypatch.setattr(vis, "is_night", lambda jpeg: False)
+    events = iter(["more", "less"])
+    monkeypatch.setattr(zl, "object_track", lambda *a, **k: next(events, None))
+    monkeypatch.setattr(hub, "_zone_learn", lambda *a, **k: None)
+    monkeypatch.setattr(hub.gpu, "classify", lambda jpeg, box: "包裹")
+    z = {"id": "z", "name": "門口地板", "kind": "object", "poly": [[0, 0], [1, 0], [1, 1]], "refs": ["x"], "_refs": ["r"], "act": {"notify": "always", "taken": False}}
+    cam = {"id": "g", "name": "大門口", "zones": [z], "lines": []}
+    st = {}
+    asyncio.run(hub._zones_check(cam, st, b"j", 1000.0, [], False))
+    asyncio.run(hub._zones_check(cam, st, b"j", 1000.0 + 4 * 3600 + 28 * 60, [], False))
+    assert fired[0] == ("門口地板多了一個包裹", "always")
+    assert fired[1][0] == "門口地板的包裹被拿走了（放了 4 小時 28 分）" and fired[1][1] == "off"  # 被拿走不通知（只記紀錄）

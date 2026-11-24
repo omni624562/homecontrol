@@ -509,6 +509,12 @@ export function DetectEditor({ cam, scenes, setCams, upd }: Props) {
             <SelectContent><SelectItem value="off">只顯示，不通知</SelectItem><SelectItem value="away">沒人在家時才通知</SelectItem><SelectItem value="always">每次都通知</SelectItem></SelectContent>
           </Select>
         </label>
+        {z.kind === "object" && z.act.notify !== "off" && (
+          <label className="flex items-center gap-2 text-sm">
+            <Switch checked={z.act.taken !== false} onCheckedChange={(v) => setZ(i, { act: { ...z.act, taken: v } }, v ? "包裹、袋子被拿走也會通知" : "被拿走不通知")} aria-label="被拿走也通知" />
+            被拿走也通知<span className="text-xs text-muted-foreground">（只對包裹、袋子；GPU 會判斷多的是什麼）</span>
+          </label>
+        )}
         {scenes.length > 0 && (
           <div className="flex flex-wrap items-center gap-2 text-sm">
             <span className="w-20 shrink-0 text-muted-foreground">同時執行</span>

@@ -128,6 +128,6 @@ def test_zones_and_lines_api(app_module):
     hub.cameras.viewers = [dev["id"]]
     r = c.put("/api/cameras/g/zones", json={"zones": [{"name": "家門前", "kind": "area", "poly": SQ, "linger": 30, "act": {"notify": "away", "scene": "nope"}},
                                                      {"name": "壞的", "kind": "bogus", "poly": SQ}]}).json()["cameras"][0]
-    assert len(r["zones"]) == 1 and r["zones"][0]["linger"] == 30 and r["zones"][0]["act"] == {"notify": "away", "scene": None, "dark": False}
+    assert len(r["zones"]) == 1 and r["zones"][0]["linger"] == 30 and r["zones"][0]["act"] == {"notify": "away", "scene": None, "dark": False, "taken": True}
     r = c.put("/api/cameras/g/lines", json={"lines": [{"name": "樓梯口", "a": [0.1, 0.5], "b": [0.9, 0.5], "in": {"notify": "always"}}, {"a": [0.1, 0.1], "b": [0.11, 0.1]}]}).json()["cameras"][0]
     assert len(r["lines"]) == 1 and r["lines"][0]["in"]["notify"] == "always" and r["lines"][0]["out"]["notify"] == "off"

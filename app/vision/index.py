@@ -42,6 +42,12 @@ WORDS = {"人": "person", "男": "person", "女": "person", "小孩": "person", 
          "行李箱": "suitcase", "雨傘": "umbrella", "傘": "umbrella", "腳踏車": "bicycle", "單車": "bicycle", "機車": "motorcycle",
          "摩托車": "motorcycle", "汽車": "car", "車子": "car", "卡車": "truck", "球": "sports_ball", "滑板": "skateboard",
          }
+# 「東西多了」時，多的是什麼（英文描述 SigLIP 比較準；名稱給人看）
+ITEMS = {"包裹": ["a cardboard box", "a delivery package", "a parcel on the floor"], "袋子": ["a plastic bag", "a shopping bag", "a paper bag"],
+         "垃圾袋": ["a garbage bag"], "外送餐點": ["a food delivery bag"], "鞋子": ["a pair of shoes", "shoes on the floor"],
+         "雨傘": ["an umbrella"], "推車": ["a baby stroller", "a shopping cart", "a hand truck"], "腳踏車": ["a bicycle"],
+         "空的": ["an empty floor", "a tiled floor", "an empty corridor", "a wall"]}
+ITEM_MARGIN = 0.01  # 要比「空的」明顯像才說是什麼（實測：電風扇被看成包裹只差 0.007，紙盒差 0.026）
 NAMES = {"person": "人", "dog": "狗", "cat": "貓", "bird": "鳥", "backpack": "背包", "handbag": "包包", "suitcase": "行李箱", "umbrella": "雨傘",
          "bicycle": "腳踏車", "motorcycle": "機車", "car": "汽車", "truck": "卡車"}
 
@@ -82,6 +88,7 @@ class Index:
         self.vision = ort.InferenceSession(str(SIGLIP / "vision_model_fp16.onnx"), providers=gpu)
         self.text = None
         self.text_used = 0.0
+        self._labels: dict[str, np.ndarray] | None = None
         self.lock = threading.Lock()
         self.status: dict[str, Any] = {"running": False, "last": None, "error": None}
         from tokenizers import Tokenizer
@@ -105,6 +112,22 @@ class Index:
             ids = self.tok.encode(q.lower()).ids[:64]
             e = self.text.run(["pooler_output"], {"input_ids": np.array([ids + [0] * (64 - len(ids))], np.int64)})[0][0].astype(np.float32)
         return e / np.linalg.norm(e)
+
+    # ---- 多了什麼東西（「東西多了」的區域）----
+    def classify(self, img: np.ndarray, box: list[float]) -> dict[str, Any]:
+        """區域裡多的是什麼：跟每種東西的描述比，最像的比「空地板」還像才算（不然就是看不出來）。"""
+        h, w = img.shape[:2]
+        x, y, bw, bh = box
+        x0, y0, x1, y1 = int(max(0, x) * w), int(max(0, y) * h), int(min(1, x + bw) * w), int(min(1, y + bh) * h)
+        if x1 - x0 < 8 or y1 - y0 < 8:
+            return {"label": None}
+        e = self._img_emb([img[y0:y1, x0:x1]])[0].astype(np.float32)
+        if self._labels is None:
+            self._labels = {name: np.stack([self._txt_emb(t) for t in texts]) for name, texts in ITEMS.items()}
+        sc = {name: float((te @ e).max()) for name, te in self._labels.items()}
+        best = max((k for k in sc if k != "空的"), key=lambda k: sc[k])
+        label = best if sc[best] > sc["空的"] + ITEM_MARGIN else None
+        return {"label": label, "scores": {k: round(v, 3) for k, v in sorted(sc.items(), key=lambda kv: -kv[1])}}
 
     # ---- 分析一天 ----
     def run_day(self, day: date, cams: list[str] | None = None) -> dict[str, Any]:

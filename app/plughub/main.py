@@ -1077,10 +1077,11 @@ def _poly(z: Any) -> list[list[float]] | None:
 
 
 def _act(a: Any) -> dict[str, Any]:
-    """觸發後要做什麼：{"notify": off/away/always, "scene": 情境 ID, "dark": 情境只在天黑後}"""
+    """觸發後要做什麼：{"notify": off/away/always, "scene": 情境 ID, "dark": 情境只在天黑後, "taken": 包裹、袋子被拿走也通知（預設要）}"""
     a = a if isinstance(a, dict) else {}
     return {"notify": a.get("notify") if a.get("notify") in ("off", "away", "always") else "off",
-            "scene": a.get("scene") if a.get("scene") and store.scene(a.get("scene")) else None, "dark": bool(a.get("dark"))}
+            "scene": a.get("scene") if a.get("scene") and store.scene(a.get("scene")) else None, "dark": bool(a.get("dark")),
+            "taken": a.get("taken") is not False}
 
 
 @app.put("/api/cameras/{cam_id}/zones")
