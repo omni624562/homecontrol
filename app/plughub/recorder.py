@@ -17,6 +17,9 @@ from typing import Any, Callable
 
 _LOGGER = logging.getLogger(__name__)
 TIMEOUT = 10
+KEEP_ALL = 3  # 天：全部錄影
+KEEP_EVENT = 30  # 天：有事的片段（事件前後 WINDOW 秒）
+WINDOW = 60
 
 
 def rtsp_url(cam: dict[str, Any]) -> str:
@@ -60,23 +63,26 @@ class Recorder:
         with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310  只連家裡網路的錄影機
             return r.read()
 
-    def push(self, cams: list[dict[str, Any]]) -> None:
-        """告訴錄影機要錄哪些（啟用的）攝影機；跟上次一樣就不送。"""
+    def keep(self) -> dict[str, int]:
+        """全部錄影留幾天、有事的片段留幾天（設定頁可以改）。"""
+        st = self._settings()
+        a = int(st.get("rec_keep_all") or KEEP_ALL)
+        return {"all": a, "event": max(a, int(st.get("rec_keep_event") or KEEP_EVENT))}
+
+    def push(self, cams: list[dict[str, Any]], windows: dict[str, list[list[float]]] | None = None) -> None:
+        """告訴錄影機要錄哪些（啟用的）攝影機、留多久，和最近有事的時段（每分鐘送一次，錄影機那邊會合併存起來）。"""
         if not self.url:
             return
         want = {c["id"]: rtsp_url(c) for c in cams if c.get("enabled") and c.get("host")}
-        sig = json.dumps(want, sort_keys=True)
-        if sig == self._pushed:
-            return
-        self._req("PUT", "/config", {"cams": want})
-        self._pushed = sig
+        self._req("PUT", "/config", {"cams": want, "keep": self.keep(), "windows": windows or {}})
+        self._pushed = json.dumps(want, sort_keys=True)
 
-    def refresh(self, cams: list[dict[str, Any]]) -> dict[str, Any] | None:
+    def refresh(self, cams: list[dict[str, Any]], windows: dict[str, list[list[float]]] | None = None) -> dict[str, Any] | None:
         if not self.url:
             self.last, self.error = None, None
             return None
         try:
-            self.push(cams)
+            self.push(cams, windows)
             self.last = json.loads(self._req("GET", "/status"))
             self.last["at"] = time.time()
             self.error = None
@@ -100,4 +106,4 @@ class Recorder:
             return {"configured": False}
         st = self.last or {}
         return {"configured": True, "url": self.url, "ok": bool(st) and not self.error, "error": self.error,
-                "cams": st.get("cams") or {}, "disk": st.get("disk"), "keep_days": st.get("keep_days")}
+                "cams": st.get("cams") or {}, "disk": st.get("disk"), "keep_days": st.get("keep_days"), "keep": self.keep()}

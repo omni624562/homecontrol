@@ -1205,8 +1205,19 @@ async def recorder_get(request: Request) -> dict[str, Any]:
 
 @app.put("/api/recorder")
 async def recorder_put(request: Request, body: dict = Body(...)) -> dict[str, Any]:
-    """{"url": "http://10.0.2.99:8200"}（空字串＝不用錄影機）。只能是家裡網路的位址。"""
+    """{"url": "http://10.0.2.99:8200"}（空字串＝不用錄影機；只能是家裡網路的位址）、{"keep_all": 天, "keep_event": 天}。"""
     _need_view(request)
+    if "keep_all" in body or "keep_event" in body:
+        st = store.data["settings"]
+        if "keep_all" in body:
+            st["rec_keep_all"] = int(_num(body["keep_all"], 1, 14))
+        if "keep_event" in body:
+            st["rec_keep_event"] = int(_num(body["keep_event"], 1, 90))
+        st["rec_keep_event"] = max(int(st.get("rec_keep_event") or 30), int(st.get("rec_keep_all") or 3))
+        store.save()
+        if "url" not in body:
+            await asyncio.to_thread(hub.recorder.refresh, hub.cameras.list)
+            return hub.recorder.public()
     url = _lan_url(body.get("url"))
     store.data["settings"]["recorder_url"] = url
     store.save()
@@ -1260,7 +1271,7 @@ async def recordings_search(request: Request, q: str, days: int = 7, cam: str | 
     q = q.strip()[:80]
     if not q:
         return {"hits": []}
-    res = await asyncio.to_thread(hub.gpu.search, q, max(1, min(8, days)), cam)
+    res = await asyncio.to_thread(hub.gpu.search, q, max(1, min(31, days)), cam)
     if res is None:
         raise HTTPException(503, "錄影分析連不上（Jetson）")
     names = {c["id"]: c.get("name") or c["id"] for c in hub.cameras.list}

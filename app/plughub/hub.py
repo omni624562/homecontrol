@@ -2419,8 +2419,27 @@ class Hub:
 
     async def _recorder_tick(self) -> None:
         """錄影機：同步要錄哪些攝影機、更新狀態（沒設定就什麼都不做）。"""
-        await asyncio.to_thread(self.recorder.refresh, self.cameras.list)
+        windows = await asyncio.to_thread(self._event_windows) if self.recorder.url else None
+        await asyncio.to_thread(self.recorder.refresh, self.cameras.list, windows)
         await asyncio.to_thread(self.gpu.push_streams, self.cameras.list)
+
+    def _event_windows(self) -> dict[str, list[list[float]]]:
+        """最近兩天有事的時段（紀錄裡的事件、Jetson 分析到的有人來），前後各 1 分鐘：錄影機會留比較久。"""
+        from .recorder import WINDOW
+
+        ids = {c.get("name") or c["id"]: c["id"] for c in self.cameras.list}
+        now = time.time()
+        out: dict[str, list[list[float]]] = {}
+        for x in self.face_log.items:
+            cid = ids.get(x.get("camera"))
+            if cid and now - x["t"] < 2 * 86400:
+                out.setdefault(cid, []).append([x["t"] - WINDOW, x["t"] + WINDOW])
+        for d in (date.today(), date.today() - timedelta(days=1)):
+            vis = self.gpu.summary(d.isoformat()) or {}
+            for cid, v in (vis.get("cams") or {}).items():
+                for vi in v.get("visits") or []:
+                    out.setdefault(cid, []).append([vi["start"] - WINDOW, vi["end"] + WINDOW])
+        return out
 
     async def _probe_tick(self) -> None:
         """路由器也說不出名字的裝置：直接在家裡網路問它一下是什麼（只讀，不登入）。問過的記在樹莓派上，一週後才再問。"""

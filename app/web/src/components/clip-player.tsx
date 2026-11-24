@@ -71,7 +71,7 @@ export function ClipPlayer({ target, onClose }: { target: ClipTarget | null; onC
             ) : (
               <video key={src} ref={vid} src={src} controls autoPlay muted playsInline className="aspect-video w-full rounded-md bg-black"
                 onTimeUpdate={(e) => setPos(e.currentTarget.currentTime / Math.max(1, e.currentTarget.duration || before + after))}
-                onError={() => setErr("這段時間沒有錄到（錄影保留 7 天）")}
+                onError={() => setErr("這段時間沒有錄到（沒事的錄影只留幾天，有事的片段留比較久）")}
                 onEnded={() => { if (target.replay && t + 2 * REPLAY_LEN < Date.now() / 1000) setT(t + REPLAY_LEN); }} />
             )}
             <div className="flex items-center gap-2 text-xs tabular-nums text-muted-foreground">
@@ -199,7 +199,7 @@ export function ReplayCard({ cam, camName }: { cam: string; camName: string }) {
     setBusy(true);
     setErr(null);
     try {
-      const r = await api<{ hits: Hit[] }>("GET", `/api/recordings/search?q=${encodeURIComponent(v)}&cam=${encodeURIComponent(cam)}`);
+      const r = await api<{ hits: Hit[] }>("GET", `/api/recordings/search?q=${encodeURIComponent(v)}&cam=${encodeURIComponent(cam)}&days=30`);
       setHits(r.hits);
     } catch (e) {
       setErr((e as Error).message);
@@ -233,7 +233,7 @@ export function ReplayCard({ cam, camName }: { cam: string; camName: string }) {
             </button>
           ))}
         </div>
-      ) : <p className="text-sm text-muted-foreground">最近 7 天沒找到。</p>)}
+      ) : <p className="text-sm text-muted-foreground">最近 30 天沒找到。</p>)}
       <p className="text-xs text-muted-foreground">可以找人（穿著、顏色）、動物、包包、車；門、電梯這種固定的東西找不到。當天的錄影要等半夜 2 點分析完才找得到。</p>
 
       <div className="space-y-2 border-t pt-3">
