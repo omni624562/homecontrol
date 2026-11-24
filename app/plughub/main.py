@@ -1232,7 +1232,10 @@ async def gestures_get(request: Request) -> dict[str, Any]:
     _need_view(request)
     g = store.data["settings"].get("gestures") or {"on": False, "cam": None, "map": {}}
     st = hub.cameras.state.get(g.get("cam") or "", {})
-    return {**g, "now": st.get("gesture_now"), "live": st.get("engine") == "stream"}
+    pl = st.get("pose_last") or {}
+    fresh = time.time() - float(pl.get("t") or 0) < 3
+    people = [{"kp": p.get("kp"), "box": p.get("box")} for p in (pl.get("people") or []) if p.get("kp")] if fresh else []
+    return {**g, "now": st.get("gesture_now"), "live": st.get("engine") == "stream", "people": people}
 
 
 @app.put("/api/gestures")

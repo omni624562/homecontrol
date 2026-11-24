@@ -352,6 +352,8 @@ class Cameras:
                 st.update(engine="stream", objects=live["objects"], tracks=live["tracks"], samples=live["samples"], poses=live.get("poses") or [],
                           gestures=live.get("gestures") or [], gesture_now=live.get("gesture_now"),
                           sounds=live.get("sounds") or [], sound_error=live.get("sound_error"))
+                if live.get("poses"):
+                    st["pose_last"] = {"t": live["poses"][-1][0], "people": live["poses"][-1][1]}  # 手勢「試試看」畫骨架用
             else:
                 jpeg = snapshot(cam)
                 if cam.get("ignore"):

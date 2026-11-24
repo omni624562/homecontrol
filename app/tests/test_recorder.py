@@ -798,3 +798,19 @@ def test_ask_offers_enable_button_when_off(app_module, monkeypatch):
     hub.cameras.viewers = [dev["id"]]
     r = c.put("/api/claude-vision", json={"on": True}).json()
     assert r["on"] and r["cams"] == ["g"]  # 按了「打開」：先開門口的
+
+
+def test_gestures_live_pose(app_module):
+    import time as _t
+
+    hub = app_module.hub
+    hub.cameras.list = [{"id": "r", "name": "IN_HOUSE", "host": "x", "enabled": True}]
+    c, dev = _client(app_module)
+    hub.cameras.viewers = [dev["id"]]
+    c.put("/api/gestures", json={"on": True, "cam": "r", "map": {}})
+    kp = [[0.5, 0.5, 0.9]] * 17
+    hub.cameras.state["r"] = {"engine": "stream", "pose_last": {"t": _t.time(), "people": [{"kp": kp, "box": [1, 2, 3, 4], "torso": 5}]}}
+    r = c.get("/api/gestures").json()
+    assert r["live"] and r["people"][0]["kp"] == kp
+    hub.cameras.state["r"]["pose_last"]["t"] = _t.time() - 10  # 太舊：不畫
+    assert c.get("/api/gestures").json()["people"] == []
