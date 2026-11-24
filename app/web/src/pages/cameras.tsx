@@ -15,7 +15,8 @@ import { Switch } from "@/components/ui/switch";
 import { JumpChips } from "@/components/jump-chips";
 import { PageHeader } from "@/components/app-shell";
 import { DetectEditor } from "@/components/cam-detect";
-import { CamAccessBox, CamLive, SLOT, hhmm, type Cam, type CamAccess, type FacePerson, type FaceRep } from "@/components/camera-bits";
+import { CamAccessBox, CamLive, SLOT, hhmm, type Cam, type CamAccess, type FaceLogItem, type FacePerson, type FaceRep } from "@/components/camera-bits";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import type { MotionRule } from "@/components/motion-rules";
 import { api } from "@/lib/api";
 import { useHub } from "@/lib/hub";
@@ -492,10 +493,11 @@ function TasksTab({ cam, faces, rules, plugs, scenes, setFaces, setRules, setCam
 
 function LogTab({ faces, cam }: { faces: FaceRep | null; cam: Cam }) {
   const [all, setAll] = useState(false);
+  const [view, setView] = useState<{ x: FaceLogItem; i: number } | null>(null); // 看大圖（偵測到時連拍的幾張）
   const every = (faces?.log || []).filter((x) => x.camera === cam.name);
   const items = all ? every : every.slice(0, 5);
-  const tone = (k: string) => (k === "stranger" || k === "fall" ? "bg-orange-500" : k === "family" ? "bg-emerald-500" : k === "door" ? "bg-primary" : "bg-muted-foreground");
-  const text = (x: (typeof items)[number]) => x.kind === "stranger" ? "不認得的人" : x.kind === "guest" ? `${x.name}（訪客）` : x.kind === "pet" ? `看到${x.name}` : x.kind === "fall" ? "可能有人跌倒" : x.kind === "door" ? "門打開了" : `認出 ${x.name}`;
+  const tone = (k: string) => (k === "stranger" || k === "fall" ? "bg-orange-500" : k === "family" ? "bg-emerald-500" : k === "door" || k === "zone" ? "bg-primary" : "bg-muted-foreground");
+  const text = (x: (typeof items)[number]) => x.kind === "stranger" ? "不認得的人" : x.kind === "guest" ? `${x.name}（訪客）` : x.kind === "pet" ? `看到${x.name}` : x.kind === "fall" ? "可能有人跌倒" : x.kind === "door" ? "門打開了" : x.kind === "zone" ? x.name || "偵測到" : `認出 ${x.name}`;
   return (
     <Card className="gap-0 py-0">
       <div className="border-b px-4 py-3 font-semibold">紀錄<span className="ml-2 text-sm font-normal text-muted-foreground">最近 7 天</span></div>
@@ -506,13 +508,46 @@ function LogTab({ faces, cam }: { faces: FaceRep | null; cam: Cam }) {
               <span className="w-24 shrink-0 text-sm tabular-nums text-muted-foreground">{hhmm(x.t)}</span>
               <span className={cn("size-2.5 shrink-0 rounded-full", tone(x.kind))} aria-hidden />
               <span className={cn("min-w-0 flex-1 text-sm", (x.kind === "stranger" || x.kind === "fall") && "font-semibold text-orange-600 dark:text-orange-400")}>{text(x)}{x.sim != null && <span className="ml-1 text-xs text-muted-foreground">相似度 {x.sim}</span>}</span>
-              {x.thumb && <img src={`/api/faces/log/${x.id}.jpg`} alt={text(x)} className="size-12 shrink-0 rounded-md object-cover" loading="lazy" />}
+              {x.thumb && (
+                <button type="button" onClick={() => setView({ x, i: 0 })} className="relative shrink-0 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={`看${text(x)}的畫面`}>
+                  <img src={`/api/faces/log/${x.id}.jpg`} alt="" className={cn("rounded-md object-cover", x.kind === "zone" ? "h-12 w-20" : "size-12")} loading="lazy" />
+                  {(x.frames || 0) > 0 && <span className="absolute right-0.5 bottom-0.5 rounded bg-black/60 px-1 text-[10px] font-medium text-white tabular-nums">{(x.frames || 0) + 1} 張</span>}
+                </button>
+              )}
             </li>
           ))}
         </ul>
       )}
       {every.length > 5 && <button type="button" onClick={() => setAll(!all)} className="w-full border-t px-4 py-2.5 text-left text-sm font-medium text-primary hover:bg-muted/60">{all ? "只看最近幾筆" : `看全部 ${every.length} 筆`}</button>}
-      <p className="border-t px-4 py-2.5 text-xs text-muted-foreground">只有陌生人和跌倒會存小圖，7 天後自動刪掉；家人、訪客只記名字。</p>
+      <p className="border-t px-4 py-2.5 text-xs text-muted-foreground">陌生人、跌倒、偵測（門開了、有人進來…）會存畫面，偵測到之後再連拍幾張；7 天後自動刪掉。家人、訪客只記名字。</p>
+      <Dialog open={!!view} onOpenChange={(o) => !o && setView(null)}>
+        <DialogContent className="max-w-3xl gap-3 p-3 sm:p-4">
+          {view && (() => {
+            const n = (view.x.frames || 0) + 1;
+            const src = (i: number) => `/api/faces/log/${view.x.id}${i ? `_${i}` : ""}.jpg`;
+            return (
+              <>
+                <DialogTitle className="pr-8 text-base">{text(view.x)}<span className="ml-2 text-sm font-normal text-muted-foreground">{hhmm(view.x.t)}{n > 1 ? `・第 ${view.i + 1}／${n} 張（${view.i === 0 ? "偵測到時" : `${view.i * 2} 秒後`}）` : ""}</span></DialogTitle>
+                <img src={src(view.i)} alt={`${text(view.x)} 第 ${view.i + 1} 張`} className="w-full rounded-md bg-muted" />
+                {n > 1 && (
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" size="icon" aria-label="上一張" disabled={view.i === 0} onClick={() => setView({ ...view, i: view.i - 1 })}><ChevronLeft /></Button>
+                    <div className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto">
+                      {Array.from({ length: n }, (_, i) => (
+                        <button key={i} type="button" onClick={() => setView({ ...view, i })} aria-label={`第 ${i + 1} 張`} aria-current={view.i === i ? "true" : undefined}
+                          className={cn("shrink-0 overflow-hidden rounded border-2", view.i === i ? "border-primary" : "border-transparent opacity-70 hover:opacity-100")}>
+                          <img src={src(i)} alt="" className="h-12 w-20 object-cover" loading="lazy" />
+                        </button>
+                      ))}
+                    </div>
+                    <Button variant="outline" size="icon" aria-label="下一張" disabled={view.i === n - 1} onClick={() => setView({ ...view, i: view.i + 1 })}><ChevronRight /></Button>
+                  </div>
+                )}
+              </>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }

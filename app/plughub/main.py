@@ -1204,7 +1204,7 @@ def _faces_report() -> dict[str, Any]:
     guests = [g for g in known.values() if g["kind"] == "guest"]
     return {"family": family, "guests": guests, "actions": store.data["settings"].get("face_actions") or {},
             "enroll": hub.enroll_status(), "result": hub.enroll_result, "error": hub.face_error, "slot": hub.face_slot(),
-            "log": list(reversed(hub.face_log.items[-100:]))}
+            "log": list(reversed(hub.face_log.items[-300:]))}
 
 
 @app.get("/api/faces")

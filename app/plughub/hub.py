@@ -53,6 +53,9 @@ CAMERA_SCORE = 1.5  # 攝影機看到人的房間，動靜分數至少這麼多�
 PROBE_EVERY = 60  # 路由器多久沒看到家人的手機，就由樹莓派直接問（ARP）
 PROBE_MAX_AGE = 24 * 3600  # 超過一天沒看到的就不問了
 PRESENCE_LOG_MAX = 50
+CLIP_W = 800  # 區域、線偵測到時存的畫面寬度
+CLIP_MORE = 3  # 偵測到之後再拍幾張
+CLIP_GAP = 2.0  # 秒：每張隔多久（門開了，人通常過幾秒才出現）
 # 名稱有這些字的插座，第一次看到時自動設「最長開啟 10 分鐘」（之後可以在 App 改）
 WATER_WORDS = ("澆水", "灑水", "water", "sprinkler", "抽水", "水泵")
 DEFAULT_MAX_ON = 600  # 秒
@@ -1471,7 +1474,7 @@ class Hub:
                 for ev in zonelib.area_track(s, here, now, float(z.get("linger") or 0)):
                     want = "linger" if z.get("linger") else "enter"
                     if ev == want:
-                        self._zone_fire(cam, z, f"{z['name']}有人" + ("逗留" if ev == "linger" else ""), z.get("act") or {}, now)
+                        self._zone_fire(cam, z, f"{z['name']}有人" + ("逗留" if ev == "linger" else ""), z.get("act") or {}, now, jpeg)
                 continue
             if kind not in ("object", "door"):
                 continue
@@ -1487,24 +1490,24 @@ class Hub:
             s["score"] = score
             if kind == "door":
                 if score is not None and vision.door_track(s, score) == "open":
-                    self._zone_fire(cam, z, f"{z['name']}開了", z.get("act") or {}, now)
+                    self._zone_fire(cam, z, f"{z['name']}開了", z.get("act") or {}, now, jpeg)
                 continue
             ev = zonelib.object_track(s, score, float(sig.sum()), now, someone)
             if ev:
                 self._zone_learn(z, sig, s, "night" if st.get("night") else "day")  # 不管是第一次還是變了：現在的樣子記成正常的（包裹放著不會一直講）
             if ev in ("more", "less", "changed"):
                 word = {"more": "多了東西", "less": "東西不見了", "changed": "有東西變了"}[ev]
-                self._zone_fire(cam, z, f"{z['name']}{word}", z.get("act") or {}, now, thumb=self._zone_thumb(jpeg, z["poly"]))
+                self._zone_fire(cam, z, f"{z['name']}{word}", z.get("act") or {}, now, jpeg)
         lst = st.setdefault("lines", {})
         if someone or any((lst.get(ln["id"]) or {}).get("prev") for ln in cam.get("lines") or []):
             for ln in cam.get("lines") or []:
-                self._line_feed(cam, ln, lst.setdefault(ln["id"], {}), feet if someone else [], now)
+                self._line_feed(cam, ln, lst.setdefault(ln["id"], {}), feet if someone else [], now, jpeg)
 
-    def _line_feed(self, cam: dict[str, Any], ln: dict[str, Any], s: dict[str, Any], feet: list[tuple[float, float]], now: float) -> None:
+    def _line_feed(self, cam: dict[str, Any], ln: dict[str, Any], s: dict[str, Any], feet: list[tuple[float, float]], now: float, jpeg: bytes | None = None) -> None:
         for way in zonelib.line_track(s, ln, feet, now):
             s["last"] = {"way": way, "t": round(now)}
             label = f"{ln.get('name') or '線'}：{'回來' if way == 'in' else '出去'}"
-            self._zone_fire(cam, ln, label, ln.get(way) or {}, now)
+            self._zone_fire(cam, ln, label, ln.get(way) or {}, now, jpeg)
 
     async def _line_boost(self, cams: list[dict[str, Any]]) -> None:
         """有人經過畫了線的攝影機時，每秒多看兩張（走很快的人才不會跳過線）。"""
@@ -1524,7 +1527,7 @@ class Hub:
                 now = time.time()
                 feet = [p["foot"] for p in people if p.get("foot")]
                 for ln in c["lines"]:
-                    self._line_feed(c, ln, lst.setdefault(ln["id"], {}), feet, now)
+                    self._line_feed(c, ln, lst.setdefault(ln["id"], {}), feet, now, jpeg)
 
     def _zone_learn(self, z: dict[str, Any], sig: Any, s: dict[str, Any], when: str = "day") -> None:
         _add_ref(z, vision.sig_encode(sig), when, zonelib.OBJ_KEEP)
@@ -1546,25 +1549,49 @@ class Hub:
         s["base_e"] = float(sig.sum())
         return len(z["refs"])
 
-    def _zone_thumb(self, jpeg: bytes, poly: list[list[float]]) -> bytes:
+    @staticmethod
+    def _zone_frame(jpeg: bytes, item: dict[str, Any]) -> bytes:
+        """偵測到時的畫面：縮成 CLIP_W 寬，框出是哪個區域／哪條線。"""
         try:
-            import io as _io
+            import cv2
+            import numpy as np
 
-            from PIL import Image
-
-            W, H = Image.open(_io.BytesIO(jpeg)).size
-            x, y, w, h = vision.poly_bbox(poly)
-            return self.face_engine.thumb(jpeg, (int(x * W), int(y * H), int(w * W), int(h * H)), 240)
+            img = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
+            if img is None:
+                return b""
+            s = min(1.0, CLIP_W / img.shape[1])
+            img = cv2.resize(img, None, fx=s, fy=s, interpolation=cv2.INTER_AREA)
+            h, w = img.shape[:2]
+            closed = bool(item.get("poly"))
+            pts = camera.zone_points(item["poly"]) if closed else ([item["a"], item["b"]] if item.get("a") else [])
+            if pts:
+                arr = np.array([[int(x * w), int(y * h)] for x, y in pts], np.int32)
+                cv2.polylines(img, [arr], closed, (255, 200, 60), 2, cv2.LINE_AA)
+            ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 72])
+            return buf.tobytes() if ok else b""
         except Exception:  # noqa: BLE001
             return b""
 
-    def _zone_fire(self, cam: dict[str, Any], item: dict[str, Any], label: str, act: dict[str, Any], now: float, thumb: bytes | None = None) -> None:
+    async def _zone_clip(self, cam: dict[str, Any], entry: dict[str, Any], item: dict[str, Any]) -> None:
+        """偵測到之後再拍幾張（門開了，人通常過幾秒才出現）。"""
+        for _ in range(CLIP_MORE):
+            await asyncio.sleep(CLIP_GAP)
+            try:
+                jpeg = await asyncio.to_thread(camera.snapshot, cam)
+                frame = await asyncio.to_thread(self._zone_frame, jpeg, item)
+            except Exception:  # noqa: BLE001
+                return
+            self.face_log.add_frame(entry, frame)
+
+    def _zone_fire(self, cam: dict[str, Any], item: dict[str, Any], label: str, act: dict[str, Any], now: float, jpeg: bytes | None = None) -> None:
         """區域、線觸發了：記紀錄；照設定執行情境、通知（沒人在家時先等 3 分鐘確認不是家人）。"""
         name = cam.get("name") or cam["host"]
         key = f"{cam['id']}:{item['id']}:{label}"
         if not self._face_once(key, 20, now):
             return
-        self.face_log.add({"camera": name, "kind": "zone", "name": label, "sim": None}, thumb or None)
+        entry = self.face_log.add({"camera": name, "kind": "zone", "name": label, "sim": None}, self._zone_frame(jpeg, item) if jpeg else None)
+        if jpeg and entry.get("thumb"):
+            self._spawn(self._zone_clip(cam, entry, item))
         scene = act.get("scene")
         if scene and (not act.get("dark") or self.is_dark()) and self._face_once(f"{key}:scene", 60, now):
             self._presence_scene(scene, f"{name}：{label}")
