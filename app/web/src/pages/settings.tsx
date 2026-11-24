@@ -749,14 +749,12 @@ interface GestureCfg { on: boolean; cam: string | null; map: Record<string, GAct
 // COCO 17 點的骨架連線
 const BONES: [number, number][] = [[5, 6], [5, 7], [7, 9], [6, 8], [8, 10], [5, 11], [6, 12], [11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [0, 5], [0, 6]];
 
-// 手勢「試試看」：攝影機現在的畫面＋ Jetson 看到的骨架；手腕舉過頭變綠色
+// 手勢「看攝影畫面」：攝影機現在的畫面＋ Jetson 看到的骨架和手指
 function GestureLive({ cam, g }: { cam: string; g: GestureCfg }) {
   const [t, setT] = useState(Date.now());
   useEffect(() => { const id = setInterval(() => setT(Date.now()), 1000); return () => clearInterval(id); }, []);
   const p = g.people?.[0];
   const ok = (i: number) => !!p && p.kp[i][2] >= 0.3;
-  const head = p ? (ok(0) ? p.kp[0][0] : (p.kp[5][0] + p.kp[6][0]) / 2 - 0.05) : 0;
-  const up = (w: number) => ok(w) && p!.kp[w][0] < head;
   const sh = p && ok(5) && ok(6) ? (p.kp[5][0] + p.kp[6][0]) / 2 : null;
   const hip = p && ok(11) && ok(12) ? (p.kp[11][0] + p.kp[12][0]) / 2 : null;
   const lying = sh != null && hip != null && hip - sh < 0.05;
@@ -771,7 +769,6 @@ function GestureLive({ cam, g }: { cam: string; g: GestureCfg }) {
             {BONES.filter(([a, b]) => ok(a) && ok(b)).map(([a, b]) => (
               <line key={`${a}-${b}`} x1={p.kp[a][1]} y1={p.kp[a][0]} x2={p.kp[b][1]} y2={p.kp[b][0]} stroke="#38bdf8" strokeWidth={3} vectorEffect="non-scaling-stroke" />
             ))}
-            {[9, 10].filter(ok).map((i) => <ellipse key={i} cx={p.kp[i][1]} cy={p.kp[i][0]} rx={0.012} ry={0.021} fill={up(i) ? "#22c55e" : "#f59e0b"} stroke="#fff" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />)}
           </svg>
         )}
         {hand && (
@@ -792,15 +789,14 @@ function GestureLive({ cam, g }: { cam: string; g: GestureCfg }) {
           : !p ? "沒看到人：站到攝影機看得到的地方（上半身要入鏡）"
           : lying ? "看起來是躺著或斜靠：手勢要坐正或站著比較認得出來"
           : g.now ? `看到「${GESTURES.find(([k]) => k === g.now!.name)?.[2]}」${g.now.held >= need ? "・算一次了" : `・再維持 ${Math.max(0, need - g.now.held).toFixed(1)} 秒`}`
-          : `看到人・左手 ${up(9) ? "舉起 ✓" : "放下"}・右手 ${up(10) ? "舉起 ✓" : "放下"}・手指手勢要把手舉到胸前、掌心朝攝影機（太遠認不出來）`}
+          : "看到人・把手舉到胸前、掌心朝攝影機比手勢（太遠認不出來）"}
       </p>
-      <p className="text-xs text-muted-foreground">藍線是 Jetson 看到的骨架（大約慢半秒）；手腕綠色＝舉過頭，橘色＝沒有；綠色細線是認出來的手指。</p>
+      <p className="text-xs text-muted-foreground">藍線是 Jetson 看到的身體骨架（大約慢半秒）；綠色細線是認出來的手指。</p>
     </div>
   );
 }
-const ARM_GESTURES: [string, string, string][] = [["one_up", "🙋", "舉一隻手"], ["both_up", "🙌", "舉雙手"], ["cross", "🙅", "雙手在胸前交叉"]];
 const FINGER_GESTURES: [string, string, string][] = [["f_open", "✋", "張開手掌"], ["f_fist", "✊", "握拳"], ["f_v", "✌️", "比 YA"], ["f_point", "☝️", "比 1"], ["f_thumbs", "👍", "比讚"]];
-const GESTURES = [...ARM_GESTURES, ...FINGER_GESTURES];
+const GESTURES = FINGER_GESTURES;
 // 手的 21 點連線（MediaPipe）
 const HAND_BONES: [number, number][] = [[0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8], [5, 9], [9, 10], [10, 11], [11, 12], [9, 13], [13, 14], [14, 15], [15, 16], [13, 17], [17, 18], [18, 19], [19, 20], [0, 17]];
 function GestureRows() {
@@ -834,7 +830,7 @@ function GestureRows() {
   const parse = (v: string): GAct => (v === "_none" ? null : v === "off" ? { type: "off", id: null } : { type: v.split(":")[0] as "plug" | "plug_on" | "plug_off" | "scene", id: v.slice(v.indexOf(":") + 1) });
   return (
     <>
-      <SRow label="手勢遙控" hint="對著攝影機舉手或比手指，開關電器或執行情境；同一個手勢 10 秒內只算一次">
+      <SRow label="手勢遙控" hint="對著攝影機比手指，開關電器或執行情境；同一個手勢 10 秒內只算一次">
         <Switch checked={g.on} onCheckedChange={(v) => put({ on: v, cam: g.cam || cams[cams.length - 1]?.id || null }, v ? "手勢遙控打開了" : "手勢遙控關了")} aria-label="手勢遙控" />
       </SRow>
       {g.on && (
@@ -845,7 +841,7 @@ function GestureRows() {
               <SelectContent>{cams.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
             </Select>
           </label>
-          {([["舉手（維持 3 秒）", ARM_GESTURES], ["手指（手舉到胸前、掌心朝攝影機，維持 2 秒）", FINGER_GESTURES]] as const).map(([head, list]) => (
+          {([["手舉到胸前、掌心朝攝影機，維持 2 秒", FINGER_GESTURES]] as const).map(([head, list]) => (
             <div key={head} className="space-y-2">
               <div className="text-xs font-semibold text-muted-foreground">{head}</div>
               {list.map(([k, icon, text]) => (
@@ -868,11 +864,11 @@ function GestureRows() {
             </div>
           ))}
           <div className="flex flex-wrap items-center gap-3">
-            <Button variant="outline" size="sm" className="bg-background" disabled={!!trying || !g.cam} onClick={() => setTrying(Date.now() + 60000)}>試試看：看攝影機看到什麼</Button>
+            <Button variant="outline" size="sm" className="bg-background" disabled={!!trying || !g.cam} onClick={() => setTrying(Date.now() + 60000)}>看攝影畫面</Button>
             {trying ? <Button variant="ghost" size="sm" onClick={() => setTrying(0)}>停止</Button> : null}
           </div>
           {trying && g.cam ? <GestureLive cam={g.cam} g={g} /> : null}
-          <p className="text-xs text-muted-foreground">做到了會記在攝影機的紀錄裡；開關插座的話，電器本身會有反應。「試試看」會跟著做，也就是真的會開關，想先練習就先選「不做事」。</p>
+          <p className="text-xs text-muted-foreground">做到了會記在攝影機的紀錄裡；開關插座的話，電器本身會有反應。看攝影畫面的時候比手勢也會真的開關，想先練習就先選「不做事」。</p>
         </div>
       )}
     </>

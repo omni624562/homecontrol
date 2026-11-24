@@ -532,39 +532,21 @@ def test_gesture_classify():
     assert m.gesture(k) is None  # 手腕看不清楚
 
 
-def test_gesture_hold_and_actions(app_module, monkeypatch):
+def test_arm_gestures_removed(app_module, monkeypatch):
     m = _stream_mod()
     cam = m.Cam.__new__(m.Cam)
     cam.lock = __import__("threading").Lock()
-    cam.g_cur, cam.g_fired, cam.g_events = (None, 0.0, 0.0), False, m.deque()
+    cam.g_cur, cam.g_fired, cam.g_events, cam.g_hand, cam.hands = (None, 0.0, 0.0), False, m.deque(), None, lambda img, people: []
     up = [{"box": [0, 0, 10, 20], "kp": _kp((0.1, 0.6), (0.5, 0.42), le=(0.2, 0.6))}]
-    for i in range(9):  # 每 0.4 秒一次，舉 3.2 秒
-        cam._gesture(up, 100 + i * 0.4)
-    assert [e[1] for e in cam.g_events] == ["one_up"]
-    cam._gesture(up, 104.0)
-    assert len(cam.g_events) == 1  # 放下前不重複
-
+    for i in range(12):  # 舉手 4 秒：不再算手勢
+        cam._gesture(up, 100 + i * 0.4, img=object())
+    assert not cam.g_events
     hub = app_module.hub
-    toggled = []
-
-    async def gp(pid, on):
-        toggled.append((pid, on))
-
-    monkeypatch.setattr(hub, "_gesture_power", gp)
-    monkeypatch.setattr(hub, "_spawn", lambda coro: __import__("asyncio").run(coro))
-    plug = type("P", (), {"id": "lamp", "online": True, "is_on": False})()
-    monkeypatch.setattr(hub, "plugs", {"lamp": plug})
-    monkeypatch.setattr(hub, "name", lambda p: "客廳燈")
-    hub.store.data["settings"]["gestures"] = {"on": True, "cam": "r", "map": {"one_up": {"type": "plug", "id": "lamp"}}}
-    hub._face_cool = {}
-    c = {"id": "r", "name": "IN_HOUSE"}
-    hub.cameras.state["r"] = {"gestures": [[1.0, "one_up"], [2.0, "both_up"]]}
-    hub._gesture_events(c, 1000.0)
-    assert toggled == [("lamp", True)] and "手勢（舉一隻手）：打開客廳燈" in hub.face_log.items[-1]["name"]
-    hub.cameras.state["r"]["gestures"] = [[3.0, "one_up"]]
-    hub._gesture_events(c, 1005.0)
-    assert len(toggled) == 1  # 10 秒內只算一次
-
+    hub.store.data["settings"]["gestures"] = {"on": True, "cam": "r", "map": {"one_up": {"type": "plug", "id": "lamp"}, "f_open": {"type": "off", "id": None}}}
+    c, dev = _client(app_module)
+    hub.cameras.viewers = [dev["id"]]
+    assert list(c.get("/api/gestures").json()["map"]) == ["f_open"]  # 舊的舉手設定清掉
+    assert c.put("/api/gestures", json={"on": True, "cam": None, "map": {"one_up": {"type": "off"}}}).json()["map"] == {}
 
 def test_drop_strip_ghost(app_module):
     hub = app_module.hub
