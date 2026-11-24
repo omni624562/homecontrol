@@ -1240,15 +1240,15 @@ async def gestures_get(request: Request) -> dict[str, Any]:
 
 @app.put("/api/gestures")
 async def gestures_put(request: Request, body: dict = Body(...)) -> dict[str, Any]:
-    """{"on", "cam", "map": {"one_up"|"both_up"|"cross": {"type": "plug"|"scene"|"off", "id"} | null}}"""
+    """{"on", "cam", "map": {"one_up"|"both_up"|"cross"|"f_open"|"f_fist"|"f_v"|"f_point"|"f_thumbs": {"type": "plug"（切換）|"plug_on"|"plug_off"|"scene"|"off", "id"} | null}}"""
     _need_view(request)
     cams = {c["id"] for c in hub.cameras.list}
     m = {}
     for k, a in (body.get("map") or {}).items():
-        if k not in ("one_up", "both_up", "cross") or not isinstance(a, dict):
+        if k not in ("one_up", "both_up", "cross", "f_open", "f_fist", "f_v", "f_point", "f_thumbs") or not isinstance(a, dict):
             continue
         t = a.get("type")
-        if t == "plug" and a.get("id") in hub.plugs or t == "scene" and store.scene(a.get("id") or "") or t == "off":
+        if t in ("plug", "plug_on", "plug_off") and a.get("id") in hub.plugs or t == "scene" and store.scene(a.get("id") or "") or t == "off":
             m[k] = {"type": t, "id": a.get("id") if t != "off" else None}
     store.data["settings"]["gestures"] = {"on": bool(body.get("on")), "cam": body.get("cam") if body.get("cam") in cams else None, "map": m}
     store.save()
