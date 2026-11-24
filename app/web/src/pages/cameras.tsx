@@ -27,6 +27,7 @@ type Room = { id: string; name: string };
 type Tab = "c-view" | "c-replay" | "c-tasks" | "c-log" | "c-set";
 const SECTIONS: [Tab, string][] = [["c-view", "畫面"], ["c-replay", "回放"], ["c-tasks", "要做什麼"], ["c-log", "紀錄"], ["c-set", "設定"]];
 const PET = { cat: "貓", dog: "狗" } as Record<string, string>;
+const GROUPS: ["safe" | "auto" | "log", string][] = [["safe", "安全"], ["auto", "自動化"], ["log", "紀錄"]];
 const WINDOWS: [string, string, string][] = [["all", "", "整天"], ["evening", "18:00-06:00", "晚上 18:00～06:00"], ["night", "23:00-06:00", "半夜 23:00～06:00"]];
 const winOf = (r: MotionRule) => (!r.start ? "all" : WINDOWS.find(([, v]) => v === `${r.start}-${r.end}`)?.[0] || "custom");
 
@@ -338,8 +339,9 @@ function Task({ icon: I, title, hint, on, onChange, children, disabled }: { icon
   );
 }
 
-function TasksTab({ cam, faces, rules, plugs, scenes, setFaces, setRules, setCams, upd }: DetailProps & { upd: (b: object, ok?: string) => Promise<void> }) {
+function TasksTab({ cam, faces, rules, plugs, scenes, setFaces, setRules, setCams, upd, tab }: DetailProps & { upd: (b: object, ok?: string) => Promise<void> }) {
   const [guest, setGuest] = useState("");
+  const [grp, setGrp] = useState<"safe" | "auto" | "log">(tab === "c-tasks" ? "auto" : "safe"); // 要做什麼：安全／自動化／紀錄；從「登記家人的臉」點進來先開自動化
   const [openP, setOpenP] = useState<string | null>(null); // 展開哪位家人的回家情境
   const entry = cam.role === "entry";
   const rule = rules.find((r) => cam.room && r.room === cam.room);
@@ -358,6 +360,11 @@ function TasksTab({ cam, faces, rules, plugs, scenes, setFaces, setRules, setCam
   const sl: Still = { on: false, window: "07:00-22:00", min: 0, ...(cam.still || {}) };
   const setSl = (patch: Partial<Still>, ok = "已更新") => upd({ still: { ...sl, ...patch } }, ok);
   const info = cam.still_info;
+  const onCount = {
+    safe: [cam.alert, doors.some((z) => z.act.notify !== "off"), !!cam.fall, !entry && !!cam.still?.on, !!cam.sound?.on].filter(Boolean).length,
+    auto: [cam.faces !== false, !!rule?.enabled, !!cam.empty_off?.on].filter(Boolean).length,
+    log: [cam.pets !== false].filter(Boolean).length,
+  };
   const snd: Sound = { on: false, alarm: "urgent", glass: "urgent", scream: "urgent", dog: "normal", ...(cam.sound || {}) };
   const setSnd = (patch: Partial<Sound>, ok = "已更新") => upd({ sound: { ...snd, ...patch } }, ok);
   const e = faces?.enroll;
@@ -387,7 +394,106 @@ function TasksTab({ cam, faces, rules, plugs, scenes, setFaces, setRules, setCam
         </Card>
       )}
       <div className="px-1 text-lg font-bold">這台要幫我做什麼？</div>
+      <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="要做什麼的分類">
+        {GROUPS.map(([k, label]) => (
+          <button key={k} type="button" role="tab" aria-selected={grp === k} onClick={() => setGrp(k)}
+            className={cn("rounded-full border px-3.5 py-1 text-sm font-medium", grp === k ? "border-primary bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:bg-muted")}>
+            {label} <span className="tabular-nums opacity-80">{onCount[k]}</span>
+          </button>
+        ))}
+      </div>
 
+      {grp === "safe" && (
+        <>
+      <Task icon={UserRoundX} title="不認得的人通知我" on={cam.alert} onChange={(v) => upd({ alert: v }, v ? "會通知" : "不會通知")}
+        hint={entry ? "看清楚的臉、跟登記的人都不像，在門口待 30 秒以上才通知；沒人在家或半夜是緊急通知" : "沒人在家或半夜才通知；家裡有人時只記紀錄（多半是客人）"}>
+        <div className="space-y-2">
+          <VisitorGroups />
+          <div className="text-sm font-medium">常來的人（不算陌生人）</div>
+          {faces?.guests.map((g) => personRow(g, (
+            <label className="flex items-center gap-1.5 text-sm"><Switch checked={g.notify !== false} onCheckedChange={(v) => facesCall("PUT", `/api/faces/${g.id}`, { notify: v }, v ? `${g.name} 來了會通知` : `${g.name} 來了不通知`)} aria-label={`${g.name} 來了通知`} />來了通知</label>
+          )))}
+          <form className="flex gap-2" onSubmit={(ev) => { ev.preventDefault(); if (guest.trim()) { enroll(null, guest.trim()); setGuest(""); } }}>
+            <Input id="guest-name" placeholder="例如：清潔阿姨" className="max-w-48 bg-background" value={guest} onChange={(ev) => setGuest(ev.target.value)} aria-label="常來的人的名字" />
+            <Button type="submit" variant="outline" className="bg-background" disabled={!!e || !guest.trim()}><Plus />新增並登記</Button>
+          </form>
+        </div>
+        {entry && (
+          <label className="flex items-center gap-2 text-sm">
+            <span className="flex-1">半夜看到陌生人時，打開</span>
+            <Select value={cam.light || "_none"} onValueChange={(v) => upd({ light: v === "_none" ? null : v }, v === "_none" ? "不開燈" : "半夜看到陌生人會開這個 5 分鐘")}>
+              <SelectTrigger className="h-8 w-36 bg-background" aria-label="半夜看到陌生人時打開的插座"><SelectValue /></SelectTrigger>
+              <SelectContent><SelectItem value="_none">不開</SelectItem>{plugs.map((pl) => <SelectItem key={pl.id} value={pl.id}>{pl.name}</SelectItem>)}</SelectContent>
+            </Select>
+          </label>
+        )}
+      </Task>
+
+      <Task icon={DoorOpen} title="開門時通知" on={doors.some((z) => z.act.notify !== "off")}
+        hint={doors.length ? doors.map((z) => `${z.name}：${z.act.notify === "always" ? "每次開了都通知" : z.act.notify === "away" ? "沒人在家時開了才通知" : "不通知"}`).join("・") : "先在畫面下面按「新增偵測」選「門」"}
+        onChange={async (v) => {
+          if (!doors.length) { go("c-view"); toast("在畫面上按「新增偵測」，選「門」"); return; }
+          const r = await call<{ cameras: Cam[] }>("PUT", `/api/cameras/${cam.id}/zones`, { zones: (cam.zones || []).map((z) => (z.kind === "door" ? { ...z, act: { ...z.act, notify: v ? "away" : "off" } } : z)) }, v ? "沒人在家時開門會通知" : "開門不通知");
+          if (r) setCams(r.cameras);
+        }}>
+        <p className="text-sm text-muted-foreground">每個門什麼時候通知、要不要執行情境，在畫面上點那個門就能改。沒人在家時門開了，會先等 3 分鐘：有家人的手機連上 Wi-Fi、或門口認出家人，就不通知。</p>
+      </Task>
+
+      <Task icon={ShieldAlert} title={"有人跌倒通知我"} on={!!cam.fall} onChange={(v) => upd({ fall: v }, v ? "會偵測跌倒" : "不偵測跌倒")}
+        hint={<>站著突然倒下、20 秒沒起來就緊急通知；慢慢坐下再躺下不算 <Badge variant="secondary">實驗</Badge></>} />
+
+      {!entry && (
+        <Task icon={HeartPulse} title="家裡有人但很久沒動，通知我" on={!!sl.on} onChange={(v) => setSl({ on: v }, v ? "很久沒動會通知" : "不會通知")}
+          hint="有人在家（手機在家）、設定的時段裡比平常久都沒看到人走動，傳 LINE 給家人；坐著手有動不算沒動">
+          <div className="grid gap-2 sm:grid-cols-2">
+            <label className="flex items-center gap-2 text-sm"><span className="w-16 shrink-0 text-muted-foreground">時段</span>
+              <Select value={sl.window} onValueChange={(v) => setSl({ window: v })}>
+                <SelectTrigger className="h-8 min-w-0 flex-1 bg-background" aria-label="什麼時段要看"><SelectValue /></SelectTrigger>
+                <SelectContent>{["07:00-22:00", "08:00-23:00", "06:00-21:00"].map((w) => <SelectItem key={w} value={w}>白天 {w.replace("-", "～")}</SelectItem>)}</SelectContent>
+              </Select>
+            </label>
+            <label className="flex items-center gap-2 text-sm"><span className="w-16 shrink-0 text-muted-foreground">多久沒動</span>
+              <Select value={String(sl.min)} onValueChange={(v) => setSl({ min: Number(v) })}>
+                <SelectTrigger className="h-8 min-w-0 flex-1 bg-background" aria-label="多久沒動才通知"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="0">自動（比平常久一倍）</SelectItem>{[60, 120, 180].map((m) => <SelectItem key={m} value={String(m)}>{m / 60} 小時</SelectItem>)}</SelectContent>
+              </Select>
+            </label>
+          </div>
+          {info && (
+            <div className="space-y-1.5">
+              <p className="text-sm text-muted-foreground">
+                {info.usual != null ? `平常白天最久大約 ${info.usual} 分鐘沒走動（學了 ${info.learned} 天）` : `還在學平常的作息（${info.learned}/3 天），先用 ${info.threshold / 60} 小時`}
+                {info.watching ? `・現在 ${info.gap} 分鐘沒動，${info.threshold} 分鐘會通知` : "・現在不在時段內或沒人在家"}
+              </p>
+              <div className="flex h-9 items-end gap-1" aria-label="過去 7 天每天最久沒走動的時間">
+                {info.week.map((w, i) => {
+                  const mx = Math.max(info.threshold, ...info.week.map((x) => x.max || 0));
+                  return <i key={w.d} title={`${w.d.slice(5)}：${w.max ?? "—"} 分鐘`} className={cn("flex-1 rounded-sm", i === 6 ? "bg-amber-500" : "bg-primary/30")} style={{ height: `${Math.max(6, ((w.max || 0) / mx) * 100)}%` }} />;
+                })}
+              </div>
+              <p className="text-xs text-muted-foreground">過去 7 天每天最久沒走動的時間；橘色是今天</p>
+            </div>
+          )}
+        </Task>
+      )}
+
+      <Task icon={Ear} title="聽到這些就通知" on={!!snd.on} onChange={(v) => setSnd({ on: v }, v ? "會聽聲音" : "不聽聲音")}
+        hint="Jetson 即時聽攝影機收到的聲音；平常不錄、不上傳，只有聽到時才留前後 10 秒（7 天後刪）">
+        {cam.sound_error && <p className="text-sm text-amber-700 dark:text-amber-400">現在聽不到這台的聲音：{cam.sound_error}（攝影機可能沒有麥克風，或沒開聲音）</p>}
+        {([["alarm", "煙霧／火災警報聲"], ["glass", "玻璃破掉"], ["scream", "有人大叫、呼救"], ["dog", "狗一直叫（超過 2 分鐘）"]] as const).map(([k, label]) => (
+          <label key={k} className="flex items-center gap-2 text-sm">
+            <span className="min-w-0 flex-1">{label}</span>
+            <Select value={snd[k]} onValueChange={(v) => setSnd({ [k]: v as SoundLevel })}>
+              <SelectTrigger className="h-8 w-32 bg-background" aria-label={`${label}的時候`}><SelectValue /></SelectTrigger>
+              <SelectContent><SelectItem value="urgent">緊急通知</SelectItem><SelectItem value="normal">一般通知</SelectItem><SelectItem value="off">只記紀錄</SelectItem></SelectContent>
+            </Select>
+          </label>
+        ))}
+      </Task>
+        </>
+      )}
+      {grp === "auto" && (
+        <>
       <Task icon={ScanFace} title="認出家人就執行他的動作" on={cam.faces !== false} onChange={(v) => upd({ faces: v }, v ? "會認臉" : "不認臉，只認有沒有人")}
         hint={entry ? "門口認出家人回來，依時段執行他的情境（比手機連上 Wi-Fi 還早）" : "這台是「房間」：認臉只用來分辨家人和陌生人；回家動作要「門口」的攝影機才會執行"}>
         {faces?.family.length ? faces.family.map((pp) => {
@@ -422,40 +528,6 @@ function TasksTab({ cam, faces, rules, plugs, scenes, setFaces, setRules, setCam
           );
         }) : <p className="text-sm text-muted-foreground">先在「網路裝置 → 誰在家」新增家人。</p>}
         {entry && <p className="text-xs text-muted-foreground">家裡只剩他一個、門口又認出他時，會提醒他還開著的電器（多半是要出門）。</p>}
-      </Task>
-
-      <Task icon={UserRoundX} title="不認得的人通知我" on={cam.alert} onChange={(v) => upd({ alert: v }, v ? "會通知" : "不會通知")}
-        hint={entry ? "看清楚的臉、跟登記的人都不像，在門口待 30 秒以上才通知；沒人在家或半夜是緊急通知" : "沒人在家或半夜才通知；家裡有人時只記紀錄（多半是客人）"}>
-        <div className="space-y-2">
-          <VisitorGroups />
-          <div className="text-sm font-medium">常來的人（不算陌生人）</div>
-          {faces?.guests.map((g) => personRow(g, (
-            <label className="flex items-center gap-1.5 text-sm"><Switch checked={g.notify !== false} onCheckedChange={(v) => facesCall("PUT", `/api/faces/${g.id}`, { notify: v }, v ? `${g.name} 來了會通知` : `${g.name} 來了不通知`)} aria-label={`${g.name} 來了通知`} />來了通知</label>
-          )))}
-          <form className="flex gap-2" onSubmit={(ev) => { ev.preventDefault(); if (guest.trim()) { enroll(null, guest.trim()); setGuest(""); } }}>
-            <Input id="guest-name" placeholder="例如：清潔阿姨" className="max-w-48 bg-background" value={guest} onChange={(ev) => setGuest(ev.target.value)} aria-label="常來的人的名字" />
-            <Button type="submit" variant="outline" className="bg-background" disabled={!!e || !guest.trim()}><Plus />新增並登記</Button>
-          </form>
-        </div>
-        {entry && (
-          <label className="flex items-center gap-2 text-sm">
-            <span className="flex-1">半夜看到陌生人時，打開</span>
-            <Select value={cam.light || "_none"} onValueChange={(v) => upd({ light: v === "_none" ? null : v }, v === "_none" ? "不開燈" : "半夜看到陌生人會開這個 5 分鐘")}>
-              <SelectTrigger className="h-8 w-36 bg-background" aria-label="半夜看到陌生人時打開的插座"><SelectValue /></SelectTrigger>
-              <SelectContent><SelectItem value="_none">不開</SelectItem>{plugs.map((pl) => <SelectItem key={pl.id} value={pl.id}>{pl.name}</SelectItem>)}</SelectContent>
-            </Select>
-          </label>
-        )}
-      </Task>
-
-      <Task icon={DoorOpen} title="開門時通知" on={doors.some((z) => z.act.notify !== "off")}
-        hint={doors.length ? doors.map((z) => `${z.name}：${z.act.notify === "always" ? "每次開了都通知" : z.act.notify === "away" ? "沒人在家時開了才通知" : "不通知"}`).join("・") : "先在畫面下面按「新增偵測」選「門」"}
-        onChange={async (v) => {
-          if (!doors.length) { go("c-view"); toast("在畫面上按「新增偵測」，選「門」"); return; }
-          const r = await call<{ cameras: Cam[] }>("PUT", `/api/cameras/${cam.id}/zones`, { zones: (cam.zones || []).map((z) => (z.kind === "door" ? { ...z, act: { ...z.act, notify: v ? "away" : "off" } } : z)) }, v ? "沒人在家時開門會通知" : "開門不通知");
-          if (r) setCams(r.cameras);
-        }}>
-        <p className="text-sm text-muted-foreground">每個門什麼時候通知、要不要執行情境，在畫面上點那個門就能改。沒人在家時門開了，會先等 3 分鐘：有家人的手機連上 Wi-Fi、或門口認出家人，就不通知。</p>
       </Task>
 
       <Task icon={Lightbulb} title="有人就開燈" on={!!rule?.enabled} disabled={!cam.room}
@@ -526,63 +598,16 @@ function TasksTab({ cam, faces, rules, plugs, scenes, setFaces, setRules, setCam
         </div>
         <label className="flex items-center gap-2 text-sm"><Switch checked={eo.ask} onCheckedChange={(v) => setEo({ ask: v })} aria-label="關之前先傳 LINE" />關之前先傳 LINE，5 分鐘內可以按「不要關」</label>
       </Task>
-
-      {!entry && (
-        <Task icon={HeartPulse} title="家裡有人但很久沒動，通知我" on={!!sl.on} onChange={(v) => setSl({ on: v }, v ? "很久沒動會通知" : "不會通知")}
-          hint="有人在家（手機在家）、設定的時段裡比平常久都沒看到人走動，傳 LINE 給家人；坐著手有動不算沒動">
-          <div className="grid gap-2 sm:grid-cols-2">
-            <label className="flex items-center gap-2 text-sm"><span className="w-16 shrink-0 text-muted-foreground">時段</span>
-              <Select value={sl.window} onValueChange={(v) => setSl({ window: v })}>
-                <SelectTrigger className="h-8 min-w-0 flex-1 bg-background" aria-label="什麼時段要看"><SelectValue /></SelectTrigger>
-                <SelectContent>{["07:00-22:00", "08:00-23:00", "06:00-21:00"].map((w) => <SelectItem key={w} value={w}>白天 {w.replace("-", "～")}</SelectItem>)}</SelectContent>
-              </Select>
-            </label>
-            <label className="flex items-center gap-2 text-sm"><span className="w-16 shrink-0 text-muted-foreground">多久沒動</span>
-              <Select value={String(sl.min)} onValueChange={(v) => setSl({ min: Number(v) })}>
-                <SelectTrigger className="h-8 min-w-0 flex-1 bg-background" aria-label="多久沒動才通知"><SelectValue /></SelectTrigger>
-                <SelectContent><SelectItem value="0">自動（比平常久一倍）</SelectItem>{[60, 120, 180].map((m) => <SelectItem key={m} value={String(m)}>{m / 60} 小時</SelectItem>)}</SelectContent>
-              </Select>
-            </label>
-          </div>
-          {info && (
-            <div className="space-y-1.5">
-              <p className="text-sm text-muted-foreground">
-                {info.usual != null ? `平常白天最久大約 ${info.usual} 分鐘沒走動（學了 ${info.learned} 天）` : `還在學平常的作息（${info.learned}/3 天），先用 ${info.threshold / 60} 小時`}
-                {info.watching ? `・現在 ${info.gap} 分鐘沒動，${info.threshold} 分鐘會通知` : "・現在不在時段內或沒人在家"}
-              </p>
-              <div className="flex h-9 items-end gap-1" aria-label="過去 7 天每天最久沒走動的時間">
-                {info.week.map((w, i) => {
-                  const mx = Math.max(info.threshold, ...info.week.map((x) => x.max || 0));
-                  return <i key={w.d} title={`${w.d.slice(5)}：${w.max ?? "—"} 分鐘`} className={cn("flex-1 rounded-sm", i === 6 ? "bg-amber-500" : "bg-primary/30")} style={{ height: `${Math.max(6, ((w.max || 0) / mx) * 100)}%` }} />;
-                })}
-              </div>
-              <p className="text-xs text-muted-foreground">過去 7 天每天最久沒走動的時間；橘色是今天</p>
-            </div>
-          )}
-        </Task>
+        </>
       )}
-
-      <Task icon={Ear} title="聽到這些就通知" on={!!snd.on} onChange={(v) => setSnd({ on: v }, v ? "會聽聲音" : "不聽聲音")}
-        hint="Jetson 即時聽攝影機收到的聲音；平常不錄、不上傳，只有聽到時才留前後 10 秒（7 天後刪）">
-        {cam.sound_error && <p className="text-sm text-amber-700 dark:text-amber-400">現在聽不到這台的聲音：{cam.sound_error}（攝影機可能沒有麥克風，或沒開聲音）</p>}
-        {([["alarm", "煙霧／火災警報聲"], ["glass", "玻璃破掉"], ["scream", "有人大叫、呼救"], ["dog", "狗一直叫（超過 2 分鐘）"]] as const).map(([k, label]) => (
-          <label key={k} className="flex items-center gap-2 text-sm">
-            <span className="min-w-0 flex-1">{label}</span>
-            <Select value={snd[k]} onValueChange={(v) => setSnd({ [k]: v as SoundLevel })}>
-              <SelectTrigger className="h-8 w-32 bg-background" aria-label={`${label}的時候`}><SelectValue /></SelectTrigger>
-              <SelectContent><SelectItem value="urgent">緊急通知</SelectItem><SelectItem value="normal">一般通知</SelectItem><SelectItem value="off">只記紀錄</SelectItem></SelectContent>
-            </Select>
-          </label>
-        ))}
-      </Task>
-
-      <Task icon={ShieldAlert} title={"有人跌倒通知我"} on={!!cam.fall} onChange={(v) => upd({ fall: v }, v ? "會偵測跌倒" : "不偵測跌倒")}
-        hint={<>站著突然倒下、20 秒沒起來就緊急通知；慢慢坐下再躺下不算 <Badge variant="secondary">實驗</Badge></>} />
-
+      {grp === "log" && (
+        <>
       <Task icon={Cat} title="看到貓狗" on={cam.pets !== false} onChange={(v) => upd({ pets: v }, v ? "會認貓、狗" : "不認貓、狗")}
         hint="記在紀錄裡、地圖上顯示；貓狗不會被當成人">
         <label className="flex items-center gap-2 text-sm"><Switch checked={!!cam.pet_notify} onCheckedChange={(v) => upd({ pet_notify: v }, v ? "看到貓狗會通知" : "只記紀錄")} aria-label="看到貓狗通知" />看到時通知（每 10 分鐘最多一次）</label>
       </Task>
+        </>
+      )}
     </>
   );
 }

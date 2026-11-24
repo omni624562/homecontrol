@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { AlertCircle, Archive, BarChart3, ListChecks, Bell, Cctv, Download, Lock, Plus, ShieldCheck, Trash2, CheckCircle2, CloudSun, KeyRound, MessageCircle, ChevronRight, ExternalLink, Loader2, MessageSquareText, Mic, Moon, Palette, Search, Wifi, WifiOff } from "lucide-react";
+import { AlertCircle, Archive, BarChart3, ListChecks, Bell, Cctv, Download, Lock, Plus, ShieldCheck, Trash2, CheckCircle2, CloudSun, KeyRound, MessageCircle, ChevronLeft, ChevronRight, ExternalLink, EyeOff, Home, Loader2, MessageSquareText, Mic, Moon, Palette, Search, Wifi, WifiOff } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -11,7 +11,6 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { JumpChips } from "@/components/jump-chips";
 import { PageHeader, TABS } from "@/components/app-shell";
 import { AskSetup, fmtUsd, useAsk } from "@/components/ask-sheet";
 import { CloudSheet, cloudBound } from "@/components/cloud-sheet";
@@ -393,7 +392,6 @@ function NetCheck({ s }: { s: HubState }) {
   );
 }
 
-const SECTIONS: [string, string][] = [["s-setup", "設定進度"], ["s-look", "外觀"], ["s-notify", "通知"], ["s-night", "晚安"], ["s-life", "天氣生活"], ["s-ask", "問家裡"], ["s-google", "Google Home"], ["s-cam", "攝影機"], ["s-dev", "裝置"], ["s-sys", "安全與備份"], ["s-tls", "HTTPS"], ["s-usage", "使用統計"]];
 
 const ago = (t: number) => {
   const s = Date.now() / 1000 - t;
@@ -904,15 +902,169 @@ function GoodnightCard({ s }: { s: HubState }) {
   );
 }
 
+// ---- 設定首頁：分類＋搜尋；#settings/<分類>、#settings/privacy、#settings/setup；舊的 #settings/s-xxx 會跳到那張卡片所在的分類 ----
+type CatKey = "notify" | "cam" | "ai" | "life" | "home" | "google" | "security" | "other";
+const CATS: { key: CatKey; title: string; hint: string; icon: React.ElementType }[] = [
+  { key: "notify", title: "通知與提醒", hint: "LINE、開太久、天氣、停電、每週摘要", icon: Bell },
+  { key: "cam", title: "攝影機與錄影", hint: "誰能看、錄影留多久、夜間增強、手勢", icon: Cctv },
+  { key: "ai", title: "Claude（AI）", hint: "問家裡、看攝影機畫面、每月上限", icon: MessageSquareText },
+  { key: "life", title: "生活與晚安", hint: "晚安檢查、天氣、垃圾車、小動畫", icon: Moon },
+  { key: "home", title: "家人與裝置", hint: "裝置檢查、停電恢復、Wi-Fi 感測、找新插座", icon: Search },
+  { key: "google", title: "Google Home", hint: "插座、情境放到 Google", icon: Home },
+  { key: "security", title: "安全與備份", hint: "存取碼、備份、HTTPS", icon: ShieldCheck },
+  { key: "other", title: "外觀與其他", hint: "畫面風格、手機選單、待機畫面、使用統計", icon: Palette },
+];
+const CARD_CAT: Record<string, string> = {
+  "s-notify": "notify", "s-cam": "cam", "s-ask": "ai", "s-night": "life", "s-life": "life", "s-dev": "home", "s-google": "google",
+  "s-sys": "security", "s-tls": "security", "s-look": "other", "s-usage": "other", "s-setup": "setup",
+};
+// 搜尋：[關鍵字, 分類, 卡片 id]
+const SEARCH: [string, string, string][] = [
+  ["LINE 手機通知", "notify", "s-notify"], ["開太久提醒", "notify", "s-notify"], ["下雨提醒 帶傘", "notify", "s-notify"], ["停水停電", "notify", "s-notify"],
+  ["停班停課", "notify", "s-notify"], ["天氣特報 颱風", "notify", "s-notify"], ["地震", "notify", "s-notify"], ["供電吃緊", "notify", "s-notify"],
+  ["空氣品質 AQI", "notify", "s-notify"], ["用電異常", "notify", "s-notify"], ["電費跳級", "notify", "s-notify"], ["功率過高 待機門檻", "notify", "s-notify"],
+  ["每週摘要", "notify", "s-notify"], ["每月報告", "notify", "s-notify"],
+  ["攝影機 誰可以看 權限", "cam", "s-cam"], ["錄影 保留 硬碟", "cam", "s-cam"], ["夜間畫面增強", "cam", "s-cam"], ["手勢遙控", "cam", "s-cam"], ["Jetson", "cam", "s-cam"],
+  ["問家裡 Claude 金鑰 模型 上限", "ai", "s-ask"], ["Claude 看攝影機畫面", "ai", "s-ask"],
+  ["晚安檢查 睡前", "life", "s-night"], ["天氣 授權碼 氣象署", "life", "s-life"], ["垃圾車 公車 YouBike", "life", "s-life"], ["趣味小動畫", "life", "s-life"],
+  ["裝置檢查 網路", "home", "s-dev"], ["停電後恢復插座", "home", "s-dev"], ["Wi-Fi 感測", "home", "s-dev"], ["TP-Link 雲端", "home", "s-dev"], ["找新插座", "home", "s-dev"],
+  ["Google Home Matter", "google", "s-google"], ["存取碼 配對 備份 還原", "security", "s-sys"], ["HTTPS 憑證 安全連線", "security", "s-tls"],
+  ["畫面風格 科技感", "other", "s-look"], ["手機選單 下方分頁", "other", "s-look"], ["待機畫面 平板", "other", "s-look"], ["使用統計", "other", "s-usage"],
+  ["隱私 資料 Anthropic", "privacy", ""], ["設定進度 還沒設定", "setup", ""],
+];
+
+function useSettingsView(ready: boolean): string {
+  const read = () => location.hash.slice(1).split("/")[1] || "";
+  const [part, setPart] = useState(read);
+  useEffect(() => {
+    const on = () => setPart(read());
+    window.addEventListener("hashchange", on);
+    return () => window.removeEventListener("hashchange", on);
+  }, []);
+  const view = part.startsWith("s-") ? CARD_CAT[part] || "" : part;
+  useEffect(() => {  // 舊的連結（#settings/s-tls 之類）：到那個分類後捲到那張卡片
+    if (!ready || !part.startsWith("s-")) return;
+    const t = setTimeout(() => document.getElementById(part)?.scrollIntoView({ behavior: "smooth", block: "start" }), 300);
+    return () => clearTimeout(t);
+  }, [part, ready]);
+  return view;
+}
+
+function SettingsHome({ view, go, state }: { view: string; go: (to: string) => void; state: HubState }) {
+  const [q, setQ] = useState("");
+  const setup = useSetup();
+  const [rec, setRec] = useState<{ configured: boolean; cams?: Record<string, { recording: boolean }> } | null>(null);
+  const [cv, setCv] = useState<{ on: boolean } | null>(null);
+  const [tls, setTls] = useState<{ secure: boolean } | null>(null);
+  useEffect(() => {
+    api<typeof rec>("GET", "/api/recorder").then(setRec).catch(() => {});
+    api<typeof cv>("GET", "/api/claude-vision").then(setCv).catch(() => {});
+    api<typeof tls>("GET", "/api/tls").then(setTls).catch(() => {});
+  }, []);
+  const gn = (state.settings.goodnight || {}) as { at?: string; mode?: string };
+  const recOn = Object.values(rec?.cams || {}).filter((c) => c.recording).length;
+  const chip: Record<CatKey, [string, "ok" | "warn" | "ai"] | null> = {
+    notify: state.notify?.error ? ["LINE 沒送出去", "warn"] : state.notify?.line ? ["LINE 正常", "ok"] : ["LINE 還沒設定", "warn"],
+    cam: rec?.configured ? [`${recOn} 台在錄`, recOn ? "ok" : "warn"] : null,
+    ai: cv ? [cv.on ? "看畫面：開" : "看畫面：關", "ai"] : null,
+    life: gn.mode === "none" ? ["不做晚安檢查", "warn"] : [`${gn.at || "23:30"} 晚安檢查`, "ok"],
+    home: [`${state.plugs.filter((p) => p.online).length}/${state.plugs.length} 個插座在線`, state.plugs.every((p) => p.online) ? "ok" : "warn"],
+    google: state.matter ? (state.matter.commissioned ? ["已連結", "ok"] : ["還沒連結", "warn"]) : null,
+    security: tls ? (tls.secure ? ["HTTPS", "ok"] : ["這台還沒用 HTTPS", "warn"]) : null,
+    other: null,
+  };
+  const hits = q.trim() ? SEARCH.filter(([k]) => q.trim().split(/\s+/).every((w) => k.toLowerCase().includes(w.toLowerCase()))) : [];
+  const todo = (setup.items || []).filter((x) => !x.done && !x.skipped);
+  return (
+    <>
+      <div className="relative">
+        <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+        <Input id="settings-search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜尋設定，例如「錄影」「晚安」「金鑰」" className="h-10 bg-background pl-9" aria-label="搜尋設定" />
+      </div>
+      {q.trim() ? (
+        <Card className="gap-0 py-1">
+          {hits.length ? hits.map(([k, cat, id]) => (
+            <button key={k} type="button" onClick={() => { setQ(""); go(id || cat); }} className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm hover:bg-muted/60">
+              <span className="flex-1">{k.split(" ")[0]}</span><span className="text-xs text-muted-foreground">{CATS.find((c) => c.key === cat)?.title || (cat === "privacy" ? "隱私" : "設定進度")}</span><ChevronRight className="size-4 text-muted-foreground" />
+            </button>
+          )) : <p className="px-4 py-3 text-sm text-muted-foreground">找不到「{q}」</p>}
+        </Card>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-2 lg:grid-cols-1">
+            {CATS.map((c) => {
+              const ch = chip[c.key];
+              return (
+                <button key={c.key} type="button" onClick={() => go(c.key)} aria-current={view === c.key ? "page" : undefined}
+                  className={cn("flex min-w-0 flex-col items-start gap-0.5 rounded-xl border bg-card p-3 text-left transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:flex-row lg:items-center lg:gap-3",
+                    view === c.key && "border-primary bg-primary/5")}>
+                  <c.icon className="size-5 shrink-0 text-primary" />
+                  <span className="min-w-0 lg:flex-1"><span className="block font-semibold leading-snug">{c.title}</span><span className="block text-xs leading-snug text-muted-foreground lg:truncate">{c.hint}</span></span>
+                  {ch && <span className={cn("mt-1 shrink-0 rounded-full px-2 text-[11px] lg:mt-0", ch[1] === "ok" ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : ch[1] === "ai" ? "bg-orange-500/10 text-orange-700 dark:text-orange-400" : "bg-amber-500/15 text-amber-700 dark:text-amber-400")}>{ch[0]}</span>}
+                </button>
+              );
+            })}
+          </div>
+          <Card className="gap-0 divide-y py-0">
+            {setup.items && (
+              <button type="button" onClick={() => go("setup")} aria-current={view === "setup" ? "page" : undefined} className={cn("flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-muted/50", view === "setup" && "bg-primary/5")}>
+                <ListChecks className="size-5 shrink-0 text-primary" />
+                <span className="min-w-0 flex-1"><span className="block font-medium">{setup.done === setup.total ? "全部設定好了" : `還沒設定完（${setup.done}/${setup.total}）`}</span>
+                  {todo.length > 0 && <span className="block truncate text-xs text-muted-foreground">{todo.slice(0, 3).map((x) => x.title).join("、")}</span>}</span>
+                <ChevronRight className="size-4 text-muted-foreground" />
+              </button>
+            )}
+            <button type="button" onClick={() => go("privacy")} aria-current={view === "privacy" ? "page" : undefined} className={cn("flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-muted/50", view === "privacy" && "bg-primary/5")}>
+              <EyeOff className="size-5 shrink-0 text-primary" />
+              <span className="min-w-0 flex-1"><span className="block font-medium">隱私：哪些資料會離開家裡</span><span className="block text-xs text-muted-foreground">一頁看完，每項都能關</span></span>
+              <ChevronRight className="size-4 text-muted-foreground" />
+            </button>
+          </Card>
+        </>
+      )}
+    </>
+  );
+}
+
+// 隱私：每個會把資料送出家門的功能
+function PrivacyView({ go }: { go: (to: string) => void }) {
+  const { state } = useHub();
+  const [cv, setCv] = useState<{ on: boolean; cams: string[] } | null>(null);
+  const [ask, setAsk] = useState<{ configured: boolean } | null>(null);
+  useEffect(() => {
+    api<typeof cv>("GET", "/api/claude-vision").then(setCv).catch(() => {});
+    api<typeof ask>("GET", "/api/assistant").then(setAsk).catch(() => {});
+  }, []);
+  const tone = { home: "bg-emerald-500", ai: "bg-orange-500", out: "bg-amber-500" };
+  const Row = ({ t, title, hint, right }: { t: keyof typeof tone; title: string; hint: string; right: ReactNode }) => (
+    <div className="flex items-center gap-3 px-4 py-3 sm:px-5">
+      <span className={cn("size-2.5 shrink-0 rounded-full", tone[t])} aria-hidden />
+      <span className="min-w-0 flex-1"><span className="block font-medium">{title}</span><span className="block text-sm text-muted-foreground">{hint}</span></span>
+      {right}
+    </div>
+  );
+  const link = (to: string, label: string) => <Button variant="ghost" size="sm" onClick={() => go(to)}>{label}<ChevronRight /></Button>;
+  return (
+    <SCard id="s-privacy" icon={EyeOff} title="哪些資料會離開家裡">
+      <div className="divide-y">
+        <Row t="home" title="攝影機畫面、錄影、聲音" hint="錄影在 Jetson、辨識在 Jetson 和樹莓派；只有有權限的裝置看得到" right={<span className="text-sm text-muted-foreground">只在家裡</span>} />
+        <Row t="ai" title="Claude 看攝影機畫面" hint={cv?.on ? `開著：事件那幾張（縮小）送到 Anthropic・可以送的攝影機 ${cv.cams.length} 台` : "關著：不會送任何畫面"}
+          right={cv && <Switch checked={cv.on} aria-label="Claude 看攝影機畫面" onCheckedChange={async (v) => {
+            try { setCv(await api("PUT", "/api/claude-vision", { on: v })); toast.success(v ? "Claude 看影像打開了" : "Claude 看影像關了：不會再送任何畫面"); } catch (e) { toast.error("沒有成功", { description: (e as Error).message }); }
+          }} />} />
+        <Row t="ai" title="問家裡（Claude）" hint={ask?.configured ? "你問的話、需要的家裡資料（裝置名稱、開關狀態、誰在家）送到 Anthropic" : "沒設定金鑰：不會送"} right={link("ai", "設定")} />
+        <Row t="out" title="LINE 通知" hint={state?.notify?.line ? "通知的文字（不含照片）經過 LINE 送到手機" : "沒設定：不會送"} right={link("notify", "設定")} />
+        <Row t="out" title="Google Home" hint={state?.matter?.commissioned ? "插座名稱和開關狀態（Matter，家裡網路）；Google 帳號那邊看得到" : "沒連結"} right={link("google", "設定")} />
+        <Row t="home" title="天氣、垃圾車、停水停電" hint="只送大概的位置去查，不送家裡的資料" right={<span className="text-sm text-muted-foreground">只查詢</span>} />
+      </div>
+    </SCard>
+  );
+}
+
 export function SettingsPage() {
   const look = useLook();
   const { state: hubState } = useHub();
-  useEffect(() => {
-    const part = location.hash.split("/")[1];
-    if (!part || !hubState) return;
-    const t = setTimeout(() => document.getElementById(part)?.scrollIntoView({ behavior: "smooth", block: "start" }), 300);
-    return () => clearTimeout(t);
-  }, [!!hubState]); // eslint-disable-line react-hooks/exhaustive-deps
+  const view = useSettingsView(!!hubState);
   const navStyle = useNavStyle();
   const standby = useStandbyMin();
   const { state, connected } = useHub();
@@ -933,13 +1085,7 @@ export function SettingsPage() {
   const weekly = set.weekly !== false;
   const remind = (set.remind || {}) as { long_on?: boolean; rain?: boolean; outage_eve?: boolean; dayoff?: boolean; warn?: boolean; quake?: boolean; power?: boolean; air?: boolean; anomaly?: boolean; tier?: boolean };
   const putRemind = (k: keyof typeof remind, v: boolean, label: string) => put({ remind: { [k]: v } }, `${label}${v ? "已打開" : "已關閉"}`);
-
-  return (
-    <>
-      <PageHeader title="設定" chips={<JumpChips sections={SECTIONS} />} chipsClassName="lg:hidden" />
-      <div className="mx-auto grid max-w-[112rem] items-start gap-4 px-4 py-4 sm:px-6 lg:grid-cols-2 lg:px-8">
-        <div className="min-w-0 space-y-4">
-          <SetupCard />
+  const notifyCard = (
           <SCard id="s-notify" icon={Bell} title="提醒與通知">
             <SRow wrap label="開太久提醒" hint="插座開超過這麼久，名稱下方會變橘色（常開的不算）">
               <SettingNumber k="long_on_hours" step={1} unit="小時" label="開太久提醒" />
@@ -1001,8 +1147,8 @@ export function SettingsPage() {
                 <Switch checked={set.monthly !== false} onCheckedChange={(v) => put({ monthly: v }, v ? "每月報告已打開" : "每月報告已關閉")} aria-label="每月報告" />
               </div>
             </SRow>
-          </SCard>
-          <GoodnightCard s={state} />
+          </SCard>);
+  const lifeCard = (
           <SCard id="s-life" icon={CloudSun} title="天氣與生活資訊">
             <LinkRow
               label="天氣"
@@ -1056,11 +1202,8 @@ export function SettingsPage() {
               hint={`氣象署${state.calendar.weather ? "已設定" : "還沒設定"}・環境部（空氣品質）${state.calendar.weather?.air_key ? "已設定" : "還沒設定"}`}
               onClick={() => setSheet("keys")}
             />
-          </SCard>
-          <AskCard />
-        </div>
-
-        <div className="min-w-0 space-y-4">
+          </SCard>);
+  const lookCard = (
           <SCard id="s-look" icon={Palette} title="外觀">
             <SRow wrap label="畫面風格" hint="只換這台裝置的樣子；功能和資料都一樣，隨時可以換回來">
               <div className="w-56"><Segmented label="畫面風格" value={look} onChange={setLook} options={[["classic", "原本"], ["tech", "科技感"]]} /></div>
@@ -1082,9 +1225,8 @@ export function SettingsPage() {
               <Button variant="outline" size="sm" onClick={previewStandby}>預覽</Button>
             </SRow>
             <SRow label="深色、淺色" hint="跟著手機或電腦的系統設定自動切換，兩種風格都有深淺兩套" />
-          </SCard>
-          <GoogleCard />
-          <CameraLinkCard />
+          </SCard>);
+  const devCard = (
           <SCard id="s-dev" icon={Search} title="裝置">
             <NetCheck s={state} />
             <SRow label="停電後恢復插座" hint="停電回來，插座開關跟停電前不一樣就改回來（6 小時內）；高風險電器不會自動打開">
@@ -1114,10 +1256,32 @@ export function SettingsPage() {
             <SRow label="連線" hint={connected ? "和樹莓派連線正常" : "連不上樹莓派，重新連線中"}>
               <span className={cn("size-3 rounded-full", connected ? "bg-emerald-500" : "animate-pulse bg-amber-500")} aria-hidden />
             </SRow>
-          </SCard>
-          <SystemCard s={state} />
-          <TlsCard />
-          <SCard id="s-usage" icon={BarChart3} title="功能使用統計"><UsageList /></SCard>
+          </SCard>);
+
+  const cards: Record<CatKey, ReactNode> = {
+    notify: notifyCard,
+    cam: <CameraLinkCard />,
+    ai: <AskCard />,
+    life: <><GoodnightCard s={state} />{lifeCard}</>,
+    home: devCard,
+    google: <GoogleCard />,
+    security: <><SystemCard s={state} /><TlsCard /></>,
+    other: <>{lookCard}<SCard id="s-usage" icon={BarChart3} title="功能使用統計"><UsageList /></SCard></>,
+  };
+  const go = (to: string) => { location.hash = to ? `settings/${to}` : "settings"; window.scrollTo({ top: 0 }); };
+  const content = view === "privacy" ? <PrivacyView go={go} /> : view === "setup" ? <SetupCard /> : view in cards ? cards[view as CatKey] : null;
+  const title = view === "privacy" ? "隱私" : view === "setup" ? "設定進度" : CATS.find((c) => c.key === view)?.title;
+
+  return (
+    <>
+      <PageHeader title={title ? title : "設定"} sub={title ? undefined : "分類點進去看細項；也可以直接搜尋"}
+        lead={title ? <Button variant="ghost" className="-ml-2 h-9 lg:hidden" onClick={() => go("")}><ChevronLeft />設定</Button> : undefined} />
+      <div className="mx-auto grid max-w-[112rem] items-start gap-4 px-4 py-4 sm:px-6 lg:grid-cols-[22rem_1fr] lg:px-8">
+        <div className={cn("min-w-0 space-y-4", title && "max-lg:hidden")}>
+          <SettingsHome view={view} go={go} state={state} />
+        </div>
+        <div className={cn("min-w-0 space-y-4", !title && "max-lg:hidden")}>
+          {content || <div className="max-lg:hidden">{cards.notify}</div>}
         </div>
       </div>
       <SenseSheet open={sheet === "sense"} onClose={() => setSheet(null)} />
