@@ -61,6 +61,8 @@ PRESENCE_LOG_MAX = 50
 SOUNDS = {"alarm": "聽到煙霧／火災警報聲", "glass": "聽到玻璃破掉的聲音", "scream": "聽到有人大叫、呼救", "dog": "狗一直叫（超過 2 分鐘）"}
 SOUND_DEFAULT = {"alarm": "urgent", "glass": "urgent", "scream": "urgent", "dog": "normal"}
 GESTURES = {"f_open": "張開手掌", "f_fist": "握拳", "f_v": "比 YA", "f_point": "比 1", "f_thumbs": "比讚", "f_three": "比 3", "f_rock": "搖滾", "f_call": "打電話"}  # 舉手的手勢拿掉了（只留手指）
+FEET_KEEP = 10  # 一次來訪留最前面、最後面各幾筆腳的位置（每秒 5 筆）
+DOOR_NEAR = 0.06  # 腳離「大門」區域這麼近（畫面寬高的比例）算在家門口
 GESTURE_EVERY = 0.25  # 秒：開了手勢的那台多久問一次 Jetson 有沒有新手勢
 ITEM_ONE = {"包裹", "垃圾袋", "推車"}  # 「多了一個包裹」
 ITEM_TAKEN = {"包裹", "袋子", "外送餐點", "垃圾袋"}  # 被拿走時可以另外決定要不要通知（act.taken）
@@ -1858,6 +1860,9 @@ class Hub:
             return
         if v["known"]:  # 認出訪客
             return
+        if self._home_door_visit(cam, v):  # 從家門出來或走進家門：多半是家人（臉沒拍清楚、換了衣服）
+            self.repeats.add_family(emb, now)
+            return
         name = cam.get("name") or cid
         regular = self.visitors.match_named(emb)
         if regular is not None:  # 取了名字的常來的人：記名字，不當陌生人
@@ -1873,6 +1878,18 @@ class Hub:
         # 人走了才知道是不是同一個人：紀錄時間寫他「來的時候」，影片才看得到人（不是人走了以後的空畫面）
         self.face_log.add({"t": round(v["start"]), "camera": name, "kind": "stranger", "name": f"今天第 {n} 次出現（{times}）", "sim": None}, thumb or None)
         self.notifier.send(f"{name}：同一個不認得的人今天第 {n} 次出現", f"{times}；臉沒拍清楚，是用穿著、身形判斷的，可能是家人換了衣服")
+
+    def _home_door_visit(self, cam: dict[str, Any], v: dict[str, Any]) -> bool:
+        """這次一開始或最後，人的腳在家門口（「大門」區域附近）。家裡都沒人時不算（有人闖進家門不能當成家人）。"""
+        door = next((z for z in cam.get("zones") or [] if z.get("kind") == "door" and (z.get("id") == "door" or z.get("home"))), None)
+        feet = v.get("feet") or []
+        if door is None or not feet or not any(p.get("home") for p in self.people_report()):
+            return False
+        near = lambda pts: any(zonelib.near(f, door["poly"], DOOR_NEAR) for f in pts)  # noqa: E731
+        t0, t1 = feet[0][0], feet[-1][0]
+        first = [pts for t, pts in feet if t - t0 <= 1.0]
+        last = [pts for t, pts in feet if t1 - t <= 1.0]
+        return any(near(p) for p in first) or any(near(p) for p in last)
 
     @staticmethod
     def _person_thumb(jpeg: bytes | None, box: list[float] | None) -> bytes | None:
@@ -2191,10 +2208,16 @@ class Hub:
         st = self.cameras.state.get(cam["id"], {})
         if st.get("engine") == "stream":
             last = self._act_seen.get(cam["id"], 0.0)
+            v = self._visits.get(cam["id"])
             for t, pts in st.get("samples") or []:
                 if float(t) > last:
                     self.activity.add(cam["id"], float(t), [(x, y) for _, x, y in pts], 0.2)
                     self._act_seen[cam["id"]] = float(t)
+                    if v is not None and pts:  # 這次來的人腳在哪（從家門進出的判斷用）：留最前面和最後面幾筆
+                        feet = v.setdefault("feet", [])
+                        feet.append((float(t), [(x, y) for _, x, y in pts]))
+                        if len(feet) > 2 * FEET_KEEP:
+                            del feet[FEET_KEEP]
         elif st.get("person"):
             self.activity.add_presence(cam["id"], now, camera.EVERY)
 
