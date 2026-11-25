@@ -208,6 +208,7 @@ class Hub:
         self.activity = Activity(self.store.dir)  # 活動熱圖
         self._act_seen: dict[str, float] = {}  # 很久沒動靜：攝影機 → {last 上次有動, prev 上次的框, alerted}
         self._cam_alert: dict[str, float] = {}  # 攝影機 ID → 上次「沒人在家卻看到人」通知的時間
+        self._cam_quiet: dict[str, float] = {}  # 攝影機 ID → 通知過之後最後一次看到人的時間（同一段時間不重複通知）
         self._cam_pending: dict[str, float] = {}  # 攝影機 ID → 沒人在家時看到人的時間（等家人的手機連上 Wi-Fi）
         # 認臉
         self.face_engine = faces.Engine()
@@ -2005,7 +2006,11 @@ class Hub:
             return  # 家裡有人、房間的攝影機看到不認得的人：多半是客人，只記紀錄
         if not cam.get("alert", True) or now - self._cam_alert.get(cam["id"], 0) < camera.ALERT_GAP:
             return
+        if away and self._cam_quiet_hit(cam["id"], now):
+            return  # 沒人在家已經通知過、那個人一直在：不再講
         self._cam_alert[cam["id"]] = now
+        if away:
+            self._cam_quiet[cam["id"]] = now
         light = self.plugs.get(cam.get("light") or "")
         lit = ""
         if late and light and light.online:
@@ -2064,7 +2069,11 @@ class Hub:
         name = cam.get("name") or cam["host"]
         _LOGGER.info("攝影機 %s 看到人", name)
         people = self.people_report()
+        if any(p.get("home") for p in people):
+            self._cam_quiet.clear()  # 有家人在家：之後再發生就是新的一件事
         if not cam.get("alert", True) or not people or any(p.get("home") is not False for p in people):
+            return
+        if self._cam_quiet_hit(cam["id"], now):
             return
         if cam["id"] in self._cam_pending or now - self._cam_alert.get(cam["id"], 0) < camera.ALERT_GAP:
             return
@@ -2074,12 +2083,25 @@ class Hub:
             self._probe_busy = True
             self._spawn(self._probe_people())
 
+    def _cam_quiet_hit(self, cid: str, now: float) -> bool:
+        """通知過之後，攝影機還是斷斷續續看到人：同一件事，不再通知（隔 QUIET 都沒看到人才算新的一件）。"""
+        last = self._cam_quiet.get(cid)
+        if last is None:
+            return False
+        if now - last < camera.QUIET:
+            self._cam_quiet[cid] = now
+            return True
+        del self._cam_quiet[cid]
+        return False
+
     def _camera_pending(self, now: float) -> None:
         """等了一陣子：有家人的手機連上 Wi-Fi → 是家人回來，不通知；都沒有 → 緊急通知。"""
-        if not self._cam_pending:
+        if not self._cam_pending and not self._cam_quiet:
             return
         people = self.people_report()
         home = [p["name"] for p in people if p.get("home")]
+        if home:
+            self._cam_quiet.clear()
         for cid, seen in list(self._cam_pending.items()):
             cam = self.cameras.get(cid)
             name = (cam or {}).get("name") or cid
@@ -2091,10 +2113,12 @@ class Hub:
                 continue
             del self._cam_pending[cid]
             self._cam_alert[cid] = now
+            self._cam_quiet[cid] = now
             at = datetime.fromtimestamp(seen).strftime("%H:%M")
             self.notifier.send("⚠️ 沒人在家，但攝影機看到人",
                                f"{name}在 {at} 看到有人，之後 {camera.ARRIVE_WAIT // 60} 分鐘都沒有家人的手機連上 Wi-Fi。"
-                               "如果是家人沒帶手機（或手機沒開 Wi-Fi）就不用理會", "urgent")
+                               "如果是家人沒帶手機（或手機沒開 Wi-Fi）就不用理會；這個人一直在的話不會再通知，"
+                               f"要等 {camera.QUIET // 60} 分鐘都沒看到人、或有家人的手機連上 Wi-Fi 之後才會再講", "urgent")
 
     # ---- 動靜自動化：房間有人走動就開某個插座，沒動靜幾分鐘後關掉 ----
 
