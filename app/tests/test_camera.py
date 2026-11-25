@@ -100,6 +100,21 @@ def test_camera_alert_waits_for_family_wifi(app_module, monkeypatch):
     assert len(sent) == 1 and "攝影機看到人" in sent[0][0] and "Wi-Fi" in sent[0][1] and sent[0][2] == "urgent"
     hub._camera_seen(cam, t + 400)
     assert hub._cam_pending == {}
+    # 那個人一直斷斷續續被看到（間隔不到 1 小時）：同一件事，不再通知
+    for k in range(1, 6):
+        hub._camera_seen(cam, t + 400 + k * 900)
+        hub._camera_pending(t + 400 + k * 900 + 200)
+    assert len(sent) == 1 and hub._cam_pending == {}
+    # 1 小時都沒看到人之後再看到：新的一件事
+    hub._camera_seen(cam, t + 400 + 5 * 900 + 3601)
+    assert "c1" in hub._cam_pending
+    hub._camera_pending(t + 400 + 5 * 900 + 3601 + 180)
+    assert len(sent) == 2
+    # 家人的手機連上 Wi-Fi：之後再發生也是新的一件事
+    hub._presence["x"] = {"home": True, "since": t + 9000}
+    hub._camera_pending(t + 9000)
+    assert hub._cam_quiet == {}
+    hub._presence["x"] = {"home": False, "since": t + 9100}
     cam["alert"] = False
     hub._cam_alert.clear()
     hub._camera_seen(cam, t + 2000)
