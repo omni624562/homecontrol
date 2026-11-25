@@ -97,24 +97,19 @@ def tick(hub, faces_now, now):
         asyncio.run(hub.spawned.pop(0))
 
 
-def test_family_arrival_runs_slot_scene(app_module, monkeypatch):
+def test_family_arrival_only_notifies(app_module, monkeypatch):
+    """門口認出家人：只負責「回家時通知」；要開什麼改在「回家自動開」（用 Wi-Fi 判斷）。"""
     hub, sent, ran, _ = _hub(app_module, monkeypatch)
     monkeypatch.setattr(hub.store, "scene", lambda sid: {"id": sid, "name": sid} if sid else None)
-    hub.store.data["settings"]["face_actions"] = {"dad": {"day": "s-day", "night": "s-night", "late": None, "notify": True}}
-    monkeypatch.setattr(hub, "face_slot", lambda when=None: "night")
+    hub.store.data["settings"]["face_actions"] = {"dad": {"notify": True}}
     now = time.time()
     hub._presence = {"dad": {"home": False, "since": now - 9999}, "mom": {"home": False, "since": now - 9999}}
     tick(hub, [face(vec(0, 0.02, 3))], now)  # 很像：不用等手機
-    assert ran and ran[0][0] == "s-night" and "爸爸" in ran[0][1]
+    assert ran == [] and "爸爸回到家了" in sent[-1][0]
     assert hub.face_log.items[-1]["kind"] == "family"
+    n = len(sent)
     tick(hub, [face(vec(0, 0.02, 4))], now + 5)  # 同一次不重複
-    assert len(ran) == 1
-    # 沒設這個時段的情境、但有開「回家時通知」：只通知
-    hub._visits.clear()
-    hub._face_cool.clear()
-    monkeypatch.setattr(hub, "face_slot", lambda when=None: "late")
-    tick(hub, [face(vec(0, 0.02, 5))], now + 10)
-    assert len(ran) == 1 and "爸爸回到家了" in sent[-1][0]
+    assert len(sent) == n
 
 
 def test_weak_match_waits_for_phone(app_module, monkeypatch):
@@ -203,6 +198,6 @@ def test_faces_api_requires_camera_permission(app_module, monkeypatch):
     assert r["enroll"]["name"] == "清潔阿姨" and r["enroll"]["pid"].startswith("g-")
     assert c.delete("/api/faces/enroll").json()["enroll"] is None
     monkeypatch.setattr(app_module.store, "scene", lambda sid: {"id": sid} if sid == "s1" else None)
-    r = c.put("/api/faces/actions", json={"dad": {"night": "s1", "day": "nope", "notify": True}, "ghost": {"day": "s1"}}).json()
-    assert r["actions"] == {"dad": {"night": "s1", "day": None, "notify": True}}
+    r = c.put("/api/faces/actions", json={"dad": {"night": "s1", "notify": True}, "ghost": {"notify": True}}).json()
+    assert r["actions"] == {"dad": {"notify": True}}
     assert c.get("/api/faces/log/abc.jpg").status_code == 404

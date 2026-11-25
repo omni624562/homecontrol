@@ -17,6 +17,7 @@ import logging
 import os
 import re
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any, Callable
@@ -57,7 +58,10 @@ FACE_LATE = (0, 6)  # 半夜：這段時間看到陌生人一律緊急通知、�
 CAMERA_SCORE = 1.5  # 攝影機看到人的房間，動靜分數至少這麼多（> 地圖上的「很明顯」）
 PROBE_EVERY = 60  # 路由器多久沒看到家人的手機，就由樹莓派直接問（ARP）
 PROBE_MAX_AGE = 24 * 3600  # 超過一天沒看到的就不問了
-PRESENCE_LOG_MAX = 50
+PRESENCE_LOG_MAX = 3000  # 誰在家的變化紀錄：最多這麼多筆、最多留 PRESENCE_LOG_DAYS 天（找回家習慣用）
+PRESENCE_LOG_DAYS = 60
+ARRIVE_LOOK = 15 * 60  # 回家後這麼久內手動打開的插座，算「回家會開的」
+ARRIVE_SOURCES = ("app", "matter", "button", "gesture")
 SOUNDS = {"alarm": "聽到煙霧／火災警報聲", "glass": "聽到玻璃破掉的聲音", "scream": "聽到有人大叫、呼救", "dog": "狗一直叫（超過 2 分鐘）"}
 SOUND_DEFAULT = {"alarm": "urgent", "glass": "urgent", "scream": "urgent", "dog": "normal"}
 GESTURES = {"f_open": "張開手掌", "f_fist": "握拳", "f_v": "比 YA", "f_point": "比 1", "f_thumbs": "比讚", "f_three": "比 3", "f_rock": "搖滾", "f_call": "打電話"}  # 舉手的手勢拿掉了（只留手指）
@@ -293,6 +297,8 @@ class Hub:
         self._runtime_sig = ""
         self._restored: dict[str, str] = {}  # 上次看過、這次還沒找到的插座：裝置 MAC → IP
         self._load_runtime()
+        if store.data.get("arrive_rules") is None:
+            self._migrate_arrive_rules()
 
     # ---- 重開後還在的資料 ----
 
@@ -1963,16 +1969,13 @@ class Hub:
         return "night" if self.is_dark() else "day"
 
     def _face_arrive(self, pid: str, name: str, now: float) -> None:
-        """門口認出家人回來：執行他這個時段的回家動作；有開的話通知大家。"""
+        """門口認出家人回來：有開的話通知大家（回家要開什麼改在「回家自動開」，用 Wi-Fi 判斷）。"""
         if not self._face_once(f"{pid}:arrive", FACE_COOL, now):
             return
         self._face_arrived_at = now
         cfg = (self.store.data["settings"].get("face_actions") or {}).get(pid) or {}
-        scene = cfg.get(self.face_slot())
         at = datetime.now().strftime("%H:%M")
-        if scene and self.store.scene(scene):
-            self._presence_scene(scene, f"認出{name}回家（{at}）")
-        elif cfg.get("notify"):
+        if cfg.get("notify"):
             self.notifier.send(f"{name}回到家了", f"門口攝影機 {at} 認出 {name}")
 
     def _face_leave(self, pid: str, name: str, now: float) -> None:
@@ -2657,6 +2660,7 @@ class Hub:
         before = any(self._presence.get(p["id"], {}).get("home") for p in people)
         changed = False
         arrived = []
+        arrived_ids: list[str] = []
         for p in people:
             last = max((self.router.clients.get(m, {}).get("seen", 0) for m in p["macs"]), default=0)
             home = bool(last and now - last < grace)
@@ -2670,6 +2674,7 @@ class Hub:
                 self._presence_log({"name": p["name"], "home": home, "why": self._presence_why(p, home, last, grace)})
                 if home:
                     arrived.append(p["name"])
+                    arrived_ids.append(p["id"])
         for pid in [k for k in self._presence if k not in {p["id"] for p in people}]:
             del self._presence[pid]
         if not changed:
@@ -2680,10 +2685,8 @@ class Hub:
             self._presence_scene(cfg.get("away_scene"), "大家都出門了")
         elif after and not before and arrived:
             self._away_end(arrived)
-            if time.time() - self._face_arrived_at < FACE_COOL:
-                pass  # 門口攝影機剛認出家人、已經執行過他的回家動作
-            elif not cfg.get("home_dark_only") or self.is_dark():
-                self._presence_scene(cfg.get("home_scene"), f"{'、'.join(arrived)}回家了")
+        if arrived_ids:
+            self._arrive(arrived_ids, was_empty=not before)
         return True
 
     def _presence_why(self, p: dict[str, Any], home: bool, last: float, grace: float) -> str:
@@ -2701,9 +2704,110 @@ class Hub:
 
     def _presence_log(self, item: dict[str, Any]) -> None:
         log = self.store.data.setdefault("presence_log", [])
-        log.append({"t": round(time.time()), **item})
+        now = round(time.time())
+        log.append({"t": now, **item})
         del log[:-PRESENCE_LOG_MAX]
+        old = sum(1 for x in log if x.get("t", 0) < now - PRESENCE_LOG_DAYS * 86400)
+        if old:
+            del log[:old]
         self._dirty = True
+
+    # ---- 回家自動開：誰（的手機連上 Wi-Fi）回家 → 打開插座或執行情境 ----
+
+    def _migrate_arrive_rules(self) -> None:
+        """舊設定搬進規則清單：誰在家的「有人回家時」情境、認臉的「依時段回家動作」（改用 Wi-Fi 判斷）。"""
+        rules: list[dict[str, Any]] = []
+        pres = self.store.data["settings"].get("presence") or {}
+        if pres.get("home_scene") and self.store.scene(pres["home_scene"]):
+            rules.append(arrive_rule(who="any", only_empty=True, when="dark" if pres.get("home_dark_only") else "all",
+                                     kind="scene", scene=pres["home_scene"]))
+        slots = {"day": ("range", "06:00", "18:00"), "night": ("dark", "", ""), "late": ("range", "00:00", "06:00")}
+        for pid, a in (self.store.data["settings"].get("face_actions") or {}).items():
+            picked = {k: a.get(k) for k in slots if a.get(k) and self.store.scene(a[k])}
+            if picked and len(set(picked.values())) == 1 and len(picked) == 3:
+                rules.append(arrive_rule(who=pid, kind="scene", scene=next(iter(picked.values()))))
+                continue
+            for k, sc in picked.items():
+                when, start, end = slots[k]
+                rules.append(arrive_rule(who=pid, when=when, start=start, end=end, kind="scene", scene=sc))
+        for a in (self.store.data["settings"].get("face_actions") or {}).values():
+            for k in slots:
+                a.pop(k, None)
+        pres["home_scene"] = None
+        self.store.data["arrive_rules"] = rules
+        self.store.save()
+
+    def _arrive(self, ids: list[str], was_empty: bool) -> None:
+        """有家人的手機連上 Wi-Fi（回家了）：照「回家自動開」的規則做。"""
+        rules = self.store.data.get("arrive_rules") or []
+        if not rules:
+            return
+        names = {p["id"]: p["name"] for p in self.store.data["people"]}
+        now = datetime.now()
+        hm, wd = now.hour * 60 + now.minute, now.weekday()
+        for r in rules:
+            if not r.get("enabled", True):
+                continue
+            who = r.get("who") or "any"
+            if who != "any" and who not in ids:
+                continue
+            if r.get("only_empty") and not was_empty:
+                continue
+            days = r.get("days") or "all"
+            if (days == "weekday" and wd >= 5) or (days == "weekend" and wd < 5):
+                continue
+            when = r.get("when") or "all"
+            if (when == "dark" and not self.is_dark()) or (when == "range" and not _in_window(hm, r.get("start") or "", r.get("end") or "")):
+                continue
+            who_name = names.get(who) if who != "any" else "、".join(names.get(i, "?") for i in ids)
+            r["last"] = round(time.time())
+            self._dirty = True
+            why = f"{who_name}回家了"
+            if r.get("kind") == "scene":
+                self._presence_scene(r.get("scene"), why)
+            else:
+                self._spawn(self._arrive_plugs(r, why))
+
+    async def _arrive_plugs(self, r: dict[str, Any], why: str) -> None:
+        SOURCE.set("auto")
+        done = []
+        for pid in r.get("plugs") or []:
+            plug = self.plugs.get(pid)
+            if not plug or not plug.online or plug.is_on:
+                continue  # 已經開著的不動
+            try:
+                if r.get("for_min"):
+                    await self.set_timer(pid, int(r["for_min"]) * 60)
+                else:
+                    await self.set_power(pid, True)
+                done.append(self.name(plug))
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning("回家自動開沒有打開 %s：%s", pid, err)
+        if done:
+            what = f"打開{'、'.join(done)}"
+            self._presence_log({"scene": what, "why": why, "n": len(done)})
+            self.notifier.send(why, f"已經{what}" + (f"，{r['for_min']} 分鐘後自動關" if r.get("for_min") else ""))
+            await self.changed()
+
+    def arrive_suggestions(self) -> list[dict[str, Any]]:
+        """回家習慣：某人回家後 15 分鐘內，常手動打開同一個插座（至少 3 次、超過 4 成），而且還沒有規則管 → 建議做成規則。"""
+        people = {p["name"]: p["id"] for p in self.store.data["people"]}
+        log = [x for x in self.store.data.get("presence_log") or [] if x.get("home") is True and x.get("name") in people]
+        if not log:
+            return []
+        sw = [x for x in self.store.energy.switches(log[0]["t"] - 120) if x[2] and x[3] in ARRIVE_SOURCES]
+        covered = {(r.get("who"), pid) for r in self.store.data.get("arrive_rules") or [] if r.get("kind") == "plugs" for pid in r.get("plugs") or []}
+        out = []
+        for name, pid in people.items():
+            times = [x["t"] for x in log if x["name"] == name]
+            hits: dict[str, int] = {}
+            for t in times:
+                for plug in {p for ts, p, _on, _src in sw if t - 120 <= ts <= t + ARRIVE_LOOK}:
+                    hits[plug] = hits.get(plug, 0) + 1
+            for plug, n in hits.items():
+                if n >= 3 and n / len(times) > 0.4 and plug in self.plugs and (pid, plug) not in covered and ("any", plug) not in covered:
+                    out.append({"who": pid, "name": name, "plug": plug, "plug_name": self.name(self.plugs[plug]), "hits": n, "n": len(times)})
+        return sorted(out, key=lambda x: -x["hits"] / x["n"])
 
     def _presence_scene(self, scene_id: str | None, why: str) -> None:
         scene = self.store.scene(scene_id) if scene_id else None
@@ -3651,6 +3755,14 @@ async def _quiet_disconnect(device: Device) -> None:
         await device.disconnect()
     except Exception:  # noqa: BLE001
         pass
+
+
+def arrive_rule(**kw: Any) -> dict[str, Any]:
+    """一條「回家自動開」規則（沒給的用預設值）。"""
+    r = {"id": uuid.uuid4().hex[:8], "enabled": True, "who": "any", "only_empty": False, "when": "all", "start": "", "end": "",
+         "days": "all", "kind": "plugs", "plugs": [], "scene": None, "for_min": 0, "last": None}
+    r.update(kw)
+    return r
 
 
 def _in_window(hm: int, start: str, end: str) -> bool:

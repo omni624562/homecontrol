@@ -170,3 +170,134 @@ def test_garbage_lunar_new_year(tmp_path):
     assert li.off_reason(s, date(2027, 2, 6)) == "春節停收"
     assert li.off_reason(s, date(2027, 2, 7)) is None  # 週日本來就不收，不用寫停收
     assert li.today_kinds(s, date(2027, 2, 9)) == ["一般垃圾"]
+
+
+# ---- 回家自動開 ----
+
+MOM = "5E:00:F6:90:A6:49"
+
+
+def _arrive_setup(hub, monkeypatch):
+    hub.store.data["people"] = [{"id": "p1", "name": "ERIC", "macs": [PIXEL]}, {"id": "p2", "name": "May", "macs": [MOM]}]
+    now = time.time()
+    hub._router_since = now - 3600
+    hub.router.clients = {PIXEL: {"mac": PIXEL, "seen": now - 7200}, MOM: {"mac": MOM, "seen": now - 7200}}
+    hub._presence = {}
+    hub._router_presence(now)  # 先記下：兩個人都不在家
+    ran, opened = [], []
+    monkeypatch.setattr(hub, "_presence_scene", lambda sid, why: ran.append((sid, why)))
+
+    async def fake_arrive_plugs(r, why):
+        opened.append((tuple(r["plugs"]), why))
+
+    monkeypatch.setattr(hub, "_arrive_plugs", fake_arrive_plugs)
+    import asyncio
+
+    monkeypatch.setattr(hub, "_spawn", lambda coro: asyncio.run(coro))
+    return now, ran, opened
+
+
+def test_arrive_rules_by_person_and_empty_house(hub, monkeypatch):
+    from plughub.hub import arrive_rule
+
+    now, ran, opened = _arrive_setup(hub, monkeypatch)
+    monkeypatch.setattr(hub, "is_dark", lambda: True)
+    hub.store.data["arrive_rules"] = [
+        arrive_rule(id="a", who="any", only_empty=True, kind="scene", scene="s-home"),
+        arrive_rule(id="b", who="p2", kind="plugs", plugs=["fan"], when="dark"),
+        arrive_rule(id="c", who="p2", kind="plugs", plugs=["tv"], enabled=False),
+    ]
+    hub.router.clients[PIXEL]["seen"] = now  # ERIC 先回家：家裡原本沒人 → 執行 a；b 是 May 的
+    hub._router_presence(now)
+    assert ran == [("s-home", "ERIC回家了")] and opened == []
+    hub.router.clients[MOM]["seen"] = now  # May 回家：家裡已經有人 → a 不做；b 做；c 暫停
+    hub._router_presence(now)
+    assert len(ran) == 1 and opened == [(("fan",), "May回家了")]
+    assert hub.store.data["arrive_rules"][1]["last"]
+    # 白天：「天黑後」的不做
+    monkeypatch.setattr(hub, "is_dark", lambda: False)
+    hub._arrive(["p2"], was_empty=False)
+    assert len(opened) == 1
+
+
+def test_arrive_rule_time_range_and_days(hub, monkeypatch):
+    from plughub import hub as hubmod
+    from plughub.hub import arrive_rule
+
+    _arrive_setup(hub, monkeypatch)
+
+    class FakeDT(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 11, 28, 18, 30)  # 週六 18:30
+
+    monkeypatch.setattr(hubmod, "datetime", FakeDT)
+    hub.store.data["arrive_rules"] = [
+        arrive_rule(id="a", who="p1", kind="scene", scene="s1", when="range", start="17:00", end="22:00", days="weekday"),
+        arrive_rule(id="b", who="p1", kind="scene", scene="s2", when="range", start="17:00", end="22:00", days="weekend"),
+        arrive_rule(id="c", who="p1", kind="scene", scene="s3", when="range", start="20:00", end="23:00"),
+    ]
+    ran = []
+    monkeypatch.setattr(hub, "_presence_scene", lambda sid, why: ran.append(sid))
+    hub._arrive(["p1"], was_empty=True)
+    assert ran == ["s2"]
+
+
+def test_migrate_old_home_settings(hub):
+    hub.store.data["people"] = [{"id": "p1", "name": "ERIC", "macs": []}]
+    hub.store.data["scenes"] = [{"id": "s-home", "name": "回家", "icon": "x", "actions": {}}, {"id": "s-n", "name": "晚上", "icon": "x", "actions": {}}]
+    hub.store.data["settings"]["presence"] = {"home_scene": "s-home", "home_dark_only": True}
+    hub.store.data["settings"]["face_actions"] = {"p1": {"night": "s-n", "notify": True}}
+    hub._migrate_arrive_rules()
+    rules = hub.store.data["arrive_rules"]
+    assert [(r["who"], r["only_empty"], r["when"], r["scene"]) for r in rules] == [("any", True, "dark", "s-home"), ("p1", False, "dark", "s-n")]
+    assert hub.store.data["settings"]["presence"]["home_scene"] is None
+    assert hub.store.data["settings"]["face_actions"] == {"p1": {"notify": True}}
+
+
+def _fake_plug(hub, pid):
+    from plughub.hub import Plug
+
+    hub.plugs[pid] = Plug(id=pid, device_key=pid, kasa_name=pid, model="HS103", host="10.0.0.9", is_on=False, online=True)
+    return pid
+
+
+def test_arrive_rules_api(app_module):
+    from fastapi.testclient import TestClient
+
+    app_module.store.data["people"] = [{"id": "p1", "name": "ERIC", "macs": []}]
+    app_module.store.data["arrive_rules"] = []
+    pid = _fake_plug(app_module.hub, "fan")
+    c = TestClient(app_module.app, base_url="http://hub:8100")
+    token, _ = app_module.auth.pair(app_module.auth.new_code())
+    c.cookies.set("plughub_token", token)
+    r = c.post("/api/arrive-rules", json={"who": "p1", "kind": "plugs", "plugs": []})
+    assert r.status_code == 400 and "插座" in r.json()["detail"]
+    assert c.post("/api/arrive-rules", json={"who": "ghost", "kind": "scene", "scene": "x"}).status_code == 400
+    assert c.post("/api/arrive-rules", json={"who": "p1", "kind": "plugs", "plugs": ["x"], "when": "range", "start": "17:00"}).status_code == 400
+    r = c.post("/api/arrive-rules", json={"who": "p1", "kind": "plugs", "plugs": [pid, "nope"], "when": "dark", "for_min": 30}).json()
+    rule = r["rules"][0]
+    assert rule["plugs"] == [pid] and rule["when"] == "dark" and rule["for_min"] == 30 and rule["enabled"]
+    r = c.put(f"/api/arrive-rules/{rule['id']}", json={"enabled": False, "days": "weekend"}).json()
+    assert r["rules"][0]["enabled"] is False and r["rules"][0]["days"] == "weekend" and r["rules"][0]["plugs"] == [pid]
+    assert c.put("/api/arrive-rules/zzz", json={}).status_code == 404
+    assert c.delete(f"/api/arrive-rules/{rule['id']}").json()["rules"] == []
+    assert c.delete(f"/api/arrive-rules/{rule['id']}").status_code == 404
+
+
+def test_arrive_suggestions(hub):
+    hub.store.data["people"] = [{"id": "p1", "name": "阿爸", "macs": []}]
+    hub.store.data["arrive_rules"] = []
+    now = time.time()
+    base = now - 10 * 86400
+    hub.store.data["presence_log"] = [{"t": base + i * 86400, "name": "阿爸", "home": True, "why": "x"} for i in range(5)]
+    fan = _fake_plug(hub, "fan")
+    for i in range(3):
+        hub.store.energy.log_switch(base + i * 86400 + 300, fan, True, "button")
+    hub.store.energy.log_switch(base + 4 * 86400 + 3600, fan, True, "button")  # 回家 1 小時後才開：不算
+    s = hub.arrive_suggestions()
+    assert s and s[0]["who"] == "p1" and s[0]["plug"] == fan and s[0]["hits"] == 3 and s[0]["n"] == 5
+    from plughub.hub import arrive_rule
+
+    hub.store.data["arrive_rules"] = [arrive_rule(who="p1", plugs=[fan])]
+    assert hub.arrive_suggestions() == []

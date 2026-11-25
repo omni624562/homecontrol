@@ -15,7 +15,7 @@ import { Switch } from "@/components/ui/switch";
 import { JumpChips } from "@/components/jump-chips";
 import { PageHeader } from "@/components/app-shell";
 import { DetectEditor } from "@/components/cam-detect";
-import { CamAccessBox, CamLive, SLOT, hhmm, type Cam, type CamAccess, type EmptyOff, type FacePerson, type Sound, type SoundLevel, type Still, type FaceRep } from "@/components/camera-bits";
+import { CamAccessBox, CamLive, hhmm, type Cam, type CamAccess, type EmptyOff, type FacePerson, type Sound, type SoundLevel, type Still, type FaceRep } from "@/components/camera-bits";
 import { ClipPlayer, ReplayCard, type ClipTarget } from "@/components/clip-player";
 import type { MotionRule } from "@/components/motion-rules";
 import { api } from "@/lib/api";
@@ -339,10 +339,9 @@ function Task({ icon: I, title, hint, on, onChange, children, disabled }: { icon
   );
 }
 
-function TasksTab({ cam, faces, rules, plugs, scenes, setFaces, setRules, setCams, upd, tab }: DetailProps & { upd: (b: object, ok?: string) => Promise<void> }) {
+function TasksTab({ cam, faces, rules, plugs, setFaces, setRules, setCams, upd, tab }: DetailProps & { upd: (b: object, ok?: string) => Promise<void> }) {
   const [guest, setGuest] = useState("");
   const [grp, setGrp] = useState<"safe" | "auto" | "log">(tab === "c-tasks" ? "auto" : "safe"); // 要做什麼：安全／自動化／紀錄；從「登記家人的臉」點進來先開自動化
-  const [openP, setOpenP] = useState<string | null>(null); // 展開哪位家人的回家情境
   const entry = cam.role === "entry";
   const rule = rules.find((r) => cam.room && r.room === cam.room);
   const facesCall = async (method: string, path: string, body?: object, ok?: string) => { const r = await call<FaceRep>(method, path, body, ok); if (r) setFaces(r); };
@@ -494,35 +493,15 @@ function TasksTab({ cam, faces, rules, plugs, scenes, setFaces, setRules, setCam
       )}
       {grp === "auto" && (
         <>
-      <Task icon={ScanFace} title="認出家人就執行他的動作" on={cam.faces !== false} onChange={(v) => upd({ faces: v }, v ? "會認臉" : "不認臉，只認有沒有人")}
-        hint={entry ? "門口認出家人回來，依時段執行他的情境（比手機連上 Wi-Fi 還早）" : "這台是「房間」：認臉只用來分辨家人和陌生人；回家動作要「門口」的攝影機才會執行"}>
+      <Task icon={ScanFace} title="認出家人" on={cam.faces !== false} onChange={(v) => upd({ faces: v }, v ? "會認臉" : "不認臉，只認有沒有人")}
+        hint={<>認臉用來分辨家人和陌生人{entry ? "，門口認出家人可以通知大家" : ""}。回家要開什麼，在 <a href="#settings/s-arrive" className="font-medium text-primary underline-offset-2 hover:underline">設定 → 回家自動開</a>（看手機連上 Wi-Fi）</>}>
         {faces?.family.length ? faces.family.map((pp) => {
           const a = faces.actions[pp.id] || {};
           return (
             <div key={pp.id} className="space-y-2 rounded-lg border bg-background p-3">
               {personRow(pp)}
-              {entry && openP !== pp.id && (
-                <button type="button" onClick={() => setOpenP(pp.id)} className="flex w-full items-center gap-2 rounded-md text-left text-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                  <span className="min-w-0 flex-1 truncate">{SLOT.filter(([k]) => a[k]).map(([k, label]) => `${label}：${scenes.find((sc) => sc.id === a[k])?.name || "?"}`).join("・") || "回家時不做事"}{a.notify ? "・會通知大家" : ""}</span>
-                  <span className="shrink-0 font-medium text-primary">回家要做什麼 ›</span>
-                </button>
-              )}
-              {entry && openP === pp.id && (
-                <>
-                  <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3">
-                    {SLOT.map(([k, label]) => (
-                      <label key={k} className="flex items-center gap-2 text-sm">
-                        <span className="w-20 shrink-0 text-muted-foreground">{label}回家</span>
-                        <Select value={a[k] || "_none"} onValueChange={(v) => facesCall("PUT", "/api/faces/actions", { [pp.id]: { [k]: v === "_none" ? null : v } })}>
-                          <SelectTrigger className="h-8 min-w-0 flex-1 bg-background" aria-label={`${pp.name} ${label}回家執行的情境`}><SelectValue /></SelectTrigger>
-                          <SelectContent><SelectItem value="_none">不做事</SelectItem>{scenes.map((sc) => <SelectItem key={sc.id} value={sc.id}>{sc.name}</SelectItem>)}</SelectContent>
-                        </Select>
-                      </label>
-                    ))}
-                  </div>
-                  <label className="flex items-center gap-2 text-sm"><Switch checked={!!a.notify} onCheckedChange={(v) => facesCall("PUT", "/api/faces/actions", { [pp.id]: { notify: v } }, v ? `${pp.name} 回家時會通知` : "不通知")} aria-label={`${pp.name} 回家時通知`} />回家時通知大家</label>
-                  <Button variant="ghost" size="sm" className="h-7 px-2 text-muted-foreground" onClick={() => setOpenP(null)}>收起</Button>
-                </>
+              {entry && (
+                <label className="flex items-center gap-2 text-sm"><Switch checked={!!a.notify} onCheckedChange={(v) => facesCall("PUT", "/api/faces/actions", { [pp.id]: { notify: v } }, v ? `${pp.name} 回家時會通知` : "不通知")} aria-label={`${pp.name} 回家時通知`} />回家時通知大家</label>
               )}
             </div>
           );
