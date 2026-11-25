@@ -819,6 +819,10 @@ def test_finger_gestures_hold_and_filter(app_module, monkeypatch):
     for i in range(10):
         cam._gesture(still, 200 + i * 0.4, img=object())
     assert not cam.g_events
+    reply["h"] = [{"px": 190, "presence": 0.97, "gesture": "v", "points": [], "raised": False}]  # 手放在桌上拿筷子：不算比 YA
+    for i in range(10):
+        cam._gesture(still, 300 + i * 0.4, img=object())
+    assert not cam.g_events
 
     hub = app_module.hub
     toggled = []

@@ -19,6 +19,7 @@ DEBUG = Path("/index/handtest")
 SIZE = 224
 TIPS = (8, 12, 16, 20)  # 食指、中指、無名指、小指的指尖
 PIPS = (6, 10, 14, 18)  # 各自的第二關節
+RAISED = 0.25  # 手腕要比手肘高出前臂長度的這個比例，才算舉起手來比手勢
 
 
 def fingers(lm: np.ndarray) -> list[bool]:
@@ -96,7 +97,8 @@ class Hands:
                 g = gesture(f, lm) if pres >= 0.5 else None
                 scale = (x1 - x0) / SIZE
                 pts = [[round((x0 + px * scale) / W, 4), round((y0 + py * scale) / H, 4)] for px, py in lm]
-                item = {"person": pi, "side": side, "px": int(2 * half), "presence": round(pres, 2), "fingers": f, "gesture": g, "points": pts}
+                raised = (ey - wy) >= RAISED * fore  # 手腕明顯比手肘高：手舉起來了（放在桌上吃東西、拿筆的不算）
+                item = {"person": pi, "side": side, "px": int(2 * half), "presence": round(pres, 2), "fingers": f, "gesture": g, "points": pts, "raised": raised}
                 if save:
                     DEBUG.mkdir(parents=True, exist_ok=True)
                     vis = cv2.resize(crop, (SIZE, SIZE))
