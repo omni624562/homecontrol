@@ -1912,9 +1912,9 @@ async def set_settings(body: dict = Body(...)) -> dict[str, Any]:
             gn["mode"] = g["mode"]
         if isinstance(g.get("keep"), list):
             gn["keep"] = [str(x) for x in g["keep"] if str(x) in hub.plugs]
-    if isinstance(body.get("remind"), dict):  # 主動提醒：開太久、早上會下雨、明天停水停電
+    if isinstance(body.get("remind"), dict):  # 主動提醒：開太久、早上會下雨、天氣特報、空品
         rem = settings.setdefault("remind", {})
-        for key in ("long_on", "rain", "outage_eve", "dayoff", "warn", "quake", "power", "air", "anomaly", "tier"):
+        for key in ("long_on", "rain", "warn", "air", "anomaly", "tier"):
             if key in body["remind"]:
                 rem[key] = bool(body["remind"][key])
     if isinstance(body.get("presence"), dict):
