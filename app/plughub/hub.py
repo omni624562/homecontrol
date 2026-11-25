@@ -32,7 +32,7 @@ from .gpu import GPU_PERSON_ON, GpuVision
 from .activity import Activity
 from .visitors import Visitors
 from .daysoff import DaysOff
-from .alerts import Alerts, quake_age_h
+from .alerts import Alerts
 from .backup import Backup
 from .watchdog import Watchdog
 from .localinfo import LocalInfo
@@ -3230,17 +3230,6 @@ class Hub:
                 sent[key] = now
                 self.notifier.send("今天可能會下雨", f"白天降雨機率 {pop:.0f}%，出門記得帶傘")
 
-        # 晚上 8～11 點：明天家裡這條路要停水停電，前一晚再提醒一次
-        if cfg.get("outage_eve", True) and 20 <= dt.hour < 23:
-            tomorrow = (dt.date() + timedelta(days=1)).isoformat()
-            for x in self.local.outages:
-                key = f"eve:{x['id']}"
-                if x.get("hit") == "road" and x["start"][:10] == tomorrow and key not in sent:
-                    sent[key] = now
-                    what = "停電" if x["kind"] == "power" else "停水"
-                    self.notifier.send(f"明天要{what}", f"明天 {x['start'][11:16]}～{x['end'][11:16]} 你家附近{what}，記得先準備"
-                                       + ("（儲水）" if x["kind"] == "water" else "（手機充電、冰箱少開）"))
-
         self._check_alerts_notify(now, dt, cfg, sent)
         self._check_night(now, dt)
         self._check_away_auto(now)
@@ -3254,20 +3243,9 @@ class Hub:
             self._dirty = True
 
     def _check_alerts_notify(self, now: float, dt: datetime, cfg: dict[str, Any], sent: dict[str, float]) -> None:
-        """停班停課、天氣特報、地震、供電吃緊、明天空品不好：各講一次。"""
+        """天氣特報、明天空品不好：各講一次。"""
         A = self.alerts
-        county, town = self.weather.county, self.weather.town
-        # 停班停課：今天、明天有發布就通知（同一段文字只講一次）
-        if cfg.get("dayoff", True):
-            for i, word in ((0, "今天"), (1, "明天")):
-                day = dt.date() + timedelta(days=i)
-                off = A.dayoff(county, town, day)
-                if off:
-                    key = f"dayoff:{day.isoformat()}:{off['text'][:40]}"
-                    if key not in sent:
-                        sent[key] = now
-                        note = "「國定假日不執行」的排程會跳過" if off["full"] else ""
-                        self.notifier.send(f"{word}{county or ''}停班停課", off["text"] + (f"。{note}" if note else ""), "high")
+        county = self.weather.county
         # 天氣特報：新發布的才講
         if cfg.get("warn", True):
             for w in A.warnings:
@@ -3276,25 +3254,6 @@ class Hub:
                     sent[key] = now
                     end = (w.get("end") or "")[5:16].replace("-", "/")
                     self.notifier.send(f"{county or ''}{w.get('name')}", f"氣象署發布{w.get('name')}" + (f"，到 {end}" if end else ""), "high")
-        # 地震：你家附近 3 級以上、1 小時內的
-        q = A.quake
-        age = quake_age_h(q)
-        if cfg.get("quake", True) and q and q.get("rank", 0) >= 3 and age is not None and age < 1:
-            key = f"quake:{q.get('no')}"
-            if key not in sent:
-                sent[key] = now
-                on = [self.name(p) for p in self.ordered() if p.online and p.is_on and not self.store.meta(p.id).keep_on]
-                msg = f"你家附近震度 {q.get('here')}（規模 {q.get('mag')}，{q.get('where')}）。"
-                msg += f"現在開著：{'、'.join(on[:8])}{'…' if len(on) > 8 else ''}" if on else "家裡的電器都關著"
-                self.notifier.send("剛剛有地震", msg, "high")
-        # 供電吃緊：今天預估尖峰備轉到橘燈以下
-        pw = A.power
-        if cfg.get("power", True) and pw and pw.get("light") in ("O", "R", "B"):
-            key = f"power:{dt.date().isoformat()}:{pw['light']}"
-            if key not in sent:
-                sent[key] = now
-                self.notifier.send(f"今天供電吃緊（{pw.get('light_name')}）",
-                                   f"台電預估尖峰備轉容量率 {pw.get('rate')}%（{pw.get('peak') or ''}）。用不到的電器可以先關")
         # 明天空品不好：晚上 8～11 點講一次
         if cfg.get("air", True) and 20 <= dt.hour < 23:
             tm = A.air_on(dt.date() + timedelta(days=1))
