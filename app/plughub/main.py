@@ -79,7 +79,7 @@ from . import tls as tlsmod
 from .locate import MIN_SAMPLES as LOCATE_MIN, TRAIN_S as LOCATE_TRAIN_S
 from .assistant import MODELS as ASSISTANT_MODELS, Assistant
 from .claude_vision import FEATURES as CV_FEATURES, ClaudeVision
-from .hub import APP_VERSION, GESTURES as GESTURE_NAMES, SOURCE, Hub, Locked
+from .hub import APP_VERSION, GESTURES as GESTURE_NAMES, SOURCE, Hub, Locked, arrive_rule
 from .summary import build_summary
 from .notify import LineError, Notifier
 from .store import Store, _hms
@@ -857,6 +857,89 @@ async def set_motion_rules(body: dict = Body(...)) -> dict[str, Any]:
     return await motion_rules()
 
 
+# ---- 回家自動開：誰（的手機連上 Wi-Fi）回家 → 打開插座或執行情境 ----
+
+def _arrive_out() -> dict[str, Any]:
+    return {"rules": store.data.get("arrive_rules") or [], "suggestions": hub.arrive_suggestions()}
+
+
+def _arrive_clean(x: dict[str, Any], old: dict[str, Any] | None = None) -> dict[str, Any]:
+    """檢查、整理一條規則；不對的地方回 400（說明哪裡不對）。"""
+    r = arrive_rule(**(old or {}))
+    people = {p["id"] for p in store.data["people"]}
+    if "who" in x:
+        if x["who"] != "any" and x["who"] not in people:
+            raise HTTPException(400, "找不到這位家人")
+        r["who"] = x["who"]
+    for k in ("enabled", "only_empty"):
+        if k in x:
+            r[k] = bool(x[k])
+    if "when" in x:
+        if x["when"] not in ("all", "dark", "range"):
+            raise HTTPException(400, "時段不對")
+        r["when"] = x["when"]
+    if "start" in x or "end" in x:
+        r["start"], r["end"] = _hm(x.get("start", r["start"])), _hm(x.get("end", r["end"]))
+    if r["when"] == "range" and (not r["start"] or not r["end"] or r["start"] == r["end"]):
+        raise HTTPException(400, "自訂時段要填開始和結束時間")
+    if "days" in x:
+        if x["days"] not in ("all", "weekday", "weekend"):
+            raise HTTPException(400, "哪幾天不對")
+        r["days"] = x["days"]
+    if "kind" in x:
+        if x["kind"] not in ("plugs", "scene"):
+            raise HTTPException(400, "要做的事不對")
+        r["kind"] = x["kind"]
+    if "plugs" in x:
+        r["plugs"] = [p for p in dict.fromkeys(x["plugs"] or []) if p in hub.plugs][:20]
+    if "scene" in x:
+        r["scene"] = x["scene"] if x["scene"] and store.scene(x["scene"]) else None
+    if "for_min" in x:
+        r["for_min"] = int(_num(x["for_min"] or 0, 0, 720))
+    if r["kind"] == "plugs" and not r["plugs"]:
+        raise HTTPException(400, "至少選一個插座")
+    if r["kind"] == "scene" and not r["scene"]:
+        raise HTTPException(400, "請選一個情境")
+    return r
+
+
+@app.get("/api/arrive-rules")
+async def arrive_rules() -> dict[str, Any]:
+    return _arrive_out()
+
+
+@app.post("/api/arrive-rules")
+async def add_arrive_rule(body: dict = Body(...)) -> dict[str, Any]:
+    rules = store.data.get("arrive_rules") or []
+    if len(rules) >= 30:
+        raise HTTPException(400, "規則最多 30 條")
+    rules.append(_arrive_clean(body))
+    store.data["arrive_rules"] = rules
+    store.save()
+    return _arrive_out()
+
+
+@app.put("/api/arrive-rules/{rid}")
+async def edit_arrive_rule(rid: str, body: dict = Body(...)) -> dict[str, Any]:
+    rules = store.data.get("arrive_rules") or []
+    for i, r in enumerate(rules):
+        if r["id"] == rid:
+            rules[i] = _arrive_clean(body, r)
+            store.save()
+            return _arrive_out()
+    raise HTTPException(404, "找不到這條規則")
+
+
+@app.delete("/api/arrive-rules/{rid}")
+async def del_arrive_rule(rid: str) -> dict[str, Any]:
+    rules = store.data.get("arrive_rules") or []
+    store.data["arrive_rules"] = [r for r in rules if r["id"] != rid]
+    if len(store.data["arrive_rules"]) == len(rules):
+        raise HTTPException(404, "找不到這條規則")
+    store.save()
+    return _arrive_out()
+
+
 @app.get("/api/sensing/replay")
 async def sensing_replay(hours: int = 24) -> dict[str, Any]:
     """動靜回放：每 5 分鐘一格，每台裝置的擾動、每個房間的分數。"""
@@ -1614,7 +1697,7 @@ async def faces_enroll_cancel(request: Request) -> dict[str, Any]:
 
 @app.put("/api/faces/actions")
 async def faces_actions(request: Request, body: dict = Body(...)) -> dict[str, Any]:
-    """認出家人時：{家人 ID: {"day", "night", "late": 情境 ID 或 null, "notify": 回家時通知}}"""
+    """認出家人時：{家人 ID: {"notify": 回家時通知}}（回家要開什麼改在 /api/arrive-rules）"""
     _need_view(request)
     ids = {p["id"] for p in store.data["people"]}
     acts = dict(store.data["settings"].get("face_actions") or {})
@@ -1622,9 +1705,6 @@ async def faces_actions(request: Request, body: dict = Body(...)) -> dict[str, A
         if pid not in ids or not isinstance(cfg, dict):
             continue
         cur = dict(acts.get(pid) or {})
-        for slot in ("day", "night", "late"):
-            if slot in cfg:
-                cur[slot] = cfg[slot] if cfg[slot] and store.scene(cfg[slot]) else None
         if "notify" in cfg:
             cur["notify"] = bool(cfg["notify"])
         acts[pid] = cur
@@ -1919,7 +1999,7 @@ async def set_settings(body: dict = Body(...)) -> dict[str, Any]:
                 rem[key] = bool(body["remind"][key])
     if isinstance(body.get("presence"), dict):
         pres = settings.setdefault("presence", {})
-        for key in ("away_scene", "home_scene"):
+        for key in ("away_scene",):  # 回家要做的事改在「回家自動開」（/api/arrive-rules）
             if key in body["presence"]:
                 v = body["presence"][key]
                 pres[key] = v if v and store.scene(v) else None
@@ -1929,8 +2009,6 @@ async def set_settings(body: dict = Body(...)) -> dict[str, Any]:
             pres["left_on"] = body["presence"]["left_on"]
         if "risky_off" in body["presence"]:  # 高風險電器：大家出門就關（False = 只緊急通知）
             pres["risky_off"] = bool(body["presence"]["risky_off"])
-        if "home_dark_only" in body["presence"]:  # 回家的情境只在天黑後執行
-            pres["home_dark_only"] = bool(body["presence"]["home_dark_only"])
     if "weather" in body:  # 首頁顯示天氣（每 10 分鐘向氣象署查一次）
         settings["weather"] = bool(body["weather"])
         if settings["weather"]:

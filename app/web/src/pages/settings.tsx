@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { AlertCircle, Archive, BarChart3, ListChecks, Bell, Cctv, Download, Lock, Plus, ShieldCheck, Trash2, CheckCircle2, CloudSun, KeyRound, MessageCircle, ChevronLeft, ChevronRight, ExternalLink, EyeOff, Link2, Loader2, Zap, CalendarClock, MessageSquareText, Mic, Moon, Palette, Search, Wifi, WifiOff } from "lucide-react";
+import { AlertCircle, Archive, House, BarChart3, ListChecks, Bell, Cctv, Download, Lock, Plus, ShieldCheck, Trash2, CheckCircle2, CloudSun, KeyRound, MessageCircle, ChevronLeft, ChevronRight, ExternalLink, EyeOff, Link2, Loader2, Zap, CalendarClock, MessageSquareText, Mic, Moon, Palette, Search, Wifi, WifiOff } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -19,6 +19,7 @@ import { SenseSheet } from "@/components/sense-sheet";
 import { WeatherKeys, WeatherSheet } from "@/components/weather-sheet";
 import { LifeSheet } from "@/components/life-sheet";
 import { SettingNumber } from "@/components/settings-bits";
+import { ArriveRules } from "@/components/arrive-rules";
 import { RUSH_STYLES, previewTruckRush } from "@/components/truck-rush";
 import { api } from "@/lib/api";
 import { SetupList, UsageList, useSetup } from "@/components/setup-bits";
@@ -615,6 +616,9 @@ function CameraLinkCard() {
 function AutoCards({ s }: { s: HubState }) {
   return (
     <>
+      <SCard id="s-arrive" icon={House} title="回家自動開">
+        <ArriveRules s={s} />
+      </SCard>
       <SCard id="s-gesture" icon={Zap} title="手勢遙控">
         <GestureRows />
       </SCard>
@@ -1020,7 +1024,7 @@ const CATS: { key: CatKey; title: string; hint: string; icon: React.ElementType 
   { key: "other", title: "外觀與其他", hint: "畫面風格、手機選單、待機畫面、使用統計", icon: Palette },
 ];
 const CARD_CAT: Record<string, string> = {
-  "s-notify": "notify", "s-cam": "cam", "s-ask": "ai", "s-night": "auto", "s-gesture": "auto", "s-auto": "auto", "s-life": "life", "s-dev": "home",
+  "s-notify": "notify", "s-cam": "cam", "s-ask": "ai", "s-night": "auto", "s-arrive": "auto", "s-gesture": "auto", "s-auto": "auto", "s-life": "life", "s-dev": "home",
   "s-google": "link", "s-remote": "link", "s-jetson": "link",
   "s-sys": "security", "s-tls": "security", "s-look": "other", "s-usage": "other", "s-setup": "setup",
 };
@@ -1032,7 +1036,7 @@ const SEARCH: [string, string, string][] = [
   ["每週摘要", "notify", "s-notify"], ["每月報告", "notify", "s-notify"],
   ["攝影機 誰可以看 權限", "cam", "s-cam"], ["錄影 保留 硬碟", "cam", "s-cam"], ["夜間畫面增強", "cam", "s-cam"], ["手勢遙控", "auto", "s-gesture"], ["Jetson GPU", "link", "s-jetson"],
   ["問家裡 Claude 金鑰 模型 上限", "ai", "s-ask"], ["Claude 看攝影機畫面", "ai", "s-ask"],
-  ["晚安檢查 睡前", "auto", "s-night"], ["排程 動靜自動化", "auto", "s-auto"], ["天氣 授權碼 氣象署", "life", "s-life"], ["垃圾車 公車 YouBike", "life", "s-life"], ["趣味小動畫", "life", "s-life"],
+  ["回家自動開 回家開燈", "auto", "s-arrive"], ["晚安檢查 睡前", "auto", "s-night"], ["排程 動靜自動化", "auto", "s-auto"], ["天氣 授權碼 氣象署", "life", "s-life"], ["垃圾車 公車 YouBike", "life", "s-life"], ["趣味小動畫", "life", "s-life"],
   ["裝置檢查 網路", "home", "s-dev"], ["停電後恢復插座", "auto", "s-auto"], ["Wi-Fi 感測", "home", "s-dev"], ["TP-Link 雲端", "home", "s-dev"], ["找新插座", "home", "s-dev"],
   ["Google Home Matter", "link", "s-google"], ["在外面連回家 VPN OpenVPN 遠端", "link", "s-remote"], ["存取碼 配對 備份 還原", "security", "s-sys"], ["HTTPS 憑證 安全連線", "security", "s-tls"],
   ["畫面風格 科技感", "other", "s-look"], ["手機選單 下方分頁", "other", "s-look"], ["待機畫面 平板", "other", "s-look"], ["使用統計", "other", "s-usage"],

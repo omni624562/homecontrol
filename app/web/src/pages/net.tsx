@@ -127,7 +127,7 @@ export function NetPage() {
       </>
     );
 
-  const pres = (state.settings.presence || {}) as { away_scene?: string | null; home_scene?: string | null; home_dark_only?: boolean; left_on?: string; grace_min?: number; risky_off?: boolean };
+  const pres = (state.settings.presence || {}) as { away_scene?: string | null; left_on?: string; grace_min?: number; risky_off?: boolean };
   const client = (mac: string) => net.clients.find((c) => c.mac === mac);
 
   // 「ERIC watch」「ERIC Phone」看起來是同一個人：建議合併
@@ -295,14 +295,13 @@ export function NetPage() {
                   <SRow label="大家都出門時" hint={`最後一個人離開 ${pres.grace_min || 10} 分鐘後`}>
                     <PSelect value={pres.away_scene || "none"} opts={sceneOpts} onChange={(v) => putPres({ away_scene: v === "none" ? null : v })} label="大家都出門時" />
                   </SRow>
-                  <SRow label="有人回家時" hint="大家都出門之後，第一個人回來">
-                    <PSelect value={pres.home_scene || "none"} opts={sceneOpts} onChange={(v) => putPres({ home_scene: v === "none" ? null : v })} label="有人回家時" />
-                  </SRow>
-                  {pres.home_scene && (
-                    <SRow label="只在天黑後" hint="白天回家不執行（日落前 30 分鐘到日出之間才執行）">
-                      <Switch checked={!!pres.home_dark_only} onCheckedChange={(v) => putPres({ home_dark_only: v })} aria-label="只在天黑後" />
-                    </SRow>
-                  )}
+                  <a href="#settings/s-arrive" className="flex items-center gap-3 px-4 py-3.5 transition-colors hover:bg-muted/60 sm:px-5">
+                    <div className="min-w-0 flex-1">
+                      <div className="font-medium leading-snug">有人回家時</div>
+                      <div className="text-sm leading-relaxed text-muted-foreground">誰回家要開什麼，在「設定 → 自動化 → 回家自動開」</div>
+                    </div>
+                    <ChevronRight className="size-5 shrink-0 text-muted-foreground" />
+                  </a>
                   <SRow label="沒人在家還有電器開著" hint="設成「常開」的、「出門」情境裡設成不動的不算；同一次出門只講一次">
                     <PSelect value={pres.left_on || "notify"} opts={[["notify", "通知我"], ["off", "自動關掉"], ["none", "不用管"]]} onChange={(v) => putPres({ left_on: v })} label="怎麼處理" />
                   </SRow>
