@@ -26,7 +26,7 @@ POSE_EVERY = 0.4  # 秒：開了跌倒偵測、又有人時，多久算一次姿
 GESTURE_POSE_EVERY = 0.2  # 秒：開了手勢的那台每張都看（每秒 5 次），反應才快
 GESTURE_HOLD = 3.0  # 秒：手勢要維持這麼久才算（伸懶腰、拿東西不會誤觸）
 GESTURE_GAP = 0.9  # 秒：中間看不清楚這麼短不算放下
-FINGER_HOLD = 1.0  # 秒：手指手勢維持這麼久才算（手要夠大、夠清楚已經擋掉大部分誤觸）
+FINGER_HOLD = 1.5  # 秒：手指手勢維持這麼久才算（1 秒太短：吃東西拿筷子會被當成比 YA）
 FINGER_MIN_PX = 100  # 手（裁下來的那一塊）至少這麼大：太遠的、房間裡別人隨手的動作不算
 FINGER_MIN_P = 0.85  # 手部模型「這是手」的把握
 FINGERS = {"open": "f_open", "fist": "f_fist", "v": "f_v", "point": "f_point", "thumbs_up": "f_thumbs", "three": "f_three", "rock": "f_rock", "call": "f_call"}
@@ -245,7 +245,7 @@ class Cam:
         g = None
         hand = None
         if img is not None and self.hands is not None:
-            found = [h for h in self.hands(img, people) if h["px"] >= FINGER_MIN_PX and h["presence"] >= FINGER_MIN_P and h["gesture"] in FINGERS]
+            found = [h for h in self.hands(img, people) if h["px"] >= FINGER_MIN_PX and h["presence"] >= FINGER_MIN_P and h.get("raised", True) and h["gesture"] in FINGERS]
             if found:
                 hand = max(found, key=lambda h: h["px"])
                 g = FINGERS[hand["gesture"]]
@@ -260,6 +260,8 @@ class Cam:
         name, since, last = self.g_cur
         if name and not self.g_fired and last - since >= (FINGER_HOLD if name.startswith("f_") else GESTURE_HOLD):
             self.g_fired = True
+            if self.g_hand:
+                LOG.info("%s 手勢 %s：手 %s 像素、把握 %.2f", getattr(self, "id", "?"), name, self.g_hand.get("px"), self.g_hand.get("presence") or 0)
             with self.lock:
                 self.g_events.append((round(now, 2), name))
                 while self.g_events and now - self.g_events[0][0] > SAMPLES_KEEP:

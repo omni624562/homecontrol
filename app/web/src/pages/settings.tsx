@@ -889,7 +889,7 @@ function GestureRows() {
               <SelectContent>{cams.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
             </Select>
           </label>
-          {([["手舉到胸前、掌心朝攝影機，維持 1 秒", FINGER_GESTURES]] as const).map(([head, list]) => (
+          {([["手舉起來（手腕比手肘高）、掌心朝攝影機，維持 1.5 秒", FINGER_GESTURES]] as const).map(([head, list]) => (
             <div key={head} className="space-y-2">
               <div className="text-xs font-semibold text-muted-foreground">{head}</div>
               {list.map(([k, icon, text]) => (
