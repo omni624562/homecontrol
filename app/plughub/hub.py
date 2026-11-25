@@ -1910,8 +1910,8 @@ class Hub:
             crop = img[y0:y1, x0:x1]
             if crop.size == 0:
                 return None
-            s = 160 / max(crop.shape[:2])
-            ok, buf = cv2.imencode(".jpg", cv2.resize(crop, None, fx=s, fy=s, interpolation=cv2.INTER_AREA), [cv2.IMWRITE_JPEG_QUALITY, 80])
+            s = min(1.0, 360 / max(crop.shape[:2]))  # 點開要看得清楚：最多 360 像素高，不放大
+            ok, buf = cv2.imencode(".jpg", cv2.resize(crop, None, fx=s, fy=s, interpolation=cv2.INTER_AREA), [cv2.IMWRITE_JPEG_QUALITY, 82])
             return buf.tobytes() if ok else None
         except Exception:  # noqa: BLE001
             return None

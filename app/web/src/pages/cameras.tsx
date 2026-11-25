@@ -688,6 +688,7 @@ interface VGroup { id: string; count: number; first: number; last: number; weekd
 function VisitorGroups() {
   const [d, setD] = useState<{ groups: VGroup[]; named: { id: string; name: string; n: number }[] } | null>(null);
   const [names, setNames] = useState<Record<string, string>>({});
+  const [big, setBig] = useState<string | null>(null);  // 點小圖看大圖
   useEffect(() => { api<typeof d>("GET", "/api/visitors").then(setD).catch(() => setD(null)); }, []);
   if (!d || (!d.groups.length && !d.named.length)) return null;
   const DAYS = "一二三四五六日";
@@ -701,8 +702,18 @@ function VisitorGroups() {
       {d.groups.map((g) => {
         const wd = [...new Set(g.weekdays)].sort().map((i) => DAYS[i]).join("、");
         return (
-          <div key={g.id} className="flex flex-wrap items-center gap-2">
-            <span className="flex gap-1">{g.thumbs.map((t) => <img key={t} src={`/api/visitors/thumb/${t}`} alt="" className="h-12 w-8 rounded object-cover" loading="lazy" />)}</span>
+          <div key={g.id} className="flex flex-wrap items-center gap-2 border-t pt-2 first-of-type:border-t-0">
+            <span className="flex w-full gap-1.5">{g.thumbs.map((t) => (
+              <button key={t} type="button" onClick={() => setBig(big === t ? null : t)} aria-label="看大圖"
+                className={`overflow-hidden rounded-md ring-offset-2 ${big === t ? "ring-2 ring-primary" : ""}`}>
+                <img src={`/api/visitors/thumb/${t}`} alt="" className="h-36 w-24 object-cover sm:h-44 sm:w-28" loading="lazy" />
+              </button>
+            ))}</span>
+            {big && g.thumbs.includes(big) && (
+              <button type="button" className="w-full" onClick={() => setBig(null)} aria-label="收起大圖">
+                <img src={`/api/visitors/thumb/${big}`} alt="" className="mx-auto max-h-[70vh] w-auto rounded-md object-contain" />
+              </button>
+            )}
             <span className="min-w-0 flex-1 basis-32 text-sm">最近 7 天來了 {g.count} 次<span className="block text-xs text-muted-foreground">多在週{wd}・{g.hours[0]}～{g.hours[1] + 1} 點</span></span>
             <form className="flex gap-1.5" onSubmit={(e) => { e.preventDefault(); if (names[g.id]?.trim()) save(g.id); }}>
               <Input id={`vname-${g.id}`} className="h-8 w-28 bg-background" placeholder="例如：清潔阿姨" value={names[g.id] || ""} onChange={(e) => setNames({ ...names, [g.id]: e.target.value })} aria-label="取名字" />
