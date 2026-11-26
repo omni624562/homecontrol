@@ -132,7 +132,7 @@ def usage_clean(u: dict) -> dict:
         raise ValueError("使用習慣沒填完整") from None
     if not 1 <= watts <= 5000:
         raise ValueError("電器瓦數要在 1～5000 W")
-    if not 1 <= days <= 7 or not 1 <= times <= 5 or not 1 <= minutes <= 240:
+    if not 1 <= days <= 7 or not 1 <= times <= 20 or not 1 <= minutes <= 240:
         raise ValueError("使用習慣的數字不合理")
     return {"kind": kind, "watts": watts, "days": days, "times": times, "minutes": minutes}
 
