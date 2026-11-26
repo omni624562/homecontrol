@@ -895,7 +895,7 @@ const CARD_CAT: Record<string, string> = {
 // 搜尋：[關鍵字, 分類, 卡片 id]
 const SEARCH: [string, string, string][] = [
   ["LINE 手機通知", "notify", "s-notify"], ["開太久提醒", "notify", "s-notify"],
-  ["用電異常", "notify", "s-notify"], ["電費跳級", "notify", "s-notify"], ["功率過高 待機門檻", "notify", "s-notify"],
+  ["使用時間異常 開太久", "notify", "s-notify"], ["功率過高 待機門檻", "notify", "s-notify"],
   ["每週摘要", "notify", "s-notify"], ["每月報告", "notify", "s-notify"],
   ["攝影機 誰可以看 權限", "cam", "s-cam"], ["錄影 保留 硬碟", "cam", "s-cam"], ["夜間畫面增強", "cam", "s-cam"], ["Jetson GPU", "link", "s-jetson"],
   ["問家裡 Claude 金鑰 模型 上限", "ai", "s-ask"], ["Claude 看攝影機畫面", "ai", "s-ask"],
@@ -1058,7 +1058,7 @@ export function SettingsPage() {
   const metered = state.plugs.some((p) => p.mode === "metered");
   const bound = cloudBound(state.plugs).length;
   const weekly = set.weekly !== false;
-  const remind = (set.remind || {}) as { long_on?: boolean; anomaly?: boolean; tier?: boolean };
+  const remind = (set.remind || {}) as { long_on?: boolean; anomaly?: boolean };
   const putRemind = (k: keyof typeof remind, v: boolean, label: string) => put({ remind: { [k]: v } }, `${label}${v ? "已打開" : "已關閉"}`);
   const notifyCard = (
           <SCard id="s-notify" icon={Bell} title="提醒與通知">
@@ -1068,11 +1068,8 @@ export function SettingsPage() {
             <SRow label="開太久也通知手機" hint="每次開著只講一次；常開的、「出門」情境裡設成不動的不算">
               <Switch checked={remind.long_on !== false} onCheckedChange={(v) => putRemind("long_on", v, "開太久通知")} aria-label="開太久也通知手機" />
             </SRow>
-            <SRow label="用電和平常不一樣" hint="某個電器最近 3 天比它自己平常用得多（冰箱變耗電、開得比平常久），或待機功率變高；每天早上 9 點檢查">
-              <Switch checked={remind.anomaly !== false} onCheckedChange={(v) => putRemind("anomaly", v, "用電異常通知")} aria-label="用電異常通知" />
-            </SRow>
-            <SRow label="電費可能跳級" hint={`插座這個月用得比上個月多，照這個速度電費單會超過下一級電價的度數就通知（一個月一次；用「用電」頁的每月度數 ${set.household_monthly_kwh ?? 300} 度估算）`}>
-              <Switch checked={remind.tier !== false} onCheckedChange={(v) => putRemind("tier", v, "電費跳級提醒")} aria-label="電費可能跳級" />
+            <SRow label="使用時間和平常不一樣" hint="某個電器最近 3 天開得比它自己平常久；每天早上 9 點檢查">
+              <Switch checked={remind.anomaly !== false} onCheckedChange={(v) => putRemind("anomaly", v, "使用時間異常通知")} aria-label="使用時間異常通知" />
             </SRow>
             {metered && (
               <SRow wrap label="功率過高通知" hint="有計量的插座超過這個瓦數 1 分鐘就通知">
@@ -1089,13 +1086,13 @@ export function SettingsPage() {
               hint={state.notify?.line ? `已設定${state.notify.name ? `・${state.notify.name}` : ""}` : "還沒設定・不用另外裝 App"}
               onClick={() => setSheet("line")}
             />
-            <SRow wrap label="每週摘要" hint="每週日晚上 8 點，用通知傳這週的電費、用電和網路狀況">
+            <SRow wrap label="每週摘要" hint="每週日晚上 8 點，用通知傳這週插座開了多久、開最久的和網路狀況">
               <div className="flex items-center gap-3">
                 <ReportPreview url="/api/weekly" title="這週的家" empty="這週還沒有資料" />
                 <Switch checked={weekly} onCheckedChange={(v) => put({ weekly: v }, v ? "每週摘要已打開" : "每週摘要已關閉")} aria-label="每週摘要" />
               </div>
             </SRow>
-            <SRow wrap label="每月報告" hint="每月 1 號早上 9 點，傳上個月的電費、用最多的電器、網路斷線和常斷線的插座">
+            <SRow wrap label="每月報告" hint="每月 1 號早上 9 點，傳上個月插座開了多久、開最久的電器、網路斷線和常斷線的插座">
               <div className="flex items-center gap-3">
                 <ReportPreview url="/api/report/monthly" title="上個月的家" empty="上個月還沒有資料" />
                 <Switch checked={set.monthly !== false} onCheckedChange={(v) => put({ monthly: v }, v ? "每月報告已打開" : "每月報告已關閉")} aria-label="每月報告" />
@@ -1136,7 +1133,7 @@ export function SettingsPage() {
                 </div>
               </SRow>
             )}
-            <SRow label="趣味小動畫" hint="全部關閉時畫面暗一下、有人回家小人走進門、電費變少噴彩帶…">
+            <SRow label="趣味小動畫" hint="全部關閉時畫面暗一下、有人回家小人走進門、使用時間比上月少噴彩帶…">
               <Switch
                 checked={state.calendar.local?.fun !== false}
                 aria-label="趣味小動畫"

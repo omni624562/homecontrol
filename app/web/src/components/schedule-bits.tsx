@@ -47,7 +47,7 @@ export function useRuleMin() {
 // 分段選擇（一排按鈕選一個）
 export function Segmented<T extends string | number>({ value, options, onChange, label }: { value: T; options: [T, ReactNode][]; onChange: (v: T) => void; label: string }) {
   return (
-    <div role="radiogroup" aria-label={label} className="grid auto-cols-fr grid-flow-col gap-1 rounded-xl bg-muted p-1">
+    <div role="radiogroup" aria-label={label} className="grid auto-cols-[minmax(max-content,1fr)] grid-flow-col gap-1 rounded-xl bg-muted p-1">
       {options.map(([k, text]) => (
         <button
           key={String(k)}
@@ -56,7 +56,7 @@ export function Segmented<T extends string | number>({ value, options, onChange,
           aria-checked={value === k}
           onClick={() => onChange(k)}
           className={cn(
-            "h-10 rounded-lg px-2 text-[15px] font-medium text-muted-foreground transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            "h-10 rounded-lg px-2.5 text-[15px] font-medium whitespace-nowrap text-muted-foreground transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
             "hover:text-foreground active:scale-[.97]",
             value === k && "bg-background text-foreground shadow-sm",
           )}

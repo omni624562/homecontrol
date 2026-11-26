@@ -1,7 +1,7 @@
 """問家裡：用 Claude（Anthropic API）打字或說話控制、查詢、建排程。
 
 Claude 只能用這裡開給它的工具，全部走家庭中控原本的功能：
-- 讀：插座狀態、用電、開關紀錄、排程、誰在家、訊號地圖
+- 讀：插座狀態、使用時間、開關紀錄、排程、誰在家、訊號地圖
 - 做：開關插座、定時關閉、執行情境（有「防呆」的插座、全部關閉 → 交給使用者按確認）
 - 建排程、情境：只產生草稿，使用者按「建立」才會真的建立
 
@@ -45,8 +45,8 @@ SYSTEM = """你是「家庭中控」的助理，幫一個台灣家庭控制和�
 - 「全部關閉」用 turn_off_all，它會請使用者確認。
 - 有「防呆」的插座，set_power 會回傳「等使用者確認」，照實告訴使用者畫面上有確認按鈕。鎖定的插座不能動。
 - 要建立排程或情境時，用 propose_schedule／propose_scene 產生草稿，告訴使用者「按『建立』就會加上去」；不要說已經建好了。
-- 問用電、紀錄、誰在家、訊號、動靜，就用對應的查詢工具，回答重點和數字，必要時給一個建議。
-- 用電是「開了多久 × 設定的瓦數」估的，不是電表量的，回答時不用每次強調，但被問到準不準時要說。
+- 問使用時間、紀錄、誰在家、訊號、動靜，就用對應的查詢工具，回答重點和數字，必要時給一個建議。
+- 插座量不到電，只有「開了多久」；被問到用電、電費時，說只能看使用時間，不要自己估度數或電費。
 - 問題沒有現成答案時，自己用查詢工具找資料、組合起來算（例如分別查兩天再比較），不要叫使用者自己去看。
 - 真的查不到的事才說不知道，並說明缺什麼資料。"""
 
@@ -171,8 +171,6 @@ class Assistant:
             d["keep_on"] = True
         if meta.protect:
             d["protect"] = {"confirm": "開關都要確認", "confirm_off": "關閉前要確認", "lock": "鎖定"}.get(meta.protect, meta.protect)
-        if meta.watts:
-            d["watts"] = meta.watts
         return d
 
     def _tools(self, actions: list[dict[str, Any]]) -> list[Any]:
@@ -191,7 +189,7 @@ class Assistant:
 
         @beta_async_tool
         async def get_home() -> str:
-            """現在家裡的狀態：時間、每個插座（ID、名稱、房間、開關、開了多久、定時、防呆）、情境、誰在家、估計用電。開關或回答問題前先呼叫。"""
+            """現在家裡的狀態：時間、每個插座（ID、名稱、房間、開關、開了多久、定時、防呆）、情境、誰在家。開關或回答問題前先呼叫。"""
             s = hub.snapshot()
             now = datetime.now()
             return json.dumps({
@@ -201,7 +199,6 @@ class Assistant:
                 "rooms": [r["name"] for r in hub.store.rooms],
                 "scenes": [{"id": x["id"], "name": x["name"]} for x in hub.store.scenes],
                 "people": [{"name": p["name"], "home": p.get("home")} for p in hub.people_report()],
-                "power_watts_estimate": s["summary"]["power"],
                 "today_holiday": s["calendar"].get("holiday"),
             }, ensure_ascii=False)
 
@@ -295,27 +292,27 @@ class Assistant:
 
         @beta_async_tool
         async def get_energy() -> str:
-            """用電和電費的摘要（估算）：今天、本月、預估月底、比上月同期、各裝置本月排行、最近 14 天每天的全家度數、值得注意的事。
+            """插座使用時間的摘要（插座自己記錄的開機時數；插座量不到電，所以不算度數和電費）：今天、本月、比上月同期、各裝置本月排行、最近 14 天每天全家的時數、值得注意的事。
             要看某些裝置、某幾天或某幾個月的細項（例如「今天比昨天多用在哪」），用 query_usage 自己查。"""
             # 和用電頁一樣：插座的使用紀錄太舊（或剛重開還沒讀）就先向插座讀一次
             if not hub._usage or time.time() - hub._usage_at > 600:
                 await hub.refresh_usage()
             r = hub.energy_report()
-            top = sorted(r["plugs"], key=lambda p: -(p.get("month_kwh") or 0))[:8]
+            top = sorted(r["plugs"], key=lambda p: -(p.get("month_min") or 0))[:8]
             return json.dumps({
-                "price_per_kwh": r["price"], "today": r["today"], "month": r["month"], "projected": r["projected"],
-                "same_period_last_month": r["same_period"],
-                "top_this_month": [{"name": p["name"], "kwh": p.get("month_kwh"), "cost": p.get("month_cost"),
-                                    "avg_hours_per_day_7d": p.get("avg7_h"), "watts": p.get("watts")} for p in top],
-                "last_14_days": [{"day": d["day"], "kwh": round(d["kwh"], 2)} for d in r["days"][-14:]],
+                "today_hours": r["today"]["hours"], "month_hours": r["month"]["hours"],
+                "same_period_last_month_hours": r["same_period"]["hours"],
+                "top_this_month": [{"name": p["name"], "hours": round((p.get("month_min") or 0) / 60, 1),
+                                    "avg_hours_per_day_7d": p.get("avg7_h")} for p in top],
+                "last_14_days": [{"day": d["day"], "hours": round(d["hours"], 1)} for d in r["days"][-14:]],
                 "insights": r.get("insights"),
                 "now": time.strftime("%Y-%m-%d %H:%M"),
-                "note": "度數是估算：開機時間 × 設定的瓦數；watts 是空的裝置沒有度數，只能比開機時間",
+                "note": "插座量不到電，只有開機時數；不要估算度數或電費",
             }, ensure_ascii=False, default=str)
 
         @beta_async_tool
         async def query_usage(start: str, end: str | None = None, plug_ids: list[str] | None = None, by: str = "day") -> str:
-            """查每個裝置在一段時間的開機分鐘和估算度數（插座自己記的紀錄）。可以自由組合來回答各種用電問題：
+            """查每個裝置在一段時間的開機分鐘（插座自己記的紀錄；量不到電，沒有度數）。可以自由組合來回答各種用電問題：
             比較今天和昨天、這週和上週、這個月和上個月，找出哪個裝置變多、哪天特別高。
 
             Args:
@@ -351,26 +348,23 @@ class Assistant:
                     continue
                 use = hub._usage.get(plug.id)
                 meta = hub.store.meta(plug.id)
-                kw = (meta.watts or 0) / 1000
                 if use is None:
                     rows.append({"id": plug.id, "name": hub.name(plug), "no_data": True})
                     continue
                 src = use["months" if month else "days"]
                 mins = {k: src.get(k) for k in keys}
                 for k, v in mins.items():
-                    total[k] += (v or 0) / 60 * kw
+                    total[k] += (v or 0) / 60
                 rows.append({
                     "id": plug.id, "name": hub.name(plug), "room": (hub.store.room(meta.room) or {}).get("name"),
-                    "watts": meta.watts,
                     "minutes": mins,
-                    "kwh": {k: round(v / 60 * kw, 3) for k, v in mins.items() if v is not None} if meta.watts else None,
                 })
             return json.dumps({
                 "now": datetime.now().strftime("%Y-%m-%d %H:%M"),
                 "devices": rows,
-                "total_kwh": {k: round(v, 2) for k, v in total.items()},
+                "total_hours": {k: round(v, 1) for k, v in total.items()},
                 "note": "minutes 是 null 表示插座沒有那段的紀錄（日資料只留約 30 天）；今天還沒過完，比較時要把現在幾點算進去；"
-                        "度數 = 開機時間 × 設定的瓦數，watts 是空的就沒有度數。要知道幾點開關的，用 get_history。",
+                        "插座量不到電，只能比開機時間。要知道幾點開關的，用 get_history。",
             }, ensure_ascii=False)
 
         @beta_async_tool

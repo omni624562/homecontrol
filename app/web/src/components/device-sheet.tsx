@@ -12,10 +12,9 @@ import { DurationPicker } from "@/components/duration-picker";
 import { Sheet } from "@/components/responsive-sheet";
 import { daysText, showT, sunLabel } from "@/components/schedule-bits";
 import { Row, Section } from "@/components/settings-bits";
-import { WattsRows } from "@/components/watts-field";
 import { DEVICE_ICONS, deviceIcon, guessIcon } from "@/components/icons";
 import { api } from "@/lib/api";
-import { fmt, fmtDur, fmtLeft, fmtSec, pad2 } from "@/lib/format";
+import { fmtDur, fmtLeft, fmtSec, pad2 } from "@/lib/format";
 import { useHub, useTick } from "@/lib/hub";
 import type { KasaRule, Plug, Protect } from "@/lib/types";
 import { suggestShort } from "@/lib/map-model";
@@ -208,8 +207,6 @@ function DeviceBody({ p }: { p: Plug }) {
   const ups = net?.fw_updates || [];
   const shared = (state?.plugs || []).filter((x) => x.host === p.host).length > 1;
   const sig = signal(p.rssi);
-  // 開了這麼久大約幾度（有設瓦數才算）
-  const kwh = (min: number | null) => (min == null ? undefined : p.watts ? `約 ${fmt((min / 60) * (p.watts / 1000), 1)} 度` : "看用電 ›");
   // 存在插座裡的是哪幾個排程（排程頁設的、有打開備援、包含這個插座的）
   const backed = (state?.schedules || []).filter((x) => x.enabled && x.backup && x.action !== "scene" && x.plugs.includes(p.id));
   const backedText = backed.map((x) => {
@@ -345,7 +342,6 @@ function DeviceBody({ p }: { p: Plug }) {
               </SelectContent>
             </Select>
           </div>
-          {p.mode !== "metered" && <WattsRows p={p} compact />}
           <div className="space-y-1">
             <div className="text-sm font-medium">防呆</div>
             <Select value={protect || "none"} onValueChange={(v) => { const k = (v === "none" ? "" : v) as Protect; setProtect(k); patch({ protect: k }); }}>
@@ -370,8 +366,8 @@ function DeviceBody({ p }: { p: Plug }) {
       {p.online && (
         <Section title="狀態">
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <Tile label="今天開了" href="#energy" sub={kwh(usage ? usage.today : null)}>{usage === null ? "…" : usage === false ? "—" : fmtMin(usage.today)}</Tile>
-            <Tile label="本月開了" href="#energy" sub={kwh(usage ? usage.month : null)}>{usage === null ? "…" : usage === false ? "—" : usage.month >= 6000 ? `${Math.round(usage.month / 60)} 小時` : fmtMin(usage.month)}</Tile>
+            <Tile label="今天開了" href="#energy" sub="看使用時間 ›">{usage === null ? "…" : usage === false ? "—" : fmtMin(usage.today)}</Tile>
+            <Tile label="本月開了" href="#energy" sub="看使用時間 ›">{usage === null ? "…" : usage === false ? "—" : usage.month >= 6000 ? `${Math.round(usage.month / 60)} 小時` : fmtMin(usage.month)}</Tile>
             <Tile label={net?.ssid ? `Wi-Fi・${net.ssid}` : "Wi-Fi 訊號"} warn={!!sig && sig.level <= 2} sub={[p.host, net ? (onRouter ? "WPA2 以上" : keyName(net.key_type)) : ""].filter(Boolean).join("・")}>
               {sig ? <span className="inline-flex items-center gap-1.5"><Bars level={sig.level} />{sig.text}</span> : "—"}
             </Tile>

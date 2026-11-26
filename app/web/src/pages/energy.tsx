@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { AlertCircle, CalendarDays, CheckCircle2, ChevronDown, ChevronRight, ChevronUp, Clock, Gauge, History, Minus, TrendingUp, Trophy, X, Zap } from "lucide-react";
+import { AlertCircle, CalendarDays, CheckCircle2, ChevronDown, ChevronRight, ChevronUp, Clock, Gauge, History, Minus, TrendingUp, Trophy, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -9,18 +9,16 @@ import { EnergyDeviceSheet } from "@/components/energy-device-sheet";
 import { Confetti, useFun } from "@/components/fx";
 import { deviceIcon } from "@/components/icons";
 import { Segmented } from "@/components/schedule-bits";
-import { SettingNumber } from "@/components/settings-bits";
 import { api } from "@/lib/api";
 import { fmt, fmtMin } from "@/lib/format";
 import { useHub, useMedia } from "@/lib/hub";
 import { useLook } from "@/lib/look";
-import type { Energy, EnergyPlug } from "@/lib/types";
+import type { Energy } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-const money = (v: number) => `$${fmt(v)}`;
 const md = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
 
-// 讀用電資料：打開時讀，之後 5 分鐘更新一次
+// 讀使用時間資料：打開時讀，之後 5 分鐘更新一次
 export function useEnergy() {
   const [e, setE] = useState<Energy | null>(null);
   const [err, setErr] = useState(false);
@@ -76,23 +74,21 @@ function Spark({ days }: { days: number[] }) {
   );
 }
 
-// 點長條圖的某一天：那天每個裝置用了多少，和前一天比
+// 點長條圖的某一天：那天每個裝置開了多久，和前一天比
 function DayDetail({ e, i, onClose, onOpen }: { e: Energy; i: number; onClose: () => void; onOpen: (id: string) => void }) {
-  const useKwh = e.plugs.some((p) => p.watts);
   const day = e.days[i];
-  const kwh = (p: EnergyPlug, m: number) => (m / 60) * (p.watts || 0) / 1000;
   const rows = e.plugs
     .filter((p) => p.known && p.days[i] > 0)
-    .map((p) => ({ p, m: p.days[i], prev: i > 0 ? p.days[i - 1] : null, k: kwh(p, p.days[i]) }))
-    .sort((a, b) => (useKwh ? b.k - a.k || b.m - a.m : b.m - a.m));
-  const max = Math.max(0.001, ...rows.map((r) => (useKwh ? r.k : r.m)));
+    .map((p) => ({ p, m: p.days[i], prev: i > 0 ? p.days[i - 1] : null }))
+    .sort((a, b) => b.m - a.m);
+  const max = Math.max(0.001, ...rows.map((r) => r.m));
   const today = i === e.days.length - 1;
   return (
     <div className="mt-3 rounded-xl border bg-muted/30">
       <div className="flex items-center gap-2 border-b px-3 py-2">
         <div className="min-w-0 flex-1">
           <span className="font-semibold">{md(day.day)}{today && "（今天，到現在）"}</span>
-          <span className="ml-2 text-sm text-muted-foreground tabular-nums">{useKwh ? `${fmt(day.kwh, 1)} 度・約 ${money(day.kwh * e.price)}` : `開了 ${fmt(day.hours, 0)} 小時`}{i > 0 ? "・右邊是和前一天比" : ""}</span>
+          <span className="ml-2 text-sm text-muted-foreground tabular-nums">{`開了 ${fmt(day.hours, 0)} 小時`}{i > 0 ? "・右邊是和前一天比" : ""}</span>
         </div>
         <Button size="icon" variant="ghost" className="size-8" onClick={onClose} aria-label="關閉這天的明細"><X className="size-4" /></Button>
       </div>
@@ -100,13 +96,13 @@ function DayDetail({ e, i, onClose, onOpen }: { e: Energy; i: number; onClose: (
         <p className="px-3 py-3 text-sm text-muted-foreground">這天沒有裝置開著。</p>
       ) : (
         <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-3 gap-y-1 px-3 py-2 text-sm sm:grid-cols-[minmax(0,9rem)_minmax(2rem,1fr)_auto_auto]">
-          {rows.map(({ p, m, prev, k }) => {
+          {rows.map(({ p, m, prev }) => {
             const d = prev == null ? null : m - prev;
             return (
               <Fragment key={p.id}>
                 <button onClick={() => onOpen(p.id)} className="truncate text-left font-medium hover:text-primary focus-visible:underline focus-visible:outline-none">{p.name}</button>
-                <span className="hidden h-2 overflow-hidden rounded-full bg-muted sm:block"><span className="block h-full rounded-full bg-primary/75" style={{ width: `${Math.max(2, ((useKwh ? k : m) / max) * 100)}%` }} /></span>
-                <span className="text-right whitespace-nowrap tabular-nums">{useKwh && p.watts ? `${fmt(k, 2)} 度` : fmtMin(m)}<span className="ml-1.5 hidden text-xs text-muted-foreground sm:inline">{useKwh && p.watts ? fmtMin(m) : ""}</span></span>
+                <span className="hidden h-2 overflow-hidden rounded-full bg-muted sm:block"><span className="block h-full rounded-full bg-primary/75" style={{ width: `${Math.max(2, (m / max) * 100)}%` }} /></span>
+                <span className="text-right whitespace-nowrap tabular-nums">{fmtMin(m)}</span>
                 <span className={cn("min-w-12 text-right text-xs whitespace-nowrap tabular-nums", d == null || Math.abs(d) < 10 ? "text-muted-foreground" : d > 0 ? "text-orange-600 dark:text-orange-400" : "text-emerald-600 dark:text-emerald-400")}>
                   {d == null ? "" : Math.abs(d) < 10 ? "差不多" : `${d > 0 ? "+" : "−"}${fmtMin(Math.abs(d))}`}
                 </span>
@@ -147,9 +143,9 @@ export function EnergyPage() {
     if (el) el.scrollLeft = el.scrollWidth;
   }, [hasE]);
 
-  // 電費比上個月同期少：噴一次彩帶（同一天只噴一次）
+  // 使用時間比上個月同期少：噴一次彩帶（同一天只噴一次）
   const fun = useFun();
-  const saved = !!e && !!e.same_period.kwh && (e.month.kwh - e.same_period.kwh) / e.same_period.kwh < -0.02;
+  const saved = !!e && !!e.same_period.hours && (e.month.hours - e.same_period.hours) / e.same_period.hours < -0.02;
   const [party, setParty] = useState(false);
   useEffect(() => {
     if (!saved || !fun) return;
@@ -163,11 +159,11 @@ export function EnergyPage() {
     return () => clearTimeout(timer);
   }, [saved, fun]);
 
-  const sub = e ? `估算：插座記錄的開機時間 × 瓦數・台電累進電價 ${fmt(e.price, 2)} 元/度（${e.season}）` : "讀取插座記錄的使用時間…";
+  const sub = e ? "插座自己記錄的開機時間（樹莓派停機時也有）" : "讀取插座記錄的使用時間…";
   if (!e)
     return (
       <>
-        <PageHeader title="用電" sub={sub} />
+        <PageHeader title="使用時間" sub={sub} />
         {err ? (
           <div className="mx-auto flex max-w-md flex-col items-center gap-3 px-6 py-20 text-center">
             <AlertCircle className="size-10 text-muted-foreground" />
@@ -180,52 +176,50 @@ export function EnergyPage() {
       </>
     );
 
-  const useKwh = e.plugs.some((p) => p.watts);
-  const unit = useKwh ? "度" : "小時";
-  const delta = e.same_period.kwh ? (e.month.kwh - e.same_period.kwh) / e.same_period.kwh : null;
+  const delta = e.same_period.hours ? (e.month.hours - e.same_period.hours) / e.same_period.hours : null;
+  const days = Math.max(1, e.day_of_month);
+  const onNow = state?.plugs.filter((p) => p.online && p.is_on).length;
 
   const series = range === "days" ? e.days : e.months;
   const bars: Bar[] = series.map((x, i) => {
     const last = i === series.length - 1;
-    const v = useKwh ? x.kwh : x.hours;
-    const cost = "cost" in x && x.cost != null ? x.cost : x.kwh * e.price;
     const when = "day" in x ? `${md(x.day)}${last ? "（今天，還沒過完）" : ""}` : `${x.month.slice(0, 4)} 年 ${Number(x.month.slice(5))} 月${last ? "（本月至今）" : ""}`;
     return {
-      v,
+      v: x.hours,
       now: last,
       label: "day" in x ? (last ? "今" : i % 5 === 4 ? String(Number(x.day.slice(8))) : "") : `${Number(x.month.slice(5))}月`,
-      tip: `${when}：${useKwh ? `${fmt(x.kwh, 1)} 度・約 ${money(cost)}・` : ""}開了 ${fmt(x.hours, 0)} 小時`,
+      tip: `${when}：開了 ${fmt(x.hours, 0)} 小時`,
     };
   });
 
-  const rmax = Math.max(0.001, ...e.rooms.map((r) => r.kwh));
-  const rtotal = e.rooms.reduce((a, r) => a + r.kwh, 0) || 1;
+  const rooms = e.rooms.map((r) => ({ name: r.name, h: r.hours ?? 0 })).sort((a, b) => b.h - a.h);
+  const rmax = Math.max(0.001, ...rooms.map((r) => r.h));
+  const rtotal = rooms.reduce((a, r) => a + r.h, 0) || 1;
   const known = e.plugs.filter((p) => p.known).sort((a, b) => (b.month_min || 0) - (a.month_min || 0));
-  const totalKwh = known.reduce((a, p) => a + (p.month_kwh || 0), 0) || 1;
   const totalMin = known.reduce((a, p) => a + (p.month_min || 0), 0) || 1;
-  const ranked = [...e.plugs].sort((a, b) => (b.month_kwh || 0) - (a.month_kwh || 0) || (b.month_min || 0) - (a.month_min || 0));
-  const insightIcon: Record<string, React.ElementType> = { always: Clock, rise: ChevronUp, unset: Zap, anomaly: TrendingUp };
-  // 重點：最耗電的裝置、用最多的一天、平均每天、上個月
+  const ranked = [...e.plugs].sort((a, b) => (b.month_min || 0) - (a.month_min || 0));
+  const insightIcon: Record<string, React.ElementType> = { always: Clock, rise: ChevronUp, anomaly: TrendingUp };
+  // 重點：開最久的裝置、開最多的一天、平均每天、上個月
   const facts: { icon: React.ElementType; k: string; v: string; plug?: string }[] = [];
   const top = ranked[0];
-  if (top?.watts && top.month_kwh) facts.push({ icon: Trophy, k: "本月最耗電", v: `${top.name}・佔 ${fmt((top.month_kwh / totalKwh) * 100)}%・${money(top.month_cost)}`, plug: top.id });
+  if (top?.known && top.month_min) facts.push({ icon: Trophy, k: "本月開最久", v: `${top.name}・${fmtMin(top.month_min)}・佔 ${fmt((top.month_min / totalMin) * 100)}%`, plug: top.id });
   const past = e.days.slice(0, -1);
-  const peak = past.reduce<(typeof past)[number] | null>((m, d) => (!m || (useKwh ? d.kwh > m.kwh : d.hours > m.hours) ? d : m), null);
-  if (peak && (useKwh ? peak.kwh : peak.hours) > 0) facts.push({ icon: CalendarDays, k: "近 30 天用最多的一天", v: useKwh ? `${md(peak.day)}・${fmt(peak.kwh, 1)} 度・約 ${money(peak.kwh * e.price)}` : `${md(peak.day)}・開了 ${fmt(peak.hours, 0)} 小時` });
-  if (useKwh) facts.push({ icon: Gauge, k: "本月平均每天", v: `${fmt(e.month.kwh / Math.max(1, e.day_of_month), 1)} 度・約 ${money(e.month.cost / Math.max(1, e.day_of_month))}` });
+  const peak = past.reduce<(typeof past)[number] | null>((m, d) => (!m || d.hours > m.hours ? d : m), null);
+  if (peak && peak.hours > 0) facts.push({ icon: CalendarDays, k: "近 30 天開最多的一天", v: `${md(peak.day)}・${fmt(peak.hours, 0)} 小時` });
+  facts.push({ icon: Gauge, k: "本月平均每天", v: `${fmt(e.month.hours / days, 0)} 小時（所有插座加起來）` });
   const lastMonth = e.months[e.months.length - 2];
-  if (useKwh && lastMonth?.kwh) facts.push({ icon: History, k: "上個月整月", v: `${fmt(lastMonth.kwh, 0)} 度${lastMonth.cost != null ? `・${money(lastMonth.cost)}` : ""}` });
+  if (lastMonth?.hours) facts.push({ icon: History, k: "上個月整月", v: `${fmt(lastMonth.hours, 0)} 小時` });
   const heatDefault = narrow ? "每一格是一天，顏色越深開越久・點格子看時數，往左滑看更早的日子" : "每一格是一天，顏色越深開越久・滑過看時數";
 
   return (
     <>
-      <PageHeader title="用電" sub={sub} />
+      <PageHeader title="使用時間" sub={sub} />
       <div className="mx-auto max-w-[112rem] space-y-4 px-4 py-4 sm:px-6 lg:px-8">
         {/* 重點數字 */}
         {/* 科技感：同一條、細線隔開；原本：四張卡片 */}
         <div className={tech ? "grid grid-cols-2 overflow-hidden rounded-xl border bg-card lg:grid-cols-4 [&>*]:border-border max-lg:[&>*:nth-child(-n+2)]:border-b [&>*:not(:last-child)]:lg:border-r max-lg:[&>*:nth-child(odd)]:border-r" : "grid grid-cols-2 gap-3 lg:grid-cols-4"}>
-          <Kpi cell={tech} label="本月至今" value={money(e.month.cost)} sub={`${fmt(e.month.kwh, 1)} 度・${e.day_of_month} 天`} />
-          <Kpi cell={tech} label="預估本月" value={money(e.projected.cost)} sub={`${fmt(e.projected.kwh, 0)} 度・照目前每天的平均推算`} />
+          <Kpi cell={tech} label="本月至今" value={<>{fmt(e.month.hours, 0)}<span className="ml-1 text-base font-normal text-muted-foreground">小時</span></>} sub={`${e.day_of_month} 天・所有插座加起來`} />
+          <Kpi cell={tech} label="平均每天" value={<>{fmt(e.month.hours / days, 0)}<span className="ml-1 text-base font-normal text-muted-foreground">小時</span></>} sub="本月到今天的平均" />
           <Kpi cell={tech}
             extra={party && <Confetti />}
             label="比上月同期"
@@ -238,9 +232,9 @@ export function EnergyPage() {
                 </span>
               )
             }
-            sub={delta == null ? "沒有上個月的資料" : `${delta > 0.02 ? "比上月同期多" : delta < -0.02 ? "比上月同期少" : "和上月同期差不多"}・上月同期 ${money(e.same_period.cost)}`}
+            sub={delta == null ? "沒有上個月的資料" : `${delta > 0.02 ? "比上月同期多" : delta < -0.02 ? "比上月同期少" : "和上月同期差不多"}・上月同期 ${fmt(e.same_period.hours, 0)} 小時`}
           />
-          <Kpi cell={tech} label="今天" value={<>{fmt(e.today.kwh, 1)}<span className="ml-1 text-base font-normal text-muted-foreground">度</span></>} sub={`約 ${money(e.today.kwh * e.price)}・到現在為止`} />
+          <Kpi cell={tech} label="今天" value={<>{fmt(e.today.hours, 0)}<span className="ml-1 text-base font-normal text-muted-foreground">小時</span></>} sub={onNow != null ? `目前 ${onNow} 個開著` : "到現在"} />
         </div>
 
         <div className="grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
@@ -249,11 +243,11 @@ export function EnergyPage() {
             {/* 趨勢 */}
             <Card className="gap-0 overflow-hidden py-0">
               <CardTitle
-                title={`${useKwh ? "用電" : "開機時數"}（${unit}）`}
+                title="開機時數（小時）"
                 end={<div className="w-56"><Segmented label="期間" value={range} onChange={setRange} options={[["days", "近 30 天"], ["months", "近 12 個月"]]} /></div>}
               />
               <div className="px-4 pt-3 pb-4 sm:px-5">
-                <BarChart items={bars} unit={unit} name={useKwh ? "每天用電" : "每天開機時數"} height="h-56"
+                <BarChart items={bars} unit="小時" name="每天開機時數" height="h-56"
                   selected={range === "days" ? pickDay : null} onSelect={range === "days" ? setPickDay : undefined} />
                 {range === "days" && pickDay != null && <DayDetail e={e} i={pickDay} onClose={() => setPickDay(null)} onOpen={setDev} />}
               </div>
@@ -292,21 +286,20 @@ export function EnergyPage() {
           <div className="flex min-w-0 flex-col gap-4">
             {/* 依區域：一區一行 */}
             <Card className="gap-0 overflow-hidden py-0">
-              <CardTitle title="本月依區域" end={<span className="text-sm text-muted-foreground tabular-nums">共 {fmt(rtotal, 1)} 度</span>} />
-              <div className="grid grid-cols-[auto_minmax(2rem,1fr)_auto_auto] items-center gap-x-3 gap-y-2.5 px-4 py-3.5 sm:px-5">
-                {e.rooms.map((r) => (
+              <CardTitle title="本月依區域" end={<span className="text-sm text-muted-foreground tabular-nums">共 {fmt(rtotal, 0)} 小時</span>} />
+              <div className="grid grid-cols-[auto_minmax(2rem,1fr)_auto] items-center gap-x-3 gap-y-2.5 px-4 py-3.5 sm:px-5">
+                {rooms.map((r) => (
                   <Fragment key={r.name}>
-                    <span className="truncate font-medium">{r.name}<span className="ml-1.5 text-sm font-normal text-muted-foreground tabular-nums">{fmt((r.kwh / rtotal) * 100)}%</span></span>
-                    <span className="h-2.5 overflow-hidden rounded-full bg-muted"><span className="block h-full rounded-full bg-primary/80" style={{ width: `${Math.max(1, (r.kwh / rmax) * 100)}%` }} /></span>
-                    <span className="text-right font-semibold tabular-nums">{fmt(r.kwh, 1)} 度</span>
-                    <span className="text-right text-sm text-muted-foreground tabular-nums">{money(r.kwh * e.price)}</span>
+                    <span className="truncate font-medium">{r.name}<span className="ml-1.5 text-sm font-normal text-muted-foreground tabular-nums">{fmt((r.h / rtotal) * 100)}%</span></span>
+                    <span className="h-2.5 overflow-hidden rounded-full bg-muted"><span className="block h-full rounded-full bg-primary/80" style={{ width: `${Math.max(1, (r.h / rmax) * 100)}%` }} /></span>
+                    <span className="text-right font-semibold tabular-nums">{fmt(r.h, 0)} 小時</span>
                   </Fragment>
                 ))}
               </div>
             </Card>
 
             {/* 重點與提醒 */}
-            <Card className="gap-0 overflow-hidden py-0">
+            <Card className="flex-1 gap-0 overflow-hidden py-0">
               <CardTitle title="重點與提醒" />
               <div className="px-2 py-2">
                 {e.insights.map((x, i) => {
@@ -351,20 +344,6 @@ export function EnergyPage() {
               </div>
             </Card>
 
-            {/* 電費設定 */}
-            <Card className="flex-1 gap-0 overflow-hidden py-0">
-              <CardTitle title="電費設定" end={<span className="text-sm text-muted-foreground tabular-nums">目前 {fmt(e.price, 2)} 元/度・{e.season}</span>} />
-              <div className="flex flex-wrap items-center gap-3 px-4 py-3 sm:px-5">
-                <div className="min-w-0 flex-1 basis-40">
-                  <div className="font-medium">家裡每月用電</div>
-                  <div className="text-sm leading-relaxed text-muted-foreground">電費單上的度數（兩個月一期就除以 2），決定電價級距；夏月 6～9 月較貴</div>
-                </div>
-                <SettingNumber k="household_monthly_kwh" step={10} unit="度" label="家裡每月用電" />
-              </div>
-              <p className="border-t px-4 py-3 text-sm leading-relaxed text-muted-foreground sm:px-5">
-                金額都是估算：開著的時間 × 設定的瓦數。時間是插座自己記錄的，樹莓派停機時也有。
-              </p>
-            </Card>
           </div>
         </div>
 
@@ -374,21 +353,20 @@ export function EnergyPage() {
           <div className="grid md:grid-cols-2">
             {ranked.map((p) => {
               const I = deviceIcon(p);
-              const share = p.watts ? (p.month_kwh || 0) / totalKwh : (p.month_min || 0) / totalMin;
+              const share = (p.month_min || 0) / totalMin;
               const ch = p.known && p.same_min > 30 ? (p.month_min - p.same_min) / p.same_min : null;
               return (
                 <button
                   key={p.id}
                   onClick={() => setDev(p.id)}
-                  aria-label={`${p.name}的用電明細`}
+                  aria-label={`${p.name}的使用時間明細`}
                   className="flex w-full items-center gap-3 border-b px-4 py-3 text-left transition-colors hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none active:bg-muted sm:px-5 md:odd:border-r"
                 >
                   <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted text-muted-foreground"><I className="size-5" /></span>
                   <span className="min-w-0 flex-1 space-y-1">
                     <span className="block truncate font-medium">{p.name}</span>
                     <span className="flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
-                      {p.known && <span>開了 {fmtMin(p.month_min)}</span>}
-                      {!!p.watts && <span>{fmt(p.watts)} W</span>}
+                      {p.known && <span>平均每天 {fmt(p.month_min / 60 / days, 1)} 小時</span>}
                       {ch != null && (
                         Math.abs(ch) < 0.05 ? <span>持平</span> : (
                           <span className={cn("inline-flex items-center font-medium", ch > 0 ? "text-orange-600 dark:text-orange-400" : "text-emerald-600 dark:text-emerald-400")}>
@@ -403,13 +381,8 @@ export function EnergyPage() {
                   <span className="shrink-0 text-right">
                     {!p.known ? (
                       <span className="text-sm text-muted-foreground">讀不到</span>
-                    ) : p.watts ? (
-                      <>
-                        <span className="block font-semibold tabular-nums">{fmt(p.month_kwh, 1)} 度</span>
-                        <span className="block text-sm text-muted-foreground tabular-nums">{money(p.month_cost)}</span>
-                      </>
                     ) : (
-                      <span className="rounded-full bg-muted px-2.5 py-1 text-sm">設定瓦數</span>
+                      <span className="block font-semibold tabular-nums">{fmt(p.month_min / 60, 0)} 小時</span>
                     )}
                   </span>
                 </button>
@@ -419,7 +392,7 @@ export function EnergyPage() {
         </Card>
       </div>
 
-      <EnergyDeviceSheet id={dev} energy={e} plug={state?.plugs.find((p) => p.id === dev)} onClose={() => setDev(null)} onChanged={load} />
+      <EnergyDeviceSheet id={dev} energy={e} plug={state?.plugs.find((p) => p.id === dev)} onClose={() => setDev(null)} />
     </>
   );
 }

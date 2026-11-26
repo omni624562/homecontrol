@@ -152,7 +152,7 @@ const FEATURES: [string, string[]][] = [
   ["家中地圖", ["page:map", "api:put_floorplan", "api:put_floorplan_image", "api:delete_floorplan_image"]],
   ["攝影機", ["page:cameras", "view:camera", "api:cameras_*"]],
   ["認臉", ["api:faces_*"]],
-  ["用電", ["page:energy"]],
+  ["使用時間", ["page:energy"]],
   ["網路裝置", ["page:net", "api:edit_net_device"]],
   ["誰在家、外出模式", ["api:add_person", "api:edit_person", "api:delete_person", "api:set_away"]],
   ["Wi-Fi 感測、動作規則", ["api:set_sensing", "api:set_motion_rules"]],
