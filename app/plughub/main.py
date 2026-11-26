@@ -79,7 +79,7 @@ from . import tls as tlsmod
 from .locate import MIN_SAMPLES as LOCATE_MIN, TRAIN_S as LOCATE_TRAIN_S
 from .assistant import MODELS as ASSISTANT_MODELS, Assistant
 from .claude_vision import FEATURES as CV_FEATURES, ClaudeVision
-from .hub import APP_VERSION, GESTURES as GESTURE_NAMES, SOURCE, Hub, Locked, arrive_rule
+from .hub import APP_VERSION, SOURCE, Hub, Locked, arrive_rule
 from .summary import build_summary
 from .notify import LineError, Notifier
 from .store import ICONS, Store, _hms, usage_clean, usage_watts
@@ -1319,44 +1319,6 @@ async def cameras_empty_cancel(cam_id: str, request: Request) -> dict[str, Any]:
         raise HTTPException(404, "找不到這台攝影機")
     hub.empty_cancel(cam_id)
     return {"cameras": hub.cameras.public()}
-
-
-GESTURE_KEYS = set(GESTURE_NAMES)
-
-
-@app.get("/api/gestures")
-async def gestures_get(request: Request) -> dict[str, Any]:
-    """手勢遙控的設定＋那台攝影機現在看到的手勢（「試試看」用）。"""
-    _need_view(request)
-    g = store.data["settings"].get("gestures") or {"on": False, "cam": None, "map": {}}
-    if any(not k.startswith("f_") for k in g.get("map") or {}):  # 舉手的手勢拿掉了：舊設定清掉
-        g["map"] = {k: v for k, v in g["map"].items() if k.startswith("f_")}
-        store.data["settings"]["gestures"] = g
-        store.save()
-    st = hub.cameras.state.get(g.get("cam") or "", {})
-    pl = st.get("pose_last") or {}
-    fresh = time.time() - float(pl.get("t") or 0) < 3
-    people = [{"kp": p.get("kp"), "box": p.get("box")} for p in (pl.get("people") or []) if p.get("kp")] if fresh else []
-    return {**g, "now": st.get("gesture_now"), "live": st.get("engine") == "stream", "people": people}
-
-
-@app.put("/api/gestures")
-async def gestures_put(request: Request, body: dict = Body(...)) -> dict[str, Any]:
-    """{"on", "cam", "map": {手指手勢（hub.GESTURES 的 key）: {"type": "plug"（切換）|"plug_on"|"plug_off"|"scene"|"off", "id"} | null}}"""
-    _need_view(request)
-    cams = {c["id"] for c in hub.cameras.list}
-    m = {}
-    for k, a in (body.get("map") or {}).items():
-        if k not in GESTURE_KEYS or not isinstance(a, dict):
-            continue
-        t = a.get("type")
-        if t in ("plug", "plug_on", "plug_off") and a.get("id") in hub.plugs or t == "scene" and store.scene(a.get("id") or "") or t == "off":
-            m[k] = {"type": t, "id": a.get("id") if t != "off" else None}
-    store.data["settings"]["gestures"] = {"on": bool(body.get("on")), "cam": body.get("cam") if body.get("cam") in cams else None, "map": m}
-    store.save()
-    hub.gpu._pushed = None  # 馬上告訴 Jetson 要不要看手勢
-    await asyncio.to_thread(hub.gpu.push_streams, hub.cameras.list)
-    return await gestures_get(request)
 
 
 @app.get("/api/activity")

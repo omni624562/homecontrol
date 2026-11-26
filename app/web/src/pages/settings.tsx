@@ -460,7 +460,7 @@ function TlsCard() {
   return (
     <SCard id="s-tls" icon={Lock} title="安全連線（HTTPS）" badge={info.secure ? <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300">現在是 HTTPS</Badge> : undefined}>
       <p className="px-4 pt-3 text-sm leading-relaxed text-muted-foreground sm:px-5">
-        瀏覽器只在 HTTPS 下讓網頁用鏡頭、麥克風（手勢遙控之類的功能）。樹莓派做了一張家裡專用的憑證，每台要用的電腦、手機裝一次就好；沒裝的照常用原本的網址，不受影響。
+        瀏覽器只在 HTTPS 下讓網頁用鏡頭、麥克風。樹莓派做了一張家裡專用的憑證，每台要用的電腦、手機裝一次就好；沒裝的照常用原本的網址，不受影響。
       </p>
       {!info.ready ? (
         <p className="px-4 py-3 text-sm text-red-600 sm:px-5 dark:text-red-400">HTTPS 還沒準備好{info.error ? `：${info.error}` : "（重新啟動後會自動產生憑證）"}</p>
@@ -612,15 +612,12 @@ function CameraLinkCard() {
   );
 }
 
-// 自動化：手勢、晚安、停電恢復＋其他頁面的自動化捷徑
+// 自動化：回家自動開、晚安、停電恢復＋其他頁面的自動化捷徑
 function AutoCards({ s }: { s: HubState }) {
   return (
     <>
       <SCard id="s-arrive" icon={House} title="回家自動開">
         <ArriveRules s={s} />
-      </SCard>
-      <SCard id="s-gesture" icon={Zap} title="手勢遙控">
-        <GestureRows />
       </SCard>
       <GoodnightCard s={s} />
       <SCard id="s-auto" icon={CalendarClock} title="其他自動化">
@@ -794,139 +791,6 @@ function RecordingRows() {
   );
 }
 
-// 手勢遙控：對著攝影機舉手 3 秒，開關插座、執行情境或全部關掉
-type GAct = { type: "plug" | "plug_on" | "plug_off" | "scene" | "off"; id: string | null } | null;
-interface GestureCfg { on: boolean; cam: string | null; map: Record<string, GAct>; now?: { name: string; held: number; need?: number; hand?: { points: number[][]; px: number; presence: number } | null } | null; live?: boolean; people?: { kp: number[][] }[] }
-// COCO 17 點的骨架連線
-const BONES: [number, number][] = [[5, 6], [5, 7], [7, 9], [6, 8], [8, 10], [5, 11], [6, 12], [11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [0, 5], [0, 6]];
-
-// 手勢「看攝影畫面」：攝影機現在的畫面＋ Jetson 看到的骨架和手指
-function GestureLive({ cam, g }: { cam: string; g: GestureCfg }) {
-  const [t, setT] = useState(Date.now());
-  useEffect(() => { const id = setInterval(() => setT(Date.now()), 1000); return () => clearInterval(id); }, []);
-  const p = g.people?.[0];
-  const ok = (i: number) => !!p && p.kp[i][2] >= 0.3;
-  const sh = p && ok(5) && ok(6) ? (p.kp[5][0] + p.kp[6][0]) / 2 : null;
-  const hip = p && ok(11) && ok(12) ? (p.kp[11][0] + p.kp[12][0]) / 2 : null;
-  const lying = sh != null && hip != null && hip - sh < 0.05;
-  const hand = g.now?.hand && g.now.hand.points?.length === 21 ? g.now.hand : null;
-  const need = g.now?.need || 3;
-  return (
-    <div className="space-y-2">
-      <div className="relative aspect-video w-full max-w-md overflow-hidden rounded-lg bg-muted">
-        <img src={`/api/cameras/${cam}/snapshot.jpg?t=${t}`} alt="攝影機現在的畫面" className="size-full object-cover" />
-        {p && (
-          <svg viewBox="0 0 1 1" preserveAspectRatio="none" className="absolute inset-0 size-full" aria-hidden>
-            {BONES.filter(([a, b]) => ok(a) && ok(b)).map(([a, b]) => (
-              <line key={`${a}-${b}`} x1={p.kp[a][1]} y1={p.kp[a][0]} x2={p.kp[b][1]} y2={p.kp[b][0]} stroke="#38bdf8" strokeWidth={3} vectorEffect="non-scaling-stroke" />
-            ))}
-          </svg>
-        )}
-        {hand && (
-          <svg viewBox="0 0 1 1" preserveAspectRatio="none" className="absolute inset-0 size-full" aria-hidden>
-            {HAND_BONES.map(([a, b]) => <line key={`${a}-${b}`} x1={hand.points[a][0]} y1={hand.points[a][1]} x2={hand.points[b][0]} y2={hand.points[b][1]} stroke="#4ade80" strokeWidth={2} vectorEffect="non-scaling-stroke" />)}
-            {hand.points.map((q, i) => <ellipse key={i} cx={q[0]} cy={q[1]} rx={0.004} ry={0.007} fill="#4ade80" />)}
-          </svg>
-        )}
-        {g.now && (
-          <div className="absolute inset-x-2 bottom-2 rounded-md bg-black/60 px-2 py-1 text-xs text-white">
-            {GESTURES.find(([k]) => k === g.now!.name)?.slice(1).join(" ")}{hand ? `・手 ${hand.px} 像素` : ""}
-            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-white/30"><div className="h-full bg-emerald-400" style={{ width: `${Math.min(100, (g.now.held / need) * 100)}%` }} /></div>
-          </div>
-        )}
-      </div>
-      <p className="text-sm" aria-live="polite">
-        {!g.live ? "這台還沒在 Jetson 上即時看，等一下再試"
-          : !p ? "沒看到人：站到攝影機看得到的地方（上半身要入鏡）"
-          : lying ? "看起來是躺著或斜靠：手勢要坐正或站著比較認得出來"
-          : g.now ? `看到「${GESTURES.find(([k]) => k === g.now!.name)?.[2]}」${g.now.held >= need ? "・算一次了" : `・再維持 ${Math.max(0, need - g.now.held).toFixed(1)} 秒`}`
-          : "看到人・把手舉到胸前、掌心朝攝影機比手勢（太遠認不出來）"}
-      </p>
-      <p className="text-xs text-muted-foreground">藍線是 Jetson 看到的身體骨架（大約慢半秒）；綠色細線是認出來的手指。</p>
-    </div>
-  );
-}
-const FINGER_GESTURES: [string, string, string][] = [["f_open", "✋", "張開手掌"], ["f_fist", "✊", "握拳"], ["f_v", "✌️", "比 YA"], ["f_point", "☝️", "比 1"],
-  ["f_three", "🤟", "比 3"], ["f_rock", "🤘", "搖滾"], ["f_call", "🤙", "打電話"], ["f_thumbs", "👍", "比讚"]];
-const GESTURES = FINGER_GESTURES;
-// 手的 21 點連線（MediaPipe）
-const HAND_BONES: [number, number][] = [[0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8], [5, 9], [9, 10], [10, 11], [11, 12], [9, 13], [13, 14], [14, 15], [15, 16], [13, 17], [17, 18], [18, 19], [19, 20], [0, 17]];
-function GestureRows() {
-  const { state } = useHub();
-  const [g, setG] = useState<GestureCfg | null>(null);
-  const [cams, setCams] = useState<{ id: string; name: string }[]>([]);
-  const [trying, setTrying] = useState(0);
-  useEffect(() => {
-    api<GestureCfg>("GET", "/api/gestures").then(setG).catch(() => setG(null));
-    api<{ cameras: { id: string; name: string }[] }>("GET", "/api/cameras").then((r) => setCams(r.cameras)).catch(() => {});
-  }, []);
-  useEffect(() => {
-    if (!trying) return;
-    const t = setInterval(() => {
-      if (Date.now() > trying) { setTrying(0); return; }
-      api<GestureCfg>("GET", "/api/gestures").then(setG).catch(() => {});
-    }, 500);
-    return () => clearInterval(t);
-  }, [trying]);
-  if (!g || !cams.length) return null;
-  const put = async (patch: Partial<GestureCfg>, ok = "已更新") => {
-    try {
-      setG(await api<GestureCfg>("PUT", "/api/gestures", { on: g.on, cam: g.cam, map: g.map, ...patch }));
-      toast.success(ok);
-    } catch (e) {
-      toast.error("沒有成功", { description: (e as Error).message });
-    }
-  };
-  const plugs = state?.plugs || [], scenes = state?.scenes || [];
-  const val = (a: GAct) => (!a ? "_none" : a.type === "off" ? "off" : `${a.type}:${a.id}`);
-  const parse = (v: string): GAct => (v === "_none" ? null : v === "off" ? { type: "off", id: null } : { type: v.split(":")[0] as "plug" | "plug_on" | "plug_off" | "scene", id: v.slice(v.indexOf(":") + 1) });
-  return (
-    <>
-      <SRow label="手勢遙控" hint="對著攝影機比手指，開關電器或執行情境；同一個手勢 10 秒內只算一次">
-        <Switch checked={g.on} onCheckedChange={(v) => put({ on: v, cam: g.cam || cams[cams.length - 1]?.id || null }, v ? "手勢遙控打開了" : "手勢遙控關了")} aria-label="手勢遙控" />
-      </SRow>
-      {g.on && (
-        <div className="space-y-3 border-t px-4 py-3.5 sm:px-5">
-          <label className="flex items-center gap-2 text-sm"><span className="w-16 shrink-0 text-muted-foreground">用哪台</span>
-            <Select value={g.cam || ""} onValueChange={(v) => put({ cam: v })}>
-              <SelectTrigger className="h-8 w-40 bg-background" aria-label="用哪台攝影機"><SelectValue placeholder="選攝影機" /></SelectTrigger>
-              <SelectContent>{cams.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
-            </Select>
-          </label>
-          {([["手舉起來（手腕比手肘高）、掌心朝攝影機，維持 1.5 秒", FINGER_GESTURES]] as const).map(([head, list]) => (
-            <div key={head} className="space-y-2">
-              <div className="text-xs font-semibold text-muted-foreground">{head}</div>
-              {list.map(([k, icon, text]) => (
-                <div key={k} className="flex flex-wrap items-center gap-2 text-sm">
-                  <span className={cn("flex size-10 items-center justify-center rounded-lg border text-xl", g.now?.name === k && "border-primary bg-primary/10")} aria-hidden>{icon}</span>
-                  <span className="w-32 shrink-0">{text}</span>
-                  <Select value={val(g.map[k] || null)} onValueChange={(v) => put({ map: { ...g.map, [k]: parse(v) } })}>
-                    <SelectTrigger className="h-8 min-w-0 flex-1 bg-background sm:max-w-56" aria-label={`${text}要做什麼`}><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="_none">不做事</SelectItem>
-                      <SelectItem value="off">全部關掉</SelectItem>
-                      {plugs.map((p) => <SelectItem key={`t${p.id}`} value={`plug:${p.id}`}>開關 {p.name}</SelectItem>)}
-                      {plugs.map((p) => <SelectItem key={`n${p.id}`} value={`plug_on:${p.id}`}>打開 {p.name}</SelectItem>)}
-                      {plugs.map((p) => <SelectItem key={`f${p.id}`} value={`plug_off:${p.id}`}>關掉 {p.name}</SelectItem>)}
-                      {scenes.map((sc) => <SelectItem key={sc.id} value={`scene:${sc.id}`}>執行 {sc.name}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-              ))}
-            </div>
-          ))}
-          <div className="flex flex-wrap items-center gap-3">
-            <Button variant="outline" size="sm" className="bg-background" disabled={!!trying || !g.cam} onClick={() => setTrying(Date.now() + 60000)}>看攝影畫面</Button>
-            {trying ? <Button variant="ghost" size="sm" onClick={() => setTrying(0)}>停止</Button> : null}
-          </div>
-          {trying && g.cam ? <GestureLive cam={g.cam} g={g} /> : null}
-          <p className="text-xs text-muted-foreground">做到了會記在攝影機的紀錄裡；開關插座的話，電器本身會有反應。看攝影畫面的時候比手勢也會真的開關，想先練習就先選「不做事」。</p>
-        </div>
-      )}
-    </>
-  );
-}
-
 // 下方分頁放哪幾頁：點一下加入／拿掉，最多 4 個，其他在「更多」
 function BarTabsPicker() {
   const chosen = useBarTabs();
@@ -1014,7 +878,7 @@ function GoodnightCard({ s }: { s: HubState }) {
 type CatKey = "notify" | "auto" | "cam" | "ai" | "life" | "home" | "link" | "security" | "other";
 const CATS: { key: CatKey; title: string; hint: string; icon: React.ElementType }[] = [
   { key: "notify", title: "通知與提醒", hint: "LINE、開太久、天氣、停電、每週摘要", icon: Bell },
-  { key: "auto", title: "自動化", hint: "手勢遙控、晚安檢查、停電恢復、排程捷徑", icon: Zap },
+  { key: "auto", title: "自動化", hint: "回家自動開、晚安檢查、停電恢復、排程捷徑", icon: Zap },
   { key: "cam", title: "攝影機與錄影", hint: "誰能看、錄影留多久、夜間增強", icon: Cctv },
   { key: "ai", title: "Claude（AI）", hint: "問家裡、看攝影機畫面、每月上限", icon: MessageSquareText },
   { key: "life", title: "生活資訊", hint: "天氣、垃圾車、公車、小動畫", icon: CloudSun },
@@ -1024,7 +888,7 @@ const CATS: { key: CatKey; title: string; hint: string; icon: React.ElementType 
   { key: "other", title: "外觀與其他", hint: "畫面風格、手機選單、待機畫面、使用統計", icon: Palette },
 ];
 const CARD_CAT: Record<string, string> = {
-  "s-notify": "notify", "s-cam": "cam", "s-ask": "ai", "s-night": "auto", "s-arrive": "auto", "s-gesture": "auto", "s-auto": "auto", "s-life": "life", "s-dev": "home",
+  "s-notify": "notify", "s-cam": "cam", "s-ask": "ai", "s-night": "auto", "s-arrive": "auto", "s-auto": "auto", "s-life": "life", "s-dev": "home",
   "s-google": "link", "s-remote": "link", "s-jetson": "link",
   "s-sys": "security", "s-tls": "security", "s-look": "other", "s-usage": "other", "s-setup": "setup",
 };
@@ -1034,7 +898,7 @@ const SEARCH: [string, string, string][] = [
   ["天氣特報 颱風", "notify", "s-notify"],
   ["空氣品質 AQI", "notify", "s-notify"], ["用電異常", "notify", "s-notify"], ["電費跳級", "notify", "s-notify"], ["功率過高 待機門檻", "notify", "s-notify"],
   ["每週摘要", "notify", "s-notify"], ["每月報告", "notify", "s-notify"],
-  ["攝影機 誰可以看 權限", "cam", "s-cam"], ["錄影 保留 硬碟", "cam", "s-cam"], ["夜間畫面增強", "cam", "s-cam"], ["手勢遙控", "auto", "s-gesture"], ["Jetson GPU", "link", "s-jetson"],
+  ["攝影機 誰可以看 權限", "cam", "s-cam"], ["錄影 保留 硬碟", "cam", "s-cam"], ["夜間畫面增強", "cam", "s-cam"], ["Jetson GPU", "link", "s-jetson"],
   ["問家裡 Claude 金鑰 模型 上限", "ai", "s-ask"], ["Claude 看攝影機畫面", "ai", "s-ask"],
   ["回家自動開 回家開燈", "auto", "s-arrive"], ["晚安檢查 睡前", "auto", "s-night"], ["排程 動靜自動化", "auto", "s-auto"], ["天氣 授權碼 氣象署", "life", "s-life"], ["垃圾車 公車 YouBike", "life", "s-life"], ["趣味小動畫", "life", "s-life"],
   ["裝置檢查 網路", "home", "s-dev"], ["停電後恢復插座", "auto", "s-auto"], ["Wi-Fi 感測", "home", "s-dev"], ["TP-Link 雲端", "home", "s-dev"], ["找新插座", "home", "s-dev"],
@@ -1066,9 +930,7 @@ function SettingsHome({ view, go, state }: { view: string; go: (to: string) => v
   const [rec, setRec] = useState<{ configured: boolean; cams?: Record<string, { recording: boolean }> } | null>(null);
   const [cv, setCv] = useState<{ on: boolean } | null>(null);
   const [tls, setTls] = useState<{ secure: boolean } | null>(null);
-  const [gest, setGest] = useState<{ on: boolean } | null>(null);
   useEffect(() => {
-    api<typeof gest>("GET", "/api/gestures").then(setGest).catch(() => {});
     api<typeof rec>("GET", "/api/recorder").then(setRec).catch(() => {});
     api<typeof cv>("GET", "/api/claude-vision").then(setCv).catch(() => {});
     api<typeof tls>("GET", "/api/tls").then(setTls).catch(() => {});
@@ -1079,7 +941,7 @@ function SettingsHome({ view, go, state }: { view: string; go: (to: string) => v
   const chip: Record<CatKey, [string, "ok" | "warn" | "ai" | "off"] | null> = {
     notify: state.notify?.error ? ["LINE 沒送出去", "warn"] : state.notify?.line ? ["LINE 正常", "ok"] : ["LINE 還沒設定", "warn"],
     cam: rec?.configured ? [`${recOn} 台在錄`, recOn ? "ok" : "warn"] : null,
-    auto: gest ? (gest.on ? ["手勢：開", "ok"] : gn.mode === "none" ? ["不做晚安檢查", "off"] : [`${gn.at || "23:30"} 晚安檢查`, "ok"]) : null,
+    auto: gn.mode === "none" ? ["不做晚安檢查", "off"] : [`${gn.at || "23:30"} 晚安檢查`, "ok"],
     ai: cv ? (cv.on ? ["看畫面：開", "ai"] : ["看畫面：關", "off"]) : null,
     life: null,
     home: [`${state.plugs.filter((p) => p.online).length}/${state.plugs.length} 個插座在線`, state.plugs.every((p) => p.online) ? "ok" : "warn"],

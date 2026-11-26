@@ -14,7 +14,7 @@ export interface SetupItem { id: string; title: string; hint: string; done: bool
 function withHttps(items: SetupItem[]): SetupItem[] {
   // 這一項看的是「現在這台裝置」，伺服器不知道，畫面自己加
   const secure = location.protocol === "https:";
-  return [...items, { id: "https", title: "這台裝置改用 HTTPS", hint: secure ? "這台已經是安全連線" : "裝一次憑證，之後手勢遙控之類用鏡頭的功能才能用", done: secure, href: "#settings/s-tls" }];
+  return [...items, { id: "https", title: "這台裝置改用 HTTPS", hint: secure ? "這台已經是安全連線" : "裝一次憑證，連線加密、用鏡頭的功能也才能用", done: secure, href: "#settings/s-tls" }];
 }
 
 const HTTPS_SKIP = "setup-https-skip";
