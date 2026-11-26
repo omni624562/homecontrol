@@ -110,7 +110,7 @@ class PlugMeta:
 
 # 裝置可以選的圖示（前端 components/icons.tsx 的 DEVICE_ICONS 要一致）
 ICONS = (
-    "lamp-floor", "lamp-desk", "lamp-ceiling", "lamp-wall", "led-strip", "bulb", "sparkles",
+    "lamp-floor", "lamp-desk", "lamp-ceiling", "lamp-wall", "downlight", "led-strip", "bulb", "sparkles",
     "fan", "aircon", "heater", "tv", "monitor", "laptop", "speaker", "game", "router",
     "rice", "air-fryer", "microwave", "coffee", "fridge", "washer", "water-heater", "printer",
     "water", "plant", "fish", "tree", "charge", "camera", "outlet",
