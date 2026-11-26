@@ -108,7 +108,7 @@ class PlugMeta:
 ICONS = (
     "lamp-floor", "lamp-desk", "lamp-ceiling", "lamp-wall", "led-strip", "bulb", "sparkles",
     "fan", "aircon", "heater", "tv", "monitor", "laptop", "speaker", "game", "router",
-    "rice", "microwave", "coffee", "fridge", "washer", "water-heater", "printer",
+    "rice", "air-fryer", "microwave", "coffee", "fridge", "washer", "water-heater", "printer",
     "water", "plant", "fish", "tree", "charge", "camera", "outlet",
 )
 

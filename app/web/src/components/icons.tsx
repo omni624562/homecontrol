@@ -27,6 +27,14 @@ export const LedStrip = createLucideIcon("led-strip", [
   ["path", { d: "m19 6.5-2 3", key: "l9" }],
 ]);
 
+// 氣炸鍋：上面旋鈕、下面抽屜；lucide 沒有
+export const AirFryer = createLucideIcon("air-fryer", [
+  ["path", { d: "M7 2h10a3 3 0 0 1 3 3v14a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V5a3 3 0 0 1 3-3z", key: "f1" }],
+  ["path", { d: "M4 10h16", key: "f2" }],
+  ["circle", { cx: "12", cy: "6", r: "1.5", key: "f3" }],
+  ["path", { d: "M9.5 14.5h5", key: "f4" }],
+]);
+
 // 裝置可以自己選的圖示（代碼要跟後端 store.ICONS 一致）
 export const DEVICE_ICONS: { key: string; label: string; group: "燈" | "家電" | "其他"; icon: LucideIcon }[] = [
   { key: "lamp-floor", label: "立燈", group: "燈", icon: LampFloor },
@@ -46,6 +54,7 @@ export const DEVICE_ICONS: { key: string; label: string; group: "燈" | "家電"
   { key: "game", label: "遊戲機", group: "家電", icon: Gamepad2 },
   { key: "router", label: "路由器", group: "家電", icon: Router },
   { key: "rice", label: "電鍋", group: "家電", icon: CookingPot },
+  { key: "air-fryer", label: "氣炸鍋", group: "家電", icon: AirFryer },
   { key: "microwave", label: "微波爐", group: "家電", icon: Microwave },
   { key: "coffee", label: "咖啡機", group: "家電", icon: Coffee },
   { key: "fridge", label: "冰箱", group: "家電", icon: Refrigerator },
@@ -80,6 +89,7 @@ const GUESS: [RegExp, string][] = [
   [/遊戲|game|ps5/, "game"],
   [/路由|分享器|router|modem/, "router"],
   [/電鍋|rice|cooker/, "rice"],
+  [/氣炸|fryer/, "air-fryer"],
   [/微波|microwave/, "microwave"],
   [/咖啡|coffee/, "coffee"],
   [/冰箱|fridge/, "fridge"],
