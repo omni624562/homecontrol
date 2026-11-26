@@ -61,11 +61,18 @@ function useMenu(): boolean {
   return useSyncExternalStore((f) => { menuListeners.add(f); return () => { menuListeners.delete(f); }; }, () => menuOpen, () => false);
 }
 
+// 標誌用「家」字（不用房子圖示：跟選單的「首頁」太像會按錯）；點了一樣回首頁
 function Logo() {
   return (
-    <div className="logo-mark flex size-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-sm">
-      <Home className="size-5" />
-    </div>
+    <a
+      href="#plugs"
+      onClick={() => setMenu(false)}
+      aria-label="回首頁"
+      title="回首頁"
+      className="logo-mark flex size-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 text-[1.05rem] font-bold text-white shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      家
+    </a>
   );
 }
 
