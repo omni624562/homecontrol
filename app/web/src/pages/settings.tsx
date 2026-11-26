@@ -894,9 +894,8 @@ const CARD_CAT: Record<string, string> = {
 };
 // 搜尋：[關鍵字, 分類, 卡片 id]
 const SEARCH: [string, string, string][] = [
-  ["LINE 手機通知", "notify", "s-notify"], ["開太久提醒", "notify", "s-notify"], ["下雨提醒 帶傘", "notify", "s-notify"],
-  ["天氣特報 颱風", "notify", "s-notify"],
-  ["空氣品質 AQI", "notify", "s-notify"], ["用電異常", "notify", "s-notify"], ["電費跳級", "notify", "s-notify"], ["功率過高 待機門檻", "notify", "s-notify"],
+  ["LINE 手機通知", "notify", "s-notify"], ["開太久提醒", "notify", "s-notify"],
+  ["用電異常", "notify", "s-notify"], ["電費跳級", "notify", "s-notify"], ["功率過高 待機門檻", "notify", "s-notify"],
   ["每週摘要", "notify", "s-notify"], ["每月報告", "notify", "s-notify"],
   ["攝影機 誰可以看 權限", "cam", "s-cam"], ["錄影 保留 硬碟", "cam", "s-cam"], ["夜間畫面增強", "cam", "s-cam"], ["Jetson GPU", "link", "s-jetson"],
   ["問家裡 Claude 金鑰 模型 上限", "ai", "s-ask"], ["Claude 看攝影機畫面", "ai", "s-ask"],
@@ -1059,7 +1058,7 @@ export function SettingsPage() {
   const metered = state.plugs.some((p) => p.mode === "metered");
   const bound = cloudBound(state.plugs).length;
   const weekly = set.weekly !== false;
-  const remind = (set.remind || {}) as { long_on?: boolean; rain?: boolean; warn?: boolean; air?: boolean; anomaly?: boolean; tier?: boolean };
+  const remind = (set.remind || {}) as { long_on?: boolean; anomaly?: boolean; tier?: boolean };
   const putRemind = (k: keyof typeof remind, v: boolean, label: string) => put({ remind: { [k]: v } }, `${label}${v ? "已打開" : "已關閉"}`);
   const notifyCard = (
           <SCard id="s-notify" icon={Bell} title="提醒與通知">
@@ -1068,15 +1067,6 @@ export function SettingsPage() {
             </SRow>
             <SRow label="開太久也通知手機" hint="每次開著只講一次；常開的、「出門」情境裡設成不動的不算">
               <Switch checked={remind.long_on !== false} onCheckedChange={(v) => putRemind("long_on", v, "開太久通知")} aria-label="開太久也通知手機" />
-            </SRow>
-            <SRow label="早上下雨提醒" hint="今天白天降雨機率 60% 以上，早上 7 點通知帶傘">
-              <Switch checked={remind.rain !== false} onCheckedChange={(v) => putRemind("rain", v, "下雨提醒")} aria-label="早上下雨提醒" />
-            </SRow>
-            <SRow label="天氣特報" hint="氣象署對你家縣市發布豪雨、颱風、低溫、強風等特報時通知（每一則講一次）">
-              <Switch checked={remind.warn !== false} onCheckedChange={(v) => putRemind("warn", v, "天氣特報通知")} aria-label="天氣特報通知" />
-            </SRow>
-            <SRow label="明天空氣品質不好" hint="明天你家空品區預報 AQI 超過 100，前一晚 8 點通知">
-              <Switch checked={remind.air !== false} onCheckedChange={(v) => putRemind("air", v, "空品通知")} aria-label="明天空氣品質不好通知" />
             </SRow>
             <SRow label="用電和平常不一樣" hint="某個電器最近 3 天比它自己平常用得多（冰箱變耗電、開得比平常久），或待機功率變高；每天早上 9 點檢查">
               <Switch checked={remind.anomaly !== false} onCheckedChange={(v) => putRemind("anomaly", v, "用電異常通知")} aria-label="用電異常通知" />

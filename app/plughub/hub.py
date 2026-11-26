@@ -3269,7 +3269,7 @@ class Hub:
         return tuple(bool((self.alerts.dayoff(self.weather.county, self.weather.town, today + timedelta(days=i)) or {}).get("full")) for i in range(2))
 
     def _check_reminders(self, now: float) -> None:
-        """主動提醒（固定規則，不用 AI）：開太久、早上會下雨、明天停水停電。每件事只講一次，講過的存在樹莓派上。"""
+        """主動提醒（固定規則，不用 AI）：用電異常、開太久、電費跳級。每件事只講一次，講過的存在樹莓派上。"""
         settings = self.store.data["settings"]
         cfg = settings.get("remind") or {}
         sent: dict[str, float] = self.store.data.setdefault("remind_sent", {})
@@ -3298,15 +3298,6 @@ class Hub:
             if long:
                 self.notifier.send("電器開很久了", "、".join(long[:6]) + (f" 等 {len(long)} 個" if len(long) > 6 else "") + "。要關的話打開家庭中控")
 
-        # 早上 7～10 點：今天白天降雨機率高，提醒帶傘（一天一次）
-        key = f"rain:{dt.date().isoformat()}"
-        if cfg.get("rain", True) and settings.get("weather", True) and 7 <= dt.hour < 10 and key not in sent:
-            pop = self.weather.day_pop(dt.date())
-            if pop is not None and pop >= 60:
-                sent[key] = now
-                self.notifier.send("今天可能會下雨", f"白天降雨機率 {pop:.0f}%，出門記得帶傘")
-
-        self._check_alerts_notify(now, dt, cfg, sent)
         self._check_night(now, dt)
         self._check_away_auto(now)
         if cfg.get("tier", True) and now - self._tier_at >= 3600:
@@ -3317,28 +3308,6 @@ class Hub:
             del sent[k]
         if len(sent) != before:
             self._dirty = True
-
-    def _check_alerts_notify(self, now: float, dt: datetime, cfg: dict[str, Any], sent: dict[str, float]) -> None:
-        """天氣特報、明天空品不好：各講一次。"""
-        A = self.alerts
-        county = self.weather.county
-        # 天氣特報：新發布的才講
-        if cfg.get("warn", True):
-            for w in A.warnings:
-                key = f"warn:{w.get('name')}:{w.get('start')}"
-                if key not in sent:
-                    sent[key] = now
-                    end = (w.get("end") or "")[5:16].replace("-", "/")
-                    self.notifier.send(f"{county or ''}{w.get('name')}", f"氣象署發布{w.get('name')}" + (f"，到 {end}" if end else ""), "high")
-        # 明天空品不好：晚上 8～11 點講一次
-        if cfg.get("air", True) and 20 <= dt.hour < 23:
-            tm = A.air_on(dt.date() + timedelta(days=1))
-            if tm and tm["aqi"] > 100:
-                key = f"air:{tm['date']}"
-                if key not in sent:
-                    sent[key] = now
-                    self.notifier.send("明天空氣品質不好", f"{tm['zone']}空品區預報 AQI {tm['aqi']:.0f}（{tm['status']}）"
-                                       + (f"，主要是{tm['pollutant']}" if tm.get("pollutant") else "") + "。記得關窗、可以開清淨機")
 
     # ---- 例行：電費級距、每月報告、晚安檢查、離家模式自動開關、插座連線健檢 ----
 
