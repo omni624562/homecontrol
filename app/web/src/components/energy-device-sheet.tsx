@@ -86,7 +86,7 @@ export function EnergyDeviceSheet({ id, energy: e, plug: p, onClose, onChanged }
         )}
         <Section title="估算方式">
           <Group>
-            <WattsRows p={p} hint="改了會馬上重算" onSaved={onChanged} />
+            <WattsRows p={p} hint="改了會馬上重算" onSaved={onChanged} price={e.price} />
           </Group>
         </Section>
       </div>

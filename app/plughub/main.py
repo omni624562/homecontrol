@@ -3,7 +3,7 @@
 GET  /api/state             目前全部的狀態
 GET  /api/events            狀態一有變動就推送（Server-Sent Events）
 POST /api/plugs/{id}/power  {"on": true/false}
-PATCH /api/plugs/{id}       {"name", "room", "keep_on", "night", "watts", "max_on_s"}
+PATCH /api/plugs/{id}       {"name", "room", "keep_on", "night", "watts", "usage", "max_on_s"}
 POST /api/off               {"room", "standby_only"} 關閉並記住，可以 /api/restore 復原
 POST /api/on                {"room"} 打開整個房間，可以 /api/restore 復原
 POST /api/restore
@@ -82,7 +82,7 @@ from .claude_vision import FEATURES as CV_FEATURES, ClaudeVision
 from .hub import APP_VERSION, GESTURES as GESTURE_NAMES, SOURCE, Hub, Locked, arrive_rule
 from .summary import build_summary
 from .notify import LineError, Notifier
-from .store import ICONS, Store, _hms
+from .store import ICONS, Store, _hms, usage_clean, usage_watts
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -497,9 +497,16 @@ async def update_plug(plug_id: str, body: dict = Body(...)) -> dict[str, Any]:
         meta.keep_on = False
     if meta.max_on_s and hub.plugs[plug_id].is_on:
         hub._cap_on_time(plug_id)
-    if "watts" in body:
+    if body.get("usage"):
+        try:
+            meta.usage = usage_clean(body["usage"])
+        except ValueError as err:
+            raise HTTPException(400, str(err)) from err
+        meta.watts = usage_watts(meta.usage)
+    elif "watts" in body:
         watts = body["watts"]
         meta.watts = float(watts) if watts not in (None, "", 0) and float(watts) > 0 else None
+        meta.usage = None
     if "led" in body:
         try:
             await hub.set_led(plug_id, bool(body["led"]))

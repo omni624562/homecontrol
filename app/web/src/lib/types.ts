@@ -2,6 +2,15 @@
 
 export type Protect = "" | "confirm_off" | "confirm" | "lock";
 
+// 照使用習慣算用電：電器瓦數、一週幾天、一天幾次、一次幾分
+export interface Usage {
+  kind: string;
+  watts: number;
+  days: number;
+  times: number;
+  minutes: number;
+}
+
 export interface Plug {
   id: string;
   name: string;
@@ -14,6 +23,7 @@ export interface Plug {
   risky?: boolean;
   short?: string | null; // 地圖上用的短名稱
   icon?: string | null; // 自己選的圖示（空白 = 照名稱猜）
+  usage?: Usage | null; // 照使用習慣算（插座常開的電器）
   protect: Protect;
   max_on_s: number | null;
   on_since: number | null;
