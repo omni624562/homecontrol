@@ -14,12 +14,26 @@ export const Outlet = createLucideIcon("outlet", [
   ["path", { d: "M10.5 17a1.5 1.5 0 0 1 3 0z", key: "o4" }],
 ]);
 
+// LED 條燈：一條細長的燈帶＋往外放的光；lucide 沒有
+export const LedStrip = createLucideIcon("led-strip", [
+  ["rect", { x: "1.5", y: "13", width: "21", height: "5", rx: "2.5", key: "l1" }],
+  ["path", { d: "M5 15.5h.01", key: "l2" }],
+  ["path", { d: "M8.5 15.5h.01", key: "l3" }],
+  ["path", { d: "M12 15.5h.01", key: "l4" }],
+  ["path", { d: "M15.5 15.5h.01", key: "l5" }],
+  ["path", { d: "M19 15.5h.01", key: "l6" }],
+  ["path", { d: "M12 5v4", key: "l7" }],
+  ["path", { d: "m5 6.5 2 3", key: "l8" }],
+  ["path", { d: "m19 6.5-2 3", key: "l9" }],
+]);
+
 // 裝置可以自己選的圖示（代碼要跟後端 store.ICONS 一致）
 export const DEVICE_ICONS: { key: string; label: string; group: "燈" | "家電" | "其他"; icon: LucideIcon }[] = [
   { key: "lamp-floor", label: "立燈", group: "燈", icon: LampFloor },
   { key: "lamp-desk", label: "檯燈", group: "燈", icon: LampDesk },
   { key: "lamp-ceiling", label: "吊燈", group: "燈", icon: LampCeiling },
   { key: "lamp-wall", label: "壁燈", group: "燈", icon: LampWallUp },
+  { key: "led-strip", label: "LED 條燈", group: "燈", icon: LedStrip },
   { key: "bulb", label: "燈泡", group: "燈", icon: Lightbulb },
   { key: "sparkles", label: "裝飾燈", group: "燈", icon: Lamp },
   { key: "fan", label: "風扇", group: "家電", icon: Fan },
@@ -54,6 +68,7 @@ const GUESS: [RegExp, string][] = [
   [/吊燈|ceiling|pendant/, "lamp-ceiling"],
   [/壁燈|wall/, "lamp-wall"],
   [/聖誕|xmas|christmas/, "tree"],
+  [/燈條|條燈|燈帶|led|strip/, "led-strip"],
   [/燈|lamp|light/, "bulb"],
   [/風扇|電扇|fan/, "fan"],
   [/冷氣|空調|aircon|air con/, "aircon"],
