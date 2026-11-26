@@ -1158,7 +1158,7 @@ class Hub:
             kw = (watts or 0) / 1000
             room = self.store.room(meta.room)
             if use is None:
-                plugs.append({"id": plug.id, "name": self.name(plug), "watts": watts, "known": False})
+                plugs.append({"id": plug.id, "name": self.name(plug), "icon": meta.icon, "watts": watts, "known": False})
                 continue
             for d in days:
                 minutes = use["days"].get(d, 0)
@@ -1181,7 +1181,7 @@ class Hub:
             last7 = [use["days"].get(d, 0) for d in days[-8:-1]]
             prev21 = [use["days"].get(d, 0) for d in days[-29:-8]]
             plugs.append({
-                "id": plug.id, "name": self.name(plug), "watts": watts, "known": True,
+                "id": plug.id, "name": self.name(plug), "icon": meta.icon, "watts": watts, "known": True,
                 "room": name,
                 "today_min": use["days"].get(today.isoformat(), 0),
                 "month_min": month_min,
@@ -3661,6 +3661,7 @@ class Hub:
                 "matter": meta.matter,
                 "risky": meta.risky,
                 "short": meta.short,
+                "icon": meta.icon,
                 "max_on_s": meta.max_on_s,
                 "night": meta.night,
                 "standby": self.is_standby(plug),

@@ -82,7 +82,7 @@ from .claude_vision import FEATURES as CV_FEATURES, ClaudeVision
 from .hub import APP_VERSION, GESTURES as GESTURE_NAMES, SOURCE, Hub, Locked, arrive_rule
 from .summary import build_summary
 from .notify import LineError, Notifier
-from .store import Store, _hms
+from .store import ICONS, Store, _hms
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -460,6 +460,11 @@ async def update_plug(plug_id: str, body: dict = Body(...)) -> dict[str, Any]:
         meta.name = name or None
     if "short" in body:
         meta.short = (body["short"] or "").strip()[:8] or None
+    if "icon" in body:
+        icon = body["icon"] or None
+        if icon is not None and icon not in ICONS:
+            raise HTTPException(400, "沒有這個圖示")
+        meta.icon = icon
     if "room" in body:
         room = body["room"]
         if room is not None and not store.room(room):

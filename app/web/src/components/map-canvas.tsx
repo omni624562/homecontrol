@@ -754,7 +754,7 @@ export function MapCanvas({
         const at = pos[o.d.key];
         const me = pos[o.key] || o;
         const on = !!powerOf?.(o.p);
-        const Icon = deviceIcon(o.p.name);
+        const Icon = deviceIcon(o.p);
         const tip = `${o.p.name}（${devName(o.d)}的一孔）：${!o.p.online ? "連不上" : on ? "開著" : "關著"}`;
         return (
           <g key={o.key}>
@@ -784,7 +784,7 @@ export function MapCanvas({
         const hot = layer === "motion" && m != null && m > 0.15;
         const single = d.plugs.length === 1 ? d.plugs[0] : null;
         const pw = !!single && !!powerOf?.(single);
-        const Icon = single ? deviceIcon(single.name) : d.plugs.length ? PlugIcon : deviceIcon(d.name);
+        const Icon = single ? deviceIcon(single) : d.plugs.length ? PlugIcon : deviceIcon(d.name);
         // 數字（訊號或擾動）平常不顯示：選取時、或訊號弱、或動靜層擾動明顯時才出現
         const showNum = isSel || (layer !== "motion" && q === "weak") || (layer === "motion" && hot);
         const canFlip = !edit && !!single && d.online && !!onPower;

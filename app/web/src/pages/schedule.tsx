@@ -392,7 +392,7 @@ export function SchedulePage() {
               <CardHead icon={Timer} title="定時關閉中" tone="timer" />
               <div className="divide-y px-4 pb-2 sm:px-5">
                 {timers.map((p) => {
-                  const I = deviceIcon(p.name);
+                  const I = deviceIcon(p);
                   return (
                     <div key={p.id} className="flex items-center gap-3 py-3">
                       <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-400"><I className="size-5" /></div>

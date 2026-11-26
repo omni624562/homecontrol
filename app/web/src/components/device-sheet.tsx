@@ -13,7 +13,7 @@ import { Sheet } from "@/components/responsive-sheet";
 import { daysText, showT, sunLabel } from "@/components/schedule-bits";
 import { Row, Section } from "@/components/settings-bits";
 import { WattsRows } from "@/components/watts-field";
-import { deviceIcon } from "@/components/icons";
+import { DEVICE_ICONS, deviceIcon, guessIcon } from "@/components/icons";
 import { api } from "@/lib/api";
 import { fmt, fmtDur, fmtLeft, fmtSec, pad2 } from "@/lib/format";
 import { useHub, useTick } from "@/lib/hub";
@@ -107,7 +107,7 @@ export function DeviceSheet({ id, onClose }: { id: string | null; onClose: () =>
 
 function DeviceIcon({ p }: { p: Plug }) {
   const { isOn } = useHub();
-  const I = p.online ? deviceIcon(p.name) : WifiOff;
+  const I = p.online ? deviceIcon(p) : WifiOff;
   return <I className={cn(p.online && isOn(p) && "text-amber-600")} />;
 }
 
@@ -334,6 +334,7 @@ function DeviceBody({ p }: { p: Plug }) {
             </div>
           </form>
           <ShortName p={p} patch={patch} />
+          <IconPick p={p} patch={patch} />
           <div className="space-y-1">
             <div className="text-sm font-medium">區域</div>
             <Select value={p.room || "none"} onValueChange={(v) => patch({ room: v === "none" ? null : v })}>
@@ -497,6 +498,50 @@ export function needsConfirm(p: Plug, on: boolean) {
 }
 
 // 地圖上的名字（短一點，地圖上才不會疊字）；空白就用自動建議的
+// 圖示：預設照名稱猜；按「換」展開圖庫自己選，選了馬上存
+function IconPick({ p, patch }: { p: Plug; patch: (body: Record<string, unknown>, ok?: string) => Promise<unknown> }) {
+  const [open, setOpen] = useState(false);
+  const I = deviceIcon(p);
+  const cur = DEVICE_ICONS.find((d) => d.key === (p.icon || guessIcon(p.name)));
+  const pick = async (key: string | null) => {
+    if (key !== (p.icon || null)) await patch({ icon: key }, key ? "圖示換好了" : "圖示改回自動");
+    setOpen(false);
+  };
+  const cell = "flex flex-col items-center gap-0.5 rounded-lg border px-0.5 pt-2 pb-1 text-[0.7rem] text-muted-foreground transition-colors hover:bg-accent";
+  const on = "border-primary bg-primary/10 font-bold text-primary";
+  return (
+    <div className="space-y-1">
+      <div className="text-sm font-medium">圖示</div>
+      <div className={cn("flex items-center gap-2.5 rounded-md border px-2.5 py-1.5", open && "border-primary ring-2 ring-primary/15")}>
+        <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-amber-100 text-amber-600 dark:bg-amber-400/15 dark:text-amber-400"><I className="size-5" /></span>
+        <span className="min-w-0 flex-1 text-sm">{cur?.label}<span className="text-muted-foreground">・{p.icon ? "自己選的" : "依名稱自動"}</span></span>
+        <Button type="button" variant="outline" size="sm" className="h-8" aria-expanded={open} onClick={() => setOpen((v) => !v)}>{open ? "收起" : "換"}</Button>
+      </div>
+      {open && (
+        <div className="space-y-1.5 pt-1">
+          {(["燈", "家電", "其他"] as const).map((g) => (
+            <div key={g} className="space-y-1">
+              <div className="text-xs font-bold text-muted-foreground">{g}</div>
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(4rem,1fr))] gap-1.5">
+                {g === "燈" && (
+                  <button type="button" className={cn(cell, !p.icon && on)} onClick={() => pick(null)}>
+                    <span className="h-5 text-[0.8rem] leading-5 font-bold">自動</span>依名稱
+                  </button>
+                )}
+                {DEVICE_ICONS.filter((d) => d.group === g).map((d) => (
+                  <button key={d.key} type="button" aria-pressed={p.icon === d.key} className={cn(cell, p.icon === d.key && on)} onClick={() => pick(d.key)}>
+                    <d.icon className="size-5" />{d.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ShortName({ p, patch }: { p: Plug; patch: (body: Record<string, unknown>, ok?: string) => Promise<unknown> }) {
   const [v, setV] = useState(p.short || "");
   const tip = suggestShort(p.name);

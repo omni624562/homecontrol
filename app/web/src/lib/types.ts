@@ -13,6 +13,7 @@ export interface Plug {
   keep_on: boolean;
   risky?: boolean;
   short?: string | null; // 地圖上用的短名稱
+  icon?: string | null; // 自己選的圖示（空白 = 照名稱猜）
   protect: Protect;
   max_on_s: number | null;
   on_since: number | null;
@@ -325,6 +326,7 @@ export interface PairedDevice {
 export interface EnergyPlug {
   id: string;
   name: string;
+  icon?: string | null;
   watts: number | null;
   known: boolean;
   room: string | null;

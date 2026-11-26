@@ -79,7 +79,7 @@ function SortRow({ id, label, children }: { id: string; label: string; children:
 }
 
 function PlugBody({ p, onOpen }: { p: Plug; onOpen: () => void }) {
-  const I = deviceIcon(p.name);
+  const I = deviceIcon(p);
   return (
     <>
       <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted text-muted-foreground"><I className="size-5" /></span>

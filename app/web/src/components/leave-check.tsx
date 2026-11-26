@@ -109,7 +109,7 @@ export function LeaveSheet({ open, onClose }: { open: boolean; onClose: () => vo
           ) : (
             <div className="divide-y">
               {on.map((p) => {
-                const I = deviceIcon(p.name);
+                const I = deviceIcon(p);
                 const lock = p.protect === "lock";
                 return (
                   <Row key={p.id} icon={I} title={p.name} sub={lock ? "已鎖定，要先在裝置詳細解鎖" : undefined}
@@ -209,7 +209,7 @@ export function NightSheet({ open, onClose }: { open: boolean; onClose: () => vo
           ) : (
             <div className="divide-y">
               {on.map((p) => {
-                const I = deviceIcon(p.name);
+                const I = deviceIcon(p);
                 const lock = p.protect === "lock";
                 return (
                   <Row key={p.id} icon={I} tone={p.risky ? "warn" : undefined} title={p.name} sub={lock ? "已鎖定，要先在裝置詳細解鎖" : p.risky ? "高風險電器" : undefined}

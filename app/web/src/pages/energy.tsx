@@ -373,7 +373,7 @@ export function EnergyPage() {
           <CardTitle title="本月各裝置" end={<span className="text-sm text-muted-foreground">比上月同期・點一下看明細</span>} />
           <div className="grid md:grid-cols-2">
             {ranked.map((p) => {
-              const I = deviceIcon(p.name);
+              const I = deviceIcon(p);
               const share = p.watts ? (p.month_kwh || 0) / totalKwh : (p.month_min || 0) / totalMin;
               const ch = p.known && p.same_min > 30 ? (p.month_min - p.same_min) / p.same_min : null;
               return (
