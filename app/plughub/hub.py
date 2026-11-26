@@ -3662,6 +3662,7 @@ class Hub:
                 "risky": meta.risky,
                 "short": meta.short,
                 "icon": meta.icon,
+                "usage": meta.usage,
                 "max_on_s": meta.max_on_s,
                 "night": meta.night,
                 "standby": self.is_standby(plug),

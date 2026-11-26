@@ -95,6 +95,10 @@ class PlugMeta:
     risky: bool = False
     short: str | None = None  # 地圖上用的短名稱（空白 = 照名稱自動建議）
     icon: str | None = None  # 自己選的圖示（ICONS 裡的代碼；空白 = 照名稱猜）
+    # 照使用習慣算（插座常開、電器自己運作的，像氣炸鍋）：
+    # {"kind": USAGE_KINDS 的代碼, "watts": 電器瓦數, "days": 一週幾天, "times": 一天幾次, "minutes": 一次幾分}
+    # 設了這個，watts 就是換算出來的平均瓦數（usage_watts）
+    usage: dict | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "PlugMeta":
@@ -111,6 +115,36 @@ ICONS = (
     "rice", "air-fryer", "microwave", "coffee", "fridge", "washer", "water-heater", "printer",
     "water", "plant", "fish", "tree", "charge", "camera", "outlet",
 )
+
+
+# 照使用習慣算的電器：代碼 → 運作比例（到溫度後斷斷續續加熱的打折）
+USAGE_KINDS = {"air-fryer": 0.7, "rice": 0.7, "kettle": 1.0, "microwave": 1.0, "custom": 1.0}
+
+
+def usage_clean(u: dict) -> dict:
+    """檢查使用習慣的設定；不合理就丟 ValueError（訊息給人看）。"""
+    kind = u.get("kind") or "custom"
+    if kind not in USAGE_KINDS:
+        raise ValueError("沒有這種電器")
+    try:
+        watts, days, times, minutes = float(u["watts"]), int(u["days"]), int(u["times"]), int(u["minutes"])
+    except (KeyError, TypeError, ValueError):
+        raise ValueError("使用習慣沒填完整") from None
+    if not 1 <= watts <= 5000:
+        raise ValueError("電器瓦數要在 1～5000 W")
+    if not 1 <= days <= 7 or not 1 <= times <= 5 or not 1 <= minutes <= 240:
+        raise ValueError("使用習慣的數字不合理")
+    return {"kind": kind, "watts": watts, "days": days, "times": times, "minutes": minutes}
+
+
+def usage_kwh(u: dict) -> float:
+    """用一次大約幾度。"""
+    return u["watts"] / 1000 * u["minutes"] / 60 * USAGE_KINDS.get(u["kind"], 1.0)
+
+
+def usage_watts(u: dict) -> float:
+    """平均分攤到插座開著的每個小時：一週的用量 ÷ 一週的小時數。"""
+    return round(usage_kwh(u) * u["times"] * u["days"] / (7 * 24) * 1000, 1)
 
 
 class Store:

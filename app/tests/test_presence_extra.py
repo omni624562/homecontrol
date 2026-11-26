@@ -322,3 +322,26 @@ def test_plug_icon_pick(app_module):
     # 前端圖庫的代碼要跟後端一致
     src = (Path(__file__).parent.parent / "web/src/components/icons.tsx").read_text("utf-8")
     assert set(re.findall(r'\{ key: "([a-z-]+)", label:', src)) == set(ICONS)
+
+
+def test_plug_usage_habit(app_module):
+    from fastapi.testclient import TestClient
+    from plughub.store import usage_watts
+
+    pid = _fake_plug(app_module.hub, "kitchen")
+    c = TestClient(app_module.app, base_url="http://hub:8100")
+    token, _ = app_module.auth.pair(app_module.auth.new_code())
+    c.cookies.set("plughub_token", token)
+    u = {"kind": "air-fryer", "watts": 1500, "days": 7, "times": 1, "minutes": 30}
+    # 1.5 kW × 0.5 h × 0.7 = 0.525 度／天 → 平均 21.9 W
+    assert usage_watts(u) == 21.9
+    assert c.patch(f"/api/plugs/{pid}", json={"usage": {**u, "days": 9}}).status_code == 400
+    assert c.patch(f"/api/plugs/{pid}", json={"usage": {**u, "kind": "rocket"}}).status_code == 400
+    assert c.patch(f"/api/plugs/{pid}", json={"usage": u}).status_code == 200
+    meta = app_module.store.meta(pid)
+    assert meta.watts == 21.9 and meta.usage["minutes"] == 30
+    plug = next(p for p in c.get("/api/state").json()["plugs"] if p["id"] == pid)
+    assert plug["usage"]["kind"] == "air-fryer" and plug["watts"] == 21.9
+    # 改回一般瓦數：使用習慣清掉
+    c.patch(f"/api/plugs/{pid}", json={"watts": 40})
+    assert meta.watts == 40 and meta.usage is None
