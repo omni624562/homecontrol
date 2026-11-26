@@ -21,6 +21,8 @@ from typing import Any, Callable
 import cv2
 import numpy as np
 
+import ghost
+
 LOG = logging.getLogger("vision.index")
 REC = Path("/rec")
 OUT = Path("/index")
@@ -201,12 +203,16 @@ class Index:
         with np.load(p) as z:
             return {k: z[k] for k in z.files}
 
-    def summary(self, day: date) -> dict[str, Any]:
+    def summary(self, day: date, ghosts: set[str] | None = None) -> dict[str, Any]:
+        """ghosts：門口的攝影機，一直不動、分數不高的「人」（鞋子、雨傘）不算有人來。"""
         cams = {}
         for d in sorted(OUT.iterdir()) if OUT.is_dir() else []:
             z = self._load(d.name, day)
             if z is None:
                 continue
+            if d.name in (ghosts or ()) and len(z["t"]):
+                keep = ~np.array(ghost.mask(z["t"], z["cls"], z["score"], z["box"]), bool)
+                z = {k: (v[keep] if len(v) == len(keep) else v) for k, v in z.items()}
             v = [x for x in visits(z["t"], z["cls"]) if x["n"] >= VISIT_MIN]  # 只有一張看到人的不算（扶手上掛的東西常被認成人）
             counts = {}
             for c in set(z["cls"].tolist()) - {"person"}:

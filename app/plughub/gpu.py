@@ -139,7 +139,8 @@ class GpuVision:
 
         if not self.url or time.time() - self._fail_at < RETRY:
             return
-        want = {c["id"]: {"url": rtsp_url(c), "ignore": c.get("ignore") or [], "pose": bool(c.get("fall")), "sound": bool((c.get("sound") or {}).get("on"))}
+        want = {c["id"]: {"url": rtsp_url(c), "ignore": c.get("ignore") or [], "pose": bool(c.get("fall")), "sound": bool((c.get("sound") or {}).get("on")),
+                    "ghost": c.get("role") == "entry"}
                 for c in cams if c.get("enabled") and c.get("host")}
         sig = json.dumps([want, self._settings().get("night_enhance") is not False], sort_keys=True)
         if sig == self._pushed and time.time() - self._pushed_at < 300:
