@@ -10,15 +10,6 @@ from datetime import date, datetime
 from plughub import routine
 
 
-def test_tier_alert():
-    d = date(2026, 11, 20)  # 非夏月
-    assert routine.tier_alert(300, 60, 40, 20, d) is None  # 300+20=320，還在 330 以下
-    hit = routine.tier_alert(300, 80, 40, 20, d)
-    assert hit == {"est": 340, "limit": 330, "extra": 40.0, "from": 2.26, "to": 3.13}
-    assert routine.tier_alert(300, 80, 40, 3, d) is None  # 月初太早，不預估
-    assert routine.tier_alert(300, 80, 0, 20, d) is None  # 沒有上個月的資料
-
-
 def test_month_helpers_and_net_summary():
     assert routine.prev_month(date(2026, 1, 1)) == "2025-12"
     s, e = routine.month_range("2025-12")
@@ -133,20 +124,11 @@ def test_api_plug_health_and_monthly(app_module):
     c.cookies.set("plughub_token", token)
     assert c.get("/api/net/plug-health").json() == {"plugs": []}
     text = c.get("/api/report/monthly").json()["text"]
-    assert "插座用電" in text and "斷線" in text
-    r = c.put("/api/settings", json={"goodnight": {"at": "00:15", "mode": "off", "keep": ["nope"]}, "monthly": False, "remind": {"tier": False}})
+    assert "插座一共開了" in text and "斷線" in text
+    r = c.put("/api/settings", json={"goodnight": {"at": "00:15", "mode": "off", "keep": ["nope"]}, "monthly": False, "remind": {"anomaly": False}})
     assert r.status_code == 200
     s = app_module.store.data["settings"]
-    assert s["goodnight"] == {"at": "00:15", "mode": "off", "keep": []} and s["monthly"] is False and s["remind"]["tier"] is False
+    assert s["goodnight"] == {"at": "00:15", "mode": "off", "keep": []} and s["monthly"] is False and s["remind"]["anomaly"] is False
     assert c.put("/api/settings", json={"goodnight": {"at": "25:99"}}).status_code == 400
 
 
-def test_tier_check_runs_and_sends_once(app_module, monkeypatch):
-    hub, _, sent = _hub(app_module, monkeypatch, {"heater": True})
-    rep = {"projected": {"kwh": 90.0}, "last_month": {"kwh": 40.0},
-           "plugs": [{"known": True, "name": "電暖器", "month_kwh": 60.0}]}
-    monkeypatch.setattr(hub, "energy_report", lambda: rep)
-    hub.store.data["settings"]["household_monthly_kwh"] = 300
-    hub._check_tier(datetime(2026, 11, 20, 10, 0))
-    hub._check_tier(datetime(2026, 11, 21, 10, 0))
-    assert len(sent) == 1 and "跳級" in sent[0][0] and "電暖器 60.0 度" in sent[0][1]

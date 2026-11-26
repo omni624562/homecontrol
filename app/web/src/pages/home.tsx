@@ -80,7 +80,7 @@ function SortRoom({ g, onOpen, onToggle }: { g: Group; onOpen: (p: Plug) => void
 // 右邊那一欄：抓標題列上下換順序
 type SideId = "ask" | "people" | "energy" | "next";
 const SIDE_DEFAULT: SideId[] = ["ask", "people", "energy", "next"];
-const SIDE_NAMES: Record<SideId, string> = { ask: "問家裡", people: "誰在家", energy: "今天用電", next: "接下來" };
+const SIDE_NAMES: Record<SideId, string> = { ask: "問家裡", people: "誰在家", energy: "今天使用時間", next: "接下來" };
 
 function SortSide({ id, children }: { id: SideId; children: (handle: DragHandle, dragging: boolean) => React.ReactNode }) {
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id });

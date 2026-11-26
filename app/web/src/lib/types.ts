@@ -278,7 +278,7 @@ export interface HubState {
   scenes: Scene[];
   people: Person[];
   presence_log?: PresenceEvent[];
-  summary: { power: number | null; energy_today: number; cost_today: number; cost_month: number };
+  summary: { power: number | null; energy_today: number; cost_today: number; cost_month: number; hours_today?: number; on_count?: number; history?: { day: string; kwh: number; hours?: number }[] };
   settings: {
     long_on_hours?: number;
     away?: { enabled: boolean; start: string; end: string; plugs: string[]; auto_on?: boolean; auto_h?: number; auto_off?: boolean; auto_started?: number };
@@ -355,12 +355,12 @@ export interface Energy {
   day_of_month: number;
   month_days: number;
   today: { kwh: number; hours: number };
-  month: { kwh: number; cost: number };
+  month: { kwh: number; cost: number; hours: number };
   projected: { kwh: number; cost: number };
-  same_period: { kwh: number; cost: number };
+  same_period: { kwh: number; cost: number; hours: number };
   days: { day: string; kwh: number; hours: number }[];
   months: { month: string; kwh: number; hours: number; cost?: number }[];
-  rooms: { name: string; kwh: number }[];
+  rooms: { name: string; kwh: number; hours?: number }[];
   plugs: EnergyPlug[];
   insights: { kind: string; plug?: string; text: string }[];
   updated: number;

@@ -15,7 +15,7 @@ export const TABS = [
   { key: "map", label: "家中地圖", icon: MapIcon },
   { key: "cameras", label: "攝影機", icon: Cctv },
   { key: "schedule", label: "排程", icon: Clock },
-  { key: "energy", label: "用電", icon: BarChart3 },
+  { key: "energy", label: "使用時間", icon: BarChart3 },
   { key: "net", label: "網路裝置", icon: Wifi },
   { key: "settings", label: "設定", icon: Settings },
 ] as const;

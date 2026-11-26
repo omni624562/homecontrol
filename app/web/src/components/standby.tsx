@@ -116,7 +116,7 @@ function Screen({ onClose }: { onClose: () => void }) {
         <span className={cn(on > 0 && "text-amber-600 dark:text-amber-400")}><b>{on}</b>個開著</span>
         {state.summary.power != null && <span><b>{fmt(state.summary.power)}</b>W</span>}
         {(state.people || []).length > 0 && <span><b>{home}</b>人在家</span>}
-        <span>今天<b className="ml-1.5">{fmt(state.summary.energy_today, 1)}</b>度・${fmt(state.summary.cost_today)}</span>
+        {state.summary.hours_today != null && <span>今天開了<b className="ml-1.5">{fmt(state.summary.hours_today)}</b>小時</span>}
       </>
     );
     const w = state.calendar.weather_show !== false ? state.calendar.weather : null;

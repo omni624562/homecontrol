@@ -70,38 +70,39 @@ export function AskPanel({ className, handle }: { className?: string; handle?: D
   );
 }
 
-// 今天用電：今天的度數、金額，和最近兩週每天的長條
+// 今天使用時間：所有插座今天開了幾小時，和最近兩週每天的長條（插座自己記錄的）
 export function EnergyPanel({ state, className, handle }: { state: HubState; className?: string; handle?: DragHandle }) {
-  const s = state.summary as HubState["summary"] & { history?: { day: string; kwh: number }[]; energy_month?: number };
+  const s = state.summary;
   const hist = (s.history || []).slice(-14);
-  const max = Math.max(0.1, ...hist.map((h) => h.kwh));
-  const prev = hist.length >= 2 ? hist[hist.length - 2].kwh : 0;
+  const max = Math.max(0.1, ...hist.map((h) => h.hours ?? 0));
+  const prev = hist.length >= 2 ? hist[hist.length - 2].hours ?? 0 : 0;
+  const on = s.on_count ?? state.plugs.filter((p) => p.online && p.is_on).length;
   const [shut, toggle] = useCollapsed("side:energy");
-  const brief = `${fmt(s.energy_today, 1)} 度・$${fmt(s.cost_today)} ›`;
+  const brief = `${fmt(s.hours_today ?? 0)} 小時 ›`;
   return (
     <Card className={cn("gap-0 overflow-hidden py-0", className)}>
-      <Head icon={ChartColumn} title="今天用電" handle={handle} shut={shut} onToggle={toggle}
+      <Head icon={ChartColumn} title="今天使用時間" handle={handle} shut={shut} onToggle={toggle}
         right={<a href="#energy" className="hover:text-foreground">{shut ? brief : "看明細 ›"}</a>} />
       {!shut && <div className="p-4">
         <div className="flex items-end justify-between gap-3">
           <div className="text-[28px] leading-none font-semibold tabular-nums">
-            {fmt(s.energy_today, 1)}
-            <span className="ml-1.5 text-xs font-normal text-muted-foreground">度・${fmt(s.cost_today)}</span>
+            {fmt(s.hours_today ?? 0)}
+            <span className="ml-1.5 text-xs font-normal text-muted-foreground">小時</span>
           </div>
-          <div className="text-xs text-muted-foreground tabular-nums">本月 ${fmt(s.cost_month)}</div>
+          <div className="text-xs text-muted-foreground tabular-nums">目前 {on} 個開著</div>
         </div>
         {hist.length > 1 && (
           <>
-            <div className="mt-3 flex h-20 items-end gap-[3px]" role="img" aria-label={`最近 ${hist.length} 天每天的用電，昨天 ${fmt(prev, 1)} 度`}>
+            <div className="mt-3 flex h-20 items-end gap-[3px]" role="img" aria-label={`最近 ${hist.length} 天每天的使用時間，昨天 ${fmt(prev)} 小時`}>
               {hist.map((h, i) => (
-                <div key={h.day} title={`${Number(h.day.slice(5, 7))}/${Number(h.day.slice(8))}：${fmt(h.kwh, 1)} 度`}
+                <div key={h.day} title={`${Number(h.day.slice(5, 7))}/${Number(h.day.slice(8))}：${fmt(h.hours ?? 0)} 小時`}
                   className={cn("min-h-[2px] flex-1 rounded-t-[3px] bg-primary", i === hist.length - 1 ? "opacity-45" : "opacity-90")}
-                  style={{ height: `${(h.kwh / max) * 100}%` }} />
+                  style={{ height: `${((h.hours ?? 0) / max) * 100}%` }} />
               ))}
             </div>
             <div className="mt-1 flex justify-between text-[11px] text-muted-foreground tabular-nums">
               <span>{Number(hist[0].day.slice(5, 7))}/{Number(hist[0].day.slice(8))}</span>
-              <span>昨天 {fmt(prev, 1)} 度</span>
+              <span>昨天 {fmt(prev)} 小時</span>
               <span>今</span>
             </div>
           </>

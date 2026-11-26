@@ -1,4 +1,4 @@
-"""每天、每月的例行判斷：電費級距提醒、每月報告、晚安檢查、離家模式自動開關、插座連線健檢。
+"""每天、每月的例行判斷：每月報告、晚安檢查、離家模式自動開關、插座連線健檢。
 
 這裡只放判斷用的小函式（好測試）；狀態、通知在 hub.py。
 """
@@ -7,9 +7,6 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from typing import Any, Iterable
 
-from . import tariff
-
-TIER_MIN_DAY = 7  # 這個月過了幾天才預估（太早的預估不準）
 DROPS_KEEP_DAYS = 30
 DROPS_KEEP = 300
 MASS_DROP_RATIO = 0.5  # 同一時間這麼多插座一起斷，算 Wi-Fi 或停電，不算插座自己的問題
@@ -17,35 +14,6 @@ MASS_DROP_WINDOW = 180  # 秒
 WEAK_RSSI = -70  # dBm 以下算訊號弱
 NIGHT_WINDOW_H = 3  # 晚安檢查時間過後幾小時內還會補做（例如樹莓派剛好在重開）
 AWAY_AUTO_H = 4  # 大家出門超過幾小時，自動打開離家模式（預設）
-
-
-def tier_index(kwh: float) -> int:
-    for i, (lim, _, _) in enumerate(tariff.TIERS):
-        if lim is None or kwh <= lim:
-            return i
-    return len(tariff.TIERS) - 1
-
-
-def tier_alert(household: float, plug_proj: float, plug_last: float, day: int, today: date) -> dict[str, Any] | None:
-    """這個月插座用電比上個月多，多出來的加到電費單的度數上，會不會跨到下一級電價。
-
-    household：電費單上的每月度數（設定）；plug_proj：插座這個月預估度數；plug_last：上個月插座度數。
-    """
-    if day < TIER_MIN_DAY or plug_last <= 0 or household <= 0:
-        return None
-    extra = plug_proj - plug_last
-    est = household + extra
-    a, b = tier_index(household), tier_index(est)
-    if b <= a:
-        return None
-    col = 1 if tariff.is_summer(today) else 2
-    return {
-        "est": round(est),
-        "limit": tariff.TIERS[a][0],
-        "extra": round(extra, 1),
-        "from": tariff.TIERS[a][col],
-        "to": tariff.TIERS[b][col],
-    }
 
 
 def prev_month(d: date) -> str:

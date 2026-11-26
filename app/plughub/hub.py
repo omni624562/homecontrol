@@ -262,7 +262,6 @@ class Hub:
         self._router_sig: Any = None
         self._probe_at = 0.0  # 上次直接問家人手機（ARP）的時間
         self._probe_busy = False
-        self._tier_at = 0.0  # 上次算電費級距的時間（一小時算一次）
         self._router_since = 0.0  # 這次連上路由器的時間（剛連上時資料不完整，先不判斷「出門」）
         self._router_fed: dict[str, float] = {}  # MAC → 上次餵給 Wi-Fi 感測的讀數時間
         self._home_since: float | None = None  # 有人回家的時間（用來判斷這次出門結束了沒）
@@ -654,32 +653,20 @@ class Hub:
             if last is None or not plug.online:
                 continue
             hours = min(now - last, 5 * POLL_SECONDS) / 3600
-            meta = self.store.meta(plug.id)
             if plug.power is not None:
                 watts = plug.power
                 if plug.is_on:  # 待機有沒有變高：記每天開著時的最低功率
                     self.store.energy.add_floor(today, plug.id, plug.power)
-            elif meta.watts and plug.is_on:
-                watts = meta.watts
-            else:
+            else:  # 量不到電的插座不估算（只看使用時間）
                 continue
             self.store.energy.add(today, plug.id, watts * hours / 1000)
 
     def watts(self, plug: Plug) -> float | None:
-        """插座目前的功率：有計量用實際值，否則用估算瓦數。"""
-        if plug.power is not None:
-            return plug.power
-        meta = self.store.meta(plug.id)
-        if meta.watts:
-            return meta.watts if plug.is_on else 0.0
-        return None
+        """插座目前的功率：有計量才有（量不到電的不估算，只看使用時間）。"""
+        return plug.power
 
     def mode(self, plug: Plug) -> str:
-        if plug.power is not None:
-            return "metered"
-        if self.store.meta(plug.id).watts:
-            return "estimated"
-        return "switch"
+        return "metered" if plug.power is not None else "switch"
 
     def is_standby(self, plug: Plug) -> bool:
         threshold = self.store.data["settings"]["standby_watts"]
@@ -1146,13 +1133,14 @@ class Hub:
         tot_days = {d: {"kwh": 0.0, "hours": 0.0} for d in days}
         tot_months = {mm: {"kwh": 0.0, "hours": 0.0, "cost": 0.0} for mm in months}
         rooms: dict[str, float] = {}
+        rooms_h: dict[str, float] = {}
         plugs = []
-        mtd_kwh = same_kwh = 0.0
+        mtd_kwh = same_kwh = mtd_h = same_h = 0.0
         for plug in self.ordered():
             meta = self.store.meta(plug.id)
             use = self._usage.get(plug.id)
-            watts = meta.watts
-            kw = (watts or 0) / 1000
+            watts = None  # 量不到電：不再用估算瓦數算度數（只看使用時間）
+            kw = 0.0
             room = self.store.room(meta.room)
             if use is None:
                 plugs.append({"id": plug.id, "name": self.name(plug), "icon": meta.icon, "watts": watts, "known": False})
@@ -1172,8 +1160,11 @@ class Hub:
             month_kwh = month_min / 60 * kw
             mtd_kwh += month_kwh
             same_kwh += same_min / 60 * kw
+            mtd_h += month_min / 60
+            same_h += same_min / 60
             name = room["name"] if room else "還沒分區域"
             rooms[name] = rooms.get(name, 0.0) + month_kwh
+            rooms_h[name] = rooms_h.get(name, 0.0) + month_min / 60
             # 最近 7 個「完整的」天（不算今天）和再之前 21 天
             last7 = [use["days"].get(d, 0) for d in days[-8:-1]]
             prev21 = [use["days"].get(d, 0) for d in days[-29:-8]]
@@ -1191,18 +1182,18 @@ class Hub:
                 "months": [use["months"].get(mm, 0) for mm in months],
             })
 
-        # 值得注意的事（依每月影響的金額排序，最多 4 則）
+        # 值得注意的事（開越久的排越前面，最多 4 則）
         insights = []
         for pl in plugs:
             if not pl.get("known"):
                 continue
-            monthly_cost = pl["avg7_h"] * 30 * (pl["watts"] or 0) / 1000 * price
+            weight = pl["avg7_h"]
             if pl["avg7_h"] >= 20:
-                insights.append({"kind": "always", "plug": pl["id"], "weight": monthly_cost,
-                                 "text": f"{pl['name']} 幾乎整天開著" + (f"，每月約 ${monthly_cost:.0f}" if pl["watts"] else "")})
+                insights.append({"kind": "always", "plug": pl["id"], "weight": weight,
+                                 "text": f"{pl['name']} 幾乎整天開著（最近 7 天平均每天 {pl['avg7_h']:g} 小時）"})
             elif pl["avg7_h"] >= 2 and pl["avg7_h"] >= pl["avg21_h"] * 1.5 + 1:
                 more = (pl["avg7_h"] - pl["avg21_h"]) / max(pl["avg21_h"], 0.1) * 100
-                insights.append({"kind": "rise", "plug": pl["id"], "weight": monthly_cost,
+                insights.append({"kind": "rise", "plug": pl["id"], "weight": weight,
                                  "text": f"{pl['name']} 最近 7 天平均每天開 {pl['avg7_h']:g} 小時，"
                                          + (f"比之前多 {more:.0f}%" if pl["avg21_h"] >= 0.5 else "之前幾乎沒開")})
         insights.sort(key=lambda x: -x["weight"])
@@ -1212,10 +1203,6 @@ class Hub:
         if anomalies is None:
             anomalies = self.find_anomalies()
         insights = [{"kind": "anomaly", "plug": a["plug"], "weight": 0, "text": a["text"]} for a in anomalies[:3]] + insights
-        unset = [pl["name"] for pl in plugs if not pl["watts"]]
-        if unset:
-            insights.append({"kind": "unset", "plug": None, "weight": 0,
-                             "text": f"{len(unset)} 個裝置沒設瓦數，沒算進電費：{'、'.join(unset[:3])}{'…' if len(unset) > 3 else ''}"})
 
         projected = mtd_kwh / max(today.day, 1) * month_days
         return {
@@ -1224,16 +1211,15 @@ class Hub:
             "day_of_month": today.day,
             "month_days": month_days,
             "today": {"kwh": round(tot_days[days[-1]]["kwh"], 3), "hours": round(tot_days[days[-1]]["hours"], 1)},
-            "month": {"kwh": round(mtd_kwh, 2), "cost": round(mtd_kwh * price, 1)},
+            "month": {"kwh": round(mtd_kwh, 2), "cost": round(mtd_kwh * price, 1), "hours": round(mtd_h, 1)},
             "projected": {"kwh": round(projected, 1), "cost": round(projected * price, 0)},
-            "same_period": {"kwh": round(same_kwh, 2), "cost": round(same_kwh * tariff.price(household, date(lm_year, lm_month, 1)), 1)},
+            "same_period": {"kwh": round(same_kwh, 2), "cost": round(same_kwh * tariff.price(household, date(lm_year, lm_month, 1)), 1), "hours": round(same_h, 1)},
             "last_month": {k: round(v, 2) for k, v in tot_months[last_month].items()},
             "days": [{"day": d, **{k: round(v, 3) for k, v in tot_days[d].items()}} for d in days],
             "months": [{"month": mm, **{k: round(v, 2) for k, v in tot_months[mm].items()}} for mm in months],
-            "rooms": sorted(({"name": k, "kwh": round(v, 2)} for k, v in rooms.items()), key=lambda r: -r["kwh"]),
+            "rooms": sorted(({"name": k, "kwh": round(v, 2), "hours": round(rooms_h.get(k, 0.0), 1)} for k, v in rooms.items()), key=lambda r: -r["hours"]),
             "plugs": plugs,
             "insights": insights,
-            "unset": len(unset),
             "updated": self._usage_at,
         }
 
@@ -3269,7 +3255,7 @@ class Hub:
         return tuple(bool((self.alerts.dayoff(self.weather.county, self.weather.town, today + timedelta(days=i)) or {}).get("full")) for i in range(2))
 
     def _check_reminders(self, now: float) -> None:
-        """主動提醒（固定規則，不用 AI）：用電異常、開太久、電費跳級。每件事只講一次，講過的存在樹莓派上。"""
+        """主動提醒（固定規則，不用 AI）：用電異常、開太久。每件事只講一次，講過的存在樹莓派上。"""
         settings = self.store.data["settings"]
         cfg = settings.get("remind") or {}
         sent: dict[str, float] = self.store.data.setdefault("remind_sent", {})
@@ -3300,50 +3286,26 @@ class Hub:
 
         self._check_night(now, dt)
         self._check_away_auto(now)
-        if cfg.get("tier", True) and now - self._tier_at >= 3600:
-            self._tier_at = now
-            self._check_tier(dt)
 
         for k in [k for k, v in sent.items() if now - v > 7 * 86400]:
             del sent[k]
         if len(sent) != before:
             self._dirty = True
 
-    # ---- 例行：電費級距、每月報告、晚安檢查、離家模式自動開關、插座連線健檢 ----
-
-    def _check_tier(self, dt: datetime) -> None:
-        """這個月插座用得比上個月多，照這個速度電費單會跨到下一級電價：一個月講一次。"""
-        ym = dt.strftime("%Y-%m")
-        if self.store.data.get("tier_sent") == ym:
-            return
-        rep = self.energy_report()
-        hit = routine.tier_alert(self.store.data["settings"]["household_monthly_kwh"], rep["projected"]["kwh"],
-                                 rep["last_month"]["kwh"], dt.day, dt.date())
-        if not hit:
-            return
-        self.store.data["tier_sent"] = ym
-        self._dirty = True
-        top = sorted((p for p in rep["plugs"] if p.get("known") and p.get("month_kwh")), key=lambda p: -p["month_kwh"])[:3]
-        most = "、".join(f"{p['name']} {p['month_kwh']:.1f} 度" for p in top)
-        self.notifier.send(
-            "這個月電費可能跳級",
-            f"插座這個月預估比上個月多用 {hit['extra']:g} 度，加上平常的用電約 {hit['est']} 度，"
-            f"會超過 {hit['limit']:g} 度，多出來的每度從 {hit['from']:g} 元變 {hit['to']:g} 元。"
-            + (f"這個月用最多：{most}" if most else ""),
-        )
+    # ---- 例行：每月報告、晚安檢查、離家模式自動開關、插座連線健檢 ----
 
     def monthly_text(self, ym: str | None = None) -> str:
-        """上個月的家：插座用電、電費、最耗電的、網路斷線、常斷線的插座。"""
+        """上個月的家：插座使用時間、開最久的、網路斷線、常斷線的插座。"""
         rep = self.energy_report()
         months = [m["month"] for m in rep["months"]]
         ym = ym or routine.prev_month(date.today())
         i = months.index(ym) if ym in months else len(months) - 2
         cur, prev = rep["months"][i], rep["months"][i - 1] if i > 0 else None
-        lines = [f"{int(ym[5:])} 月插座用電約 {cur['kwh']:.1f} 度（約 {cur['cost']:.0f} 元）"
-                 + (f"，比前一個月{'多' if cur['kwh'] > prev['kwh'] else '少'} {abs(cur['kwh'] - prev['kwh']) / prev['kwh'] * 100:.0f}%" if prev and prev["kwh"] > 0 else "")]
-        top = sorted(((p["months"][i] / 60 * (p["watts"] or 0) / 1000, p["name"]) for p in rep["plugs"] if p.get("known") and p.get("watts")), reverse=True)[:3]
+        lines = [f"{int(ym[5:])} 月插座一共開了 {cur['hours']:.0f} 小時"
+                 + (f"，比前一個月{'多' if cur['hours'] > prev['hours'] else '少'} {abs(cur['hours'] - prev['hours']) / prev['hours'] * 100:.0f}%" if prev and prev["hours"] > 0 else "")]
+        top = sorted(((p["months"][i] / 60, p["name"]) for p in rep["plugs"] if p.get("known")), reverse=True)[:3]
         if top and top[0][0] > 0:
-            lines.append("用最多：" + "、".join(f"{n} {k:.1f} 度" for k, n in top if k > 0))
+            lines.append("開最久：" + "、".join(f"{n} {h:.0f} 小時" for h, n in top if h > 0))
         net = routine.net_summary(self.store.data["net_events"], *routine.month_range(ym))
         words = {"wan": "外網", "wifi": "Wi-Fi", "ap": "基地台卡住", "plug": "插座斷線"}
         parts = [f"{words[k]} {int(v['count'])} 次（共 {netlog.fmt_dur(v['sec'])}）" for k, v in net.items() if k in words]
@@ -3457,10 +3419,9 @@ class Hub:
     def weekly_text(self) -> str:
         rep = self.energy_report()
         days = rep["days"]
-        this = sum(d["kwh"] for d in days[-8:-1])
-        prev = sum(d["kwh"] for d in days[-15:-8])
-        price = rep["price"]
-        lines = [f"用電約 {this:.1f} 度（{this * price:.0f} 元）" + (f"，比上週{'多' if this > prev else '少'} {abs(this - prev) / prev * 100:.0f}%" if prev > 0 else "")]
+        this = sum(d["hours"] for d in days[-8:-1])
+        prev = sum(d["hours"] for d in days[-15:-8])
+        lines = [f"插座一共開了 {this:.0f} 小時" + (f"，比上週{'多' if this > prev else '少'} {abs(this - prev) / prev * 100:.0f}%" if prev > 0 else "")]
         top = sorted(((sum((p.get("days") or [])[-8:-1]) / 60, p["name"]) for p in rep["plugs"]), reverse=True)[:3]
         if top and top[0][0] > 0:
             lines.append("開最久：" + "、".join(f"{n} {h:.0f} 小時" for h, n in top if h > 0))
@@ -3545,9 +3506,14 @@ class Hub:
         energy_month = self.store.energy.total(month_start)
         since = (today - timedelta(days=13)).isoformat()
         per_day = self.store.energy.per_day(since)
+        # 使用時間：插座自己記錄的每天開了幾分鐘（17 個加起來）
+        use_day: dict[str, float] = {}
+        for use in self._usage.values():
+            for d, minutes in (use.get("days") or {}).items():
+                use_day[d] = use_day.get(d, 0.0) + minutes
         history = [
-            {"day": (today - timedelta(days=i)).isoformat(),
-             "kwh": round(per_day.get((today - timedelta(days=i)).isoformat(), 0.0), 3)}
+            {"day": (d := (today - timedelta(days=i)).isoformat()),
+             "kwh": round(per_day.get(d, 0.0), 3), "hours": round(use_day.get(d, 0.0) / 60, 1)}
             for i in range(13, -1, -1)
         ]
         plugs = []
@@ -3604,6 +3570,8 @@ class Hub:
                 "price": price,
                 "season": "夏月" if tariff.is_summer(today) else "非夏月",
                 "history": history,
+                "hours_today": round(use_day.get(today.isoformat(), 0.0) / 60, 1),
+                "on_count": sum(1 for p in self.plugs.values() if p.online and p.is_on),
             },
             "now": time.time(),
             "scenes": self.store.scenes,

@@ -590,7 +590,7 @@ export function MapPage() {
             </div>
           ) : (
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-              <div className="w-80 max-w-full"><Segmented label="圖層" value={layer} onChange={setLayer} options={[["signal", "訊號強度"], ["coverage", "預估覆蓋"], ["motion", "動靜"], ["activity", "活動"]]} /></div>
+              <div className="max-w-full overflow-x-auto"><Segmented label="圖層" value={layer} onChange={setLayer} options={[["signal", "訊號強度"], ["coverage", "預估覆蓋"], ["motion", "動靜"], ["activity", "活動"]]} /></div>
               <div className="ml-auto flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground" aria-hidden>
                 {layer === "activity" ? (
                   <span className="inline-flex items-center gap-1">少{[0.15, 0.35, 0.6, 0.9].map((a) => <i key={a} className="size-3 rounded-sm bg-primary" style={{ opacity: a }} />)}常有人</span>
