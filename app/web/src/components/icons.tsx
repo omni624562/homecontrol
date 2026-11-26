@@ -35,12 +35,22 @@ export const AirFryer = createLucideIcon("air-fryer", [
   ["path", { d: "M9.5 14.5h5", key: "f4" }],
 ]);
 
+// 嵌燈：天花板裡的燈，光往下照；lucide 沒有
+export const Downlight = createLucideIcon("downlight", [
+  ["path", { d: "M2 5h20", key: "d1" }],
+  ["path", { d: "M7 5v1a3 3 0 0 0 3 3h4a3 3 0 0 0 3-3V5", key: "d2" }],
+  ["path", { d: "M12 13v4", key: "d3" }],
+  ["path", { d: "m7 12-2 3.5", key: "d4" }],
+  ["path", { d: "m17 12 2 3.5", key: "d5" }],
+]);
+
 // 裝置可以自己選的圖示（代碼要跟後端 store.ICONS 一致）
 export const DEVICE_ICONS: { key: string; label: string; group: "燈" | "家電" | "其他"; icon: LucideIcon }[] = [
   { key: "lamp-floor", label: "立燈", group: "燈", icon: LampFloor },
   { key: "lamp-desk", label: "檯燈", group: "燈", icon: LampDesk },
   { key: "lamp-ceiling", label: "吊燈", group: "燈", icon: LampCeiling },
   { key: "lamp-wall", label: "壁燈", group: "燈", icon: LampWallUp },
+  { key: "downlight", label: "嵌燈", group: "燈", icon: Downlight },
   { key: "led-strip", label: "LED 條燈", group: "燈", icon: LedStrip },
   { key: "bulb", label: "燈泡", group: "燈", icon: Lightbulb },
   { key: "sparkles", label: "裝飾燈", group: "燈", icon: Lamp },
@@ -75,6 +85,7 @@ const GUESS: [RegExp, string][] = [
   [/立燈|落地燈|floor|standing/, "lamp-floor"],
   [/檯燈|台燈|desk/, "lamp-desk"],
   [/吊燈|ceiling|pendant/, "lamp-ceiling"],
+  [/嵌燈|崁燈|筒燈|downlight|recessed/, "downlight"],
   [/壁燈|wall/, "lamp-wall"],
   [/聖誕|xmas|christmas/, "tree"],
   [/燈條|條燈|燈帶|led|strip/, "led-strip"],
