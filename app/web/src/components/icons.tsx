@@ -1,8 +1,16 @@
 import {
   Bed, Building2, Cloud, CloudDrizzle, CloudFog, CloudLightning, CloudMoon, CloudRain, CloudRainWind, CloudSnow, CloudSun,
-  CookingPot, Droplet, Fan, Flower2, Home, Laptop, Lightbulb, LogIn, LogOut, Moon, Plug, Sofa, Star, Sun, Tv,
-  type LucideIcon,
+  CookingPot, Droplet, Fan, Flower2, Home, Laptop, Lightbulb, LogIn, LogOut, Moon, Sofa, Star, Sun, Tv,
+  createLucideIcon, type LucideIcon,
 } from "lucide-react";
+
+// 牆上的插座（台灣式：兩個直孔＋下面半圓接地孔）；lucide 只有插頭，沒有插座
+export const Outlet = createLucideIcon("outlet", [
+  ["rect", { x: "3", y: "3", width: "18", height: "18", rx: "4", key: "o1" }],
+  ["path", { d: "M9 8v4", key: "o2" }],
+  ["path", { d: "M15 8v4", key: "o3" }],
+  ["path", { d: "M10.5 17a1.5 1.5 0 0 1 3 0z", key: "o4" }],
+]);
 
 // 依名稱猜插座的圖示
 export function deviceIcon(name: string): LucideIcon {
@@ -12,7 +20,7 @@ export function deviceIcon(name: string): LucideIcon {
   if (/電視|tv|螢幕|screen|monitor/.test(n)) return Tv;
   if (/澆水|water/.test(n)) return Droplet;
   if (/電腦|筆電|laptop|pc/.test(n)) return Laptop;
-  return Plug;
+  return Outlet;
 }
 
 // 舊版存的是 MDI 圖示名稱：換成對應的 lucide 圖示
