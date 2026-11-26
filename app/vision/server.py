@@ -258,7 +258,7 @@ class RtmoPose:
             ft = (sum(q[1] for q in ank) / len(ank), sum(q[0] for q in ank) / len(ank)) if ank else ((x0 + x1) / 2 / w, y1 / h)
             people.append({"score": round(float(b[4]), 3), "torso": vision_mod.torso_deg(k), "aspect": bh / bw,
                            "box": (int(x0), int(y0), int(bw), int(bh)), "foot": (min(1.0, max(0.0, ft[0])), min(1.0, max(0.0, ft[1]))),
-                           "kp": [[round(q[0], 4), round(q[1], 4), round(q[2], 3)] for q in k]})  # 17 個關節點（y, x, 分數）：手勢用
+                           "kp": [[round(q[0], 4), round(q[1], 4), round(q[2], 3)] for q in k]})  # 17 個關節點（y, x, 分數）：跌倒偵測用
         return people
 
 
@@ -329,7 +329,6 @@ faces = faces_mod.Engine()
 segmenter: Segmenter | None = None
 streams: Streams | None = None
 index: Index | None = None
-hands = None  # 手指手勢（測試中，第一次用到才載入）
 stat = Stat()
 
 
@@ -450,22 +449,6 @@ class Handler(BaseHTTPRequestHandler):
                     since = 0.0
                 ear = streams.ears.get(parts[1])
                 self._json(200, {**cam.state(since), "sounds": ear.recent(since) if ear else [], "sound_error": ear.error if ear else None})
-                return
-            if parts[2] == "hands":  # 手指手勢（測試中）：最新畫面＋最近一次的姿勢
-                global hands
-                if hands is None:
-                    from hands import Hands
-
-                    hands = Hands()
-                with cam.lock:
-                    img = cam.frame
-                    poses = list(cam.poses)
-                if img is None or not poses:
-                    self._json(200, {"hands": [], "note": "還沒有畫面或姿勢（要有人、而且這台開了手勢或跌倒偵測）"})
-                    return
-                t, people = poses[-1]
-                save = (parse_qs(u.query).get("save") or ["0"])[0] == "1"
-                self._json(200, {"t": t, "age": round(time.time() - t, 1), "hands": hands.analyze(img, people, save)})
                 return
             if parts[2] == "frame.jpg":
                 data = cam.jpeg()

@@ -139,9 +139,7 @@ class GpuVision:
 
         if not self.url or time.time() - self._fail_at < RETRY:
             return
-        g = self._settings().get("gestures") or {}
-        want = {c["id"]: {"url": rtsp_url(c), "ignore": c.get("ignore") or [], "pose": bool(c.get("fall")),
-                          "gesture": bool(g.get("on")) and g.get("cam") == c["id"], "sound": bool((c.get("sound") or {}).get("on"))}
+        want = {c["id"]: {"url": rtsp_url(c), "ignore": c.get("ignore") or [], "pose": bool(c.get("fall")), "sound": bool((c.get("sound") or {}).get("on"))}
                 for c in cams if c.get("enabled") and c.get("host")}
         sig = json.dumps([want, self._settings().get("night_enhance") is not False], sort_keys=True)
         if sig == self._pushed and time.time() - self._pushed_at < 300:
@@ -175,16 +173,8 @@ class GpuVision:
         self.last_ok = time.time()
         objs = [o for o in st.get("objects") or [] if float(o.get("score") or 0) >= KEEP]
         return {"scores": normalize(objs), "objects": objs[:20], "tracks": st.get("tracks") or [], "samples": st.get("samples") or [],
-                "poses": st.get("poses") or [], "gestures": st.get("gestures") or [], "gesture_now": st.get("gesture_now"),
+                "poses": st.get("poses") or [],
                 "sounds": st.get("sounds") or [], "sound_error": st.get("sound_error"), "jpeg": jpeg}
-
-    def gestures(self, cid: str, since: float) -> list[list[Any]]:
-        """只問手勢（每 0.25 秒一次、很小）：since 之後 Jetson 認到的手勢 [[時間, 名字], …]；連不上 → []。"""
-        raw = self._get(f"/cams/{urllib.parse.quote(cid)}/state?since={since:.2f}", timeout=2)
-        try:
-            return (json.loads(raw).get("gestures") or []) if raw else []
-        except ValueError:
-            return []
 
     def classify(self, jpeg: bytes, box: list[float]) -> str | None:
         """框裡多的是什麼（包裹、袋子、鞋子…）；看不出來、連不上 → None。"""

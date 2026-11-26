@@ -61,13 +61,11 @@ PROBE_MAX_AGE = 24 * 3600  # 超過一天沒看到的就不問了
 PRESENCE_LOG_MAX = 3000  # 誰在家的變化紀錄：最多這麼多筆、最多留 PRESENCE_LOG_DAYS 天（找回家習慣用）
 PRESENCE_LOG_DAYS = 60
 ARRIVE_LOOK = 15 * 60  # 回家後這麼久內手動打開的插座，算「回家會開的」
-ARRIVE_SOURCES = ("app", "matter", "button", "gesture")
+ARRIVE_SOURCES = ("app", "matter", "button")
 SOUNDS = {"alarm": "聽到煙霧／火災警報聲", "glass": "聽到玻璃破掉的聲音", "scream": "聽到有人大叫、呼救", "dog": "狗一直叫（超過 2 分鐘）"}
 SOUND_DEFAULT = {"alarm": "urgent", "glass": "urgent", "scream": "urgent", "dog": "normal"}
-GESTURES = {"f_open": "張開手掌", "f_fist": "握拳", "f_v": "比 YA", "f_point": "比 1", "f_thumbs": "比讚", "f_three": "比 3", "f_rock": "搖滾", "f_call": "打電話"}  # 舉手的手勢拿掉了（只留手指）
 FEET_KEEP = 10  # 一次來訪留最前面、最後面各幾筆腳的位置（每秒 5 筆）
 DOOR_NEAR = 0.06  # 腳離「大門」區域這麼近（畫面寬高的比例）算在家門口
-GESTURE_EVERY = 0.25  # 秒：開了手勢的那台多久問一次 Jetson 有沒有新手勢
 ITEM_ONE = {"包裹", "垃圾袋", "推車"}  # 「多了一個包裹」
 ITEM_TAKEN = {"包裹", "袋子", "外送餐點", "垃圾袋"}  # 被拿走時可以另外決定要不要通知（act.taken）
 
@@ -233,7 +231,6 @@ class Hub:
         self._sense_path = store.dir / "sensing.json.gz"
         self.sensing.load(self._sense_path)
         self._sense_saved = time.monotonic()
-        self._gesture_t = 0.0  # 最後處理過的手勢（Jetson 的時間）：快、慢兩條路拿到同一筆只算一次
         self._room_active: dict[str, float] = {}  # 房間 → 最後一次有動靜的時間
         self._room_cover: dict[str, float] = {}
         self._room_watch = time.time()  # 從什麼時候開始看房間動靜（判斷「一直很安靜」要看夠久）
@@ -297,6 +294,7 @@ class Hub:
         self._runtime_sig = ""
         self._restored: dict[str, str] = {}  # 上次看過、這次還沒找到的插座：裝置 MAC → IP
         self._load_runtime()
+        self.store.data["settings"].pop("gestures", None)  # 手勢遙控拿掉了：舊設定清掉
         if store.data.get("arrive_rules") is None:
             self._migrate_arrive_rules()
 
@@ -425,7 +423,6 @@ class Hub:
             asyncio.create_task(self._loop(self._save_runtime, 60)),
             asyncio.create_task(self._loop(self._sense_tick, SENSE_INTERVAL)),
             asyncio.create_task(self._loop(self._camera_tick, camera.EVERY)),
-            asyncio.create_task(self._loop(self._gesture_tick, GESTURE_EVERY)),
             asyncio.create_task(self._loop(self._local_tick, 15)),
             asyncio.create_task(self.router.run()),
             asyncio.create_task(self._loop(self._probe_tick, 120)),
@@ -1478,8 +1475,6 @@ class Hub:
                 self._empty_off(c, now)
             if (c.get("still") or {}).get("on"):
                 self._still_check(c, now)
-            if self.cameras.state.get(c["id"], {}).get("gestures"):
-                self._gesture_events(c, now)
             if self.cameras.state.get(c["id"], {}).get("sounds"):
                 self._sound_events(c)
             self._activity_feed(c, now)
@@ -2286,53 +2281,6 @@ class Hub:
                 self.notifier.send(f"{name}：Claude 看了", txt)
 
         self._spawn(go())
-
-    async def _gesture_tick(self) -> None:
-        """手勢要反應快：開了手勢的那台另外每 0.25 秒問一次 Jetson（每秒一次的攝影機巡邏太慢）。"""
-        g = self.store.data["settings"].get("gestures") or {}
-        cam = next((c for c in self.cameras.list if c["id"] == g.get("cam") and c.get("enabled")), None) if g.get("on") else None
-        if cam is None or not self.gpu.url:
-            return
-        events = await asyncio.to_thread(self.gpu.gestures, cam["id"], max(self._gesture_t, time.time() - 5))
-        if events:
-            self.cameras.state.setdefault(cam["id"], {})["gestures"] = events
-            self._gesture_events(cam, time.time())
-
-    def _gesture_events(self, cam: dict[str, Any], now: float) -> None:
-        """Jetson 看到維持夠久的手勢：照設定開關插座、執行情境或全部關掉（同一個手勢 10 秒內只算一次）。"""
-        g = self.store.data["settings"].get("gestures") or {}
-        events = [e for e in self.cameras.state[cam["id"]].pop("gestures", None) or [] if float(e[0]) > self._gesture_t]  # 快、慢兩條路都會拿到：同一筆只算一次
-        if not events:
-            return
-        self._gesture_t = max(float(e[0]) for e in events)
-        if not g.get("on") or g.get("cam") != cam["id"]:
-            return
-        for _, name in events:
-            act = (g.get("map") or {}).get(name) if name in GESTURES else None
-            if not act or not self._face_once(f"gesture:{name}", 10, now):
-                continue
-            label = GESTURES.get(name, name)
-            if act.get("type") in ("plug", "plug_on", "plug_off") and act.get("id") in self.plugs:
-                plug = self.plugs[act["id"]]
-                on = {"plug": not plug.is_on, "plug_on": True, "plug_off": False}[act["type"]]
-                text = f"{'打開' if on else '關掉'}{self.name(plug)}"
-                self._spawn(self._gesture_power(plug.id, on))
-            elif act.get("type") == "scene" and self.store.scene(act.get("id") or ""):
-                text = f"執行「{self.store.scene(act['id'])['name']}」"
-                self._spawn(self.run_scene(act["id"], remember="undo"))
-            elif act.get("type") == "off":
-                text = "全部關掉"
-                self._spawn(self.turn_off(remember="undo"))
-            else:
-                continue
-            self.face_log.add({"camera": cam.get("name"), "kind": "zone", "name": f"手勢（{label}）：{text}", "sim": None})
-
-    async def _gesture_power(self, plug_id: str, on: bool) -> None:
-        try:
-            SOURCE.set("gesture")
-            await self.set_power(plug_id, on)
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.warning("手勢沒有%s %s：%s", "打開" if on else "關掉", plug_id, err)
 
     def empty_cancel(self, cid: str) -> None:
         e = self.cameras.state.setdefault(cid, {}).setdefault("empty", {"done": False, "pending": None})

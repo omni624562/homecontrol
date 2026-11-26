@@ -23,40 +23,6 @@ MATCH_IOU = 0.25  # 跟上一張的框重疊這麼多算同一個人
 LOST_S = 2.0  # 秒：多久沒看到就當作走了
 SAMPLES_KEEP = 20  # 秒：腳的位置的紀錄留多久
 POSE_EVERY = 0.4  # 秒：開了跌倒偵測、又有人時，多久算一次姿勢（每秒 2.5 次）
-GESTURE_POSE_EVERY = 0.2  # 秒：開了手勢的那台每張都看（每秒 5 次），反應才快
-GESTURE_HOLD = 3.0  # 秒：手勢要維持這麼久才算（伸懶腰、拿東西不會誤觸）
-GESTURE_GAP = 0.9  # 秒：中間看不清楚這麼短不算放下
-FINGER_HOLD = 1.5  # 秒：手指手勢維持這麼久才算（1 秒太短：吃東西拿筷子會被當成比 YA）
-FINGER_MIN_PX = 100  # 手（裁下來的那一塊）至少這麼大：太遠的、房間裡別人隨手的動作不算
-FINGER_MIN_P = 0.85  # 手部模型「這是手」的把握
-FINGERS = {"open": "f_open", "fist": "f_fist", "v": "f_v", "point": "f_point", "thumbs_up": "f_thumbs", "three": "f_three", "rock": "f_rock", "call": "f_call"}
-
-
-def gesture(kp: list[list[float]]) -> str | None:
-    """17 個關節點（y, x, 分數；0～1）→ 手勢：one_up 舉一隻手、both_up 舉雙手、cross 雙手在胸前交叉；都不是 → None。"""
-    def ok(i: int) -> bool:
-        return kp[i][2] >= 0.3
-
-    if not all(ok(i) for i in (5, 6, 9, 10)):
-        return None
-    y = lambda i: kp[i][0]  # noqa: E731
-    x = lambda i: kp[i][1]  # noqa: E731
-    sh = (y(5) + y(6)) / 2
-    sw = max(1e-3, abs(x(5) - x(6)))
-    hip = (y(11) + y(12)) / 2 if ok(11) and ok(12) else sh + 2.5 * sw
-    torso = max(1e-3, hip - sh)
-    head = y(0) if ok(0) else sh - 0.6 * torso
-    up_l = y(9) < head - 0.05 * torso and (not ok(7) or y(7) < sh)
-    up_r = y(10) < head - 0.05 * torso and (not ok(8) or y(8) < sh)
-    if up_l and up_r:
-        return "both_up"
-    if up_l or up_r:
-        low = 10 if up_l else 9
-        return "one_up" if y(low) > sh else None
-    chest = lambda v: sh - 0.1 * torso < v < sh + 0.8 * torso  # noqa: E731
-    if chest(y(9)) and chest(y(10)) and (x(9) - x(10)) * (x(5) - x(6)) < 0 and abs(x(9) - x(10)) < 1.2 * sw:
-        return "cross"
-    return None
 JPEG_Q = 85
 
 
@@ -148,14 +114,8 @@ class Cam:
         self.id, self.url, self.ignore = cid, url, ignore
         self.detect = detect
         self.pose, self.pose_on = pose, pose_on
-        self.gesture_on = False
         self.poses: deque = deque()  # (t, [姿勢])：跌倒偵測用
         self.pose_t = 0.0
-        self.g_cur: tuple[str | None, float, float] = (None, 0.0, 0.0)  # (手勢, 從什麼時候開始, 最後一次看到)
-        self.g_fired = False
-        self.g_events: deque = deque()  # (t, 手勢)：維持夠久的手勢
-        self.g_hand: dict[str, Any] | None = None
-        self.hands: Callable[[np.ndarray, list], list] | None = None  # 手指手勢（Streams 給）
         self.stop = False
         self.lock = threading.Lock()
         self.frame: np.ndarray | None = None
@@ -211,11 +171,9 @@ class Cam:
         people = [o for o in objs if o["name"] == "person" and o["score"] >= PERSON_MIN]
         tracks = self.tracker.update(people, now)
         pose = None
-        if (self.pose_on or self.gesture_on) and self.pose and tracks and now - self.pose_t >= (GESTURE_POSE_EVERY if self.gesture_on else POSE_EVERY) - 0.02:
+        if self.pose_on and self.pose and tracks and now - self.pose_t >= POSE_EVERY - 0.02:
             self.pose_t = now
             pose = self.pose(seen)
-            if self.gesture_on and pose is not None:
-                self._gesture(pose, now, seen)
         with self.lock:
             if pose is not None:
                 self.poses.append((round(now, 2), pose))
@@ -233,39 +191,7 @@ class Cam:
         with self.lock:
             return {"t": round(self.frame_t, 2), "ok": self.error is None and time.time() - self.frame_t < 5, "error": self.error, "fps": self.fps,
                     "person": round(self.person, 3), "objects": self.objects, "tracks": self.tracks,
-                    "samples": [s for s in self.samples if s[0] > since], "poses": [p for p in self.poses if p[0] > since],
-                    "gestures": [g for g in self.g_events if g[0] > since],
-                    "gesture_now": {"name": self.g_cur[0], "held": round(self.g_cur[2] - self.g_cur[1], 1),
-                                    "need": FINGER_HOLD if self.g_cur[0].startswith("f_") else GESTURE_HOLD,
-                                    "hand": {k: self.g_hand[k] for k in ("points", "px", "presence")} if self.g_hand else None}
-                    if self.g_cur[0] and time.time() - self.g_cur[2] < 2 else None}
-
-    def _gesture(self, people: list[dict[str, Any]], now: float, img: np.ndarray | None = None) -> None:
-        """手指手勢（舉手的手勢已經拿掉）；同一個手勢維持夠久算一次（放下前不重複）。"""
-        g = None
-        hand = None
-        if img is not None and self.hands is not None:
-            found = [h for h in self.hands(img, people) if h["px"] >= FINGER_MIN_PX and h["presence"] >= FINGER_MIN_P and h.get("raised", True) and h["gesture"] in FINGERS]
-            if found:
-                hand = max(found, key=lambda h: h["px"])
-                g = FINGERS[hand["gesture"]]
-        self.g_hand = hand
-        name, since, last = self.g_cur
-        if g and g == name:
-            self.g_cur = (g, since, now)
-        elif g:
-            self.g_cur, self.g_fired = (g, now, now), False
-        elif name and now - last > GESTURE_GAP:
-            self.g_cur, self.g_fired = (None, 0.0, 0.0), False
-        name, since, last = self.g_cur
-        if name and not self.g_fired and last - since >= (FINGER_HOLD if name.startswith("f_") else GESTURE_HOLD):
-            self.g_fired = True
-            if self.g_hand:
-                LOG.info("%s 手勢 %s：手 %s 像素、把握 %.2f", getattr(self, "id", "?"), name, self.g_hand.get("px"), self.g_hand.get("presence") or 0)
-            with self.lock:
-                self.g_events.append((round(now, 2), name))
-                while self.g_events and now - self.g_events[0][0] > SAMPLES_KEEP:
-                    self.g_events.popleft()
+                    "samples": [s for s in self.samples if s[0] > since], "poses": [p for p in self.poses if p[0] > since]}
 
     def jpeg(self) -> bytes | None:
         with self.lock:
@@ -284,7 +210,6 @@ class Streams:
         self.detect = detect
         self.pose = pose
         self.ears: dict[str, Any] = {}  # 攝影機 → sound.Listener（有開聲音偵測的）
-        self._hands = None
         self._sound_model = None
         self.cams: dict[str, Cam] = {}
         self.lock = threading.Lock()
@@ -304,7 +229,6 @@ class Streams:
                 else:
                     self.cams[cid].ignore = c.get("ignore") or []
                     self.cams[cid].pose_on = bool(c.get("pose"))
-                    self.cams[cid].gesture_on = bool(c.get("gesture"))
             for cid in list(self.ears):  # 聲音：關掉的、換網址的停掉
                 c = want.get(cid)
                 if not c or not c.get("sound") or c["url"] != self.ears[cid].url:
@@ -322,22 +246,7 @@ class Streams:
             for cid, c in want.items():
                 if cid not in self.cams:
                     self.cams[cid] = Cam(cid, c["url"], c.get("ignore") or [], self.detect, self.pose, bool(c.get("pose")))
-                    self.cams[cid].gesture_on = bool(c.get("gesture"))
-            for cam in self.cams.values():  # 開了手勢的攝影機也看手指
-                if cam.gesture_on and cam.hands is None:
-                    cam.hands = self._hand_fn()
             return sorted(self.cams)
-
-    def _hand_fn(self) -> Callable[[np.ndarray, list], list] | None:
-        if self._hands is None:
-            try:
-                from hands import Hands
-
-                self._hands = Hands()
-            except Exception:  # noqa: BLE001
-                LOG.exception("手部模型載入失敗，只用舉手的手勢")
-                return None
-        return self._hands.analyze
 
     def get(self, cid: str) -> Cam | None:
         return self.cams.get(cid)

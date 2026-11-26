@@ -38,5 +38,5 @@ if ! ssh "$HOST" "test -f ~/vision/models/yamnet/yamnet.tflite -a -f ~/vision/mo
   scp -q "$TMP/yamnet.tflite" "$TMP/yamnet_class_map.csv" "$HOST":vision/models/yamnet/
 fi
 scp -q ../plughub/__init__.py ../plughub/camera.py ../plughub/vision.py ../plughub/faces.py ../plughub/segment.py ../plughub/secretbox.py "$HOST":vision/plughub/
-scp -q server.py stream.py index.py sound.py hands.py Dockerfile docker-compose.yml "$HOST":vision/
+scp -q server.py stream.py index.py sound.py Dockerfile docker-compose.yml "$HOST":vision/
 ssh "$HOST" "cd ~/vision && VISION_TOKEN='$TOKEN' VISION_MODEL='${VISION_MODEL:-yolox_m}' docker compose up -d --build && docker ps --filter name=vision --format '{{.Status}}'"
