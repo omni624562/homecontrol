@@ -16,6 +16,8 @@ from typing import Any, Callable
 import cv2
 import numpy as np
 
+from ghost import Ghosts
+
 LOG = logging.getLogger("vision.stream")
 FPS = 5  # 每秒看幾張
 PERSON_MIN = 0.55  # 追蹤的人至少要這個分數（YOLOX-m；跟樹莓派判斷「有人」同一個門檻）
@@ -110,8 +112,10 @@ def mask(img: np.ndarray, polys: list[list[list[float]]]) -> np.ndarray:
 
 class Cam:
     def __init__(self, cid: str, url: str, ignore: list, detect: Callable[[np.ndarray], list[dict[str, Any]]],
-                 pose: Callable[[np.ndarray], list[dict[str, Any]] | None] | None = None, pose_on: bool = False) -> None:
+                 pose: Callable[[np.ndarray], list[dict[str, Any]] | None] | None = None, pose_on: bool = False, ghost: bool = False) -> None:
         self.id, self.url, self.ignore = cid, url, ignore
+        self.ghost = ghost  # 門口的攝影機：一直不動、分數不高的「人」不算（鞋子、雨傘）
+        self.ghosts = Ghosts()
         self.detect = detect
         self.pose, self.pose_on = pose, pose_on
         self.poses: deque = deque()  # (t, [姿勢])：跌倒偵測用
@@ -168,6 +172,8 @@ class Cam:
     def _process(self, img: np.ndarray, now: float) -> None:
         seen = enhance(img)  # 天黑時先提亮再辨識
         objs = self.detect(mask(seen, self.ignore))
+        if self.ghost:
+            objs = self.ghosts.filter(objs, now)
         people = [o for o in objs if o["name"] == "person" and o["score"] >= PERSON_MIN]
         tracks = self.tracker.update(people, now)
         pose = None
@@ -229,6 +235,7 @@ class Streams:
                 else:
                     self.cams[cid].ignore = c.get("ignore") or []
                     self.cams[cid].pose_on = bool(c.get("pose"))
+                    self.cams[cid].ghost = bool(c.get("ghost"))
             for cid in list(self.ears):  # 聲音：關掉的、換網址的停掉
                 c = want.get(cid)
                 if not c or not c.get("sound") or c["url"] != self.ears[cid].url:
@@ -245,7 +252,7 @@ class Streams:
                         LOG.exception("聲音偵測載入失敗")
             for cid, c in want.items():
                 if cid not in self.cams:
-                    self.cams[cid] = Cam(cid, c["url"], c.get("ignore") or [], self.detect, self.pose, bool(c.get("pose")))
+                    self.cams[cid] = Cam(cid, c["url"], c.get("ignore") or [], self.detect, self.pose, bool(c.get("pose")), bool(c.get("ghost")))
             return sorted(self.cams)
 
     def get(self, cid: str) -> Cam | None:

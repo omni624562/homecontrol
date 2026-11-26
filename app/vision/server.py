@@ -411,7 +411,7 @@ class Handler(BaseHTTPRequestHandler):
                 day = date.fromisoformat((parse_qs(u.query).get("day") or [""])[0])
             except ValueError:
                 day = date.today() - timedelta(days=1)
-            self._json(200, index.summary(day))
+            self._json(200, index.summary(day, {cid for cid, c in streams.cams.items() if c.ghost} if streams else None))
             return
         if u.path == "/status":
             cams = {cid: {k: v for k, v in c.state(time.time()).items() if k in ("ok", "error", "fps", "t")} for cid, c in (streams.cams.items() if streams else [])}
