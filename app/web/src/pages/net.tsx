@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useState, type ReactNode } from "react";
-import { Activity, AlertCircle, BarChart3, Cable, ChevronRight, CircleHelp, Home, Info, Plug, Plus, ShieldCheck, Router, Stethoscope, User, Wand2, Wifi, WifiOff } from "lucide-react";
+import { Outlet } from "@/components/icons";
+import { Activity, AlertCircle, BarChart3, Cable, ChevronRight, CircleHelp, Home, Info, Plus, ShieldCheck, Router, Stethoscope, User, Wand2, Wifi, WifiOff } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -390,7 +391,7 @@ export function NetPage() {
                 <div className="divide-y border-t">{offline.map((c) => <DevRow key={c.mac} c={c} />)}</div>
               </>
             )}
-            {plugCount > 0 && <div className="border-t"><Foot icon={Plug}>另外還有 {plugCount} 台插座（在首頁管理）</Foot></div>}
+            {plugCount > 0 && <div className="border-t"><Foot icon={Outlet}>另外還有 {plugCount} 台插座（在首頁管理）</Foot></div>}
           </NCard>
         </div>
         <p className="text-sm leading-relaxed text-muted-foreground">從路由器讀（只讀，不改路由器的設定）。點裝置可以取名字、指定是誰的、放到訊號地圖。</p>
