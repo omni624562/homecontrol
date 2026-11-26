@@ -1,7 +1,7 @@
 import {
   AirVent, Bath, BatteryCharging, Bed, Building2, Cctv, Cloud, CloudDrizzle, CloudFog, CloudLightning, CloudMoon, CloudRain, CloudRainWind,
-  CloudSnow, CloudSun, Coffee, CookingPot, Droplet, Fan, Fish, Flower2, Gamepad2, Heater, Home, LampCeiling, LampDesk, LampFloor, LampWallUp,
-  Laptop, Lightbulb, LogIn, LogOut, Microwave, Monitor, Moon, Printer, Refrigerator, Router, Sofa, Sparkles, Speaker, Sprout, Star, Sun,
+  CloudSnow, CloudSun, Coffee, CookingPot, Droplet, Fan, Fish, Flower2, Gamepad2, Heater, Home, Lamp, LampCeiling, LampDesk, LampFloor, LampWallUp,
+  Laptop, Lightbulb, LogIn, LogOut, Microwave, Monitor, Moon, Printer, Refrigerator, Router, Sofa, Speaker, Sprout, Star, Sun,
   TreePine, Tv, WashingMachine,
   createLucideIcon, type LucideIcon,
 } from "lucide-react";
@@ -21,7 +21,7 @@ export const DEVICE_ICONS: { key: string; label: string; group: "燈" | "家電"
   { key: "lamp-ceiling", label: "吊燈", group: "燈", icon: LampCeiling },
   { key: "lamp-wall", label: "壁燈", group: "燈", icon: LampWallUp },
   { key: "bulb", label: "燈泡", group: "燈", icon: Lightbulb },
-  { key: "sparkles", label: "裝飾燈", group: "燈", icon: Sparkles },
+  { key: "sparkles", label: "裝飾燈", group: "燈", icon: Lamp },
   { key: "fan", label: "風扇", group: "家電", icon: Fan },
   { key: "aircon", label: "冷氣", group: "家電", icon: AirVent },
   { key: "heater", label: "電暖器", group: "家電", icon: Heater },
