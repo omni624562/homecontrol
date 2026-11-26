@@ -336,6 +336,8 @@ def test_plug_usage_habit(app_module):
     # 1.5 kW × 0.5 h × 0.7 = 0.525 度／天 → 平均 21.9 W
     assert usage_watts(u) == 21.9
     assert c.patch(f"/api/plugs/{pid}", json={"usage": {**u, "days": 9}}).status_code == 400
+    assert c.patch(f"/api/plugs/{pid}", json={"usage": {**u, "times": 21}}).status_code == 400
+    assert c.patch(f"/api/plugs/{pid}", json={"usage": {**u, "kind": "microwave", "times": 8, "minutes": 2}}).status_code == 200
     assert c.patch(f"/api/plugs/{pid}", json={"usage": {**u, "kind": "rocket"}}).status_code == 400
     assert c.patch(f"/api/plugs/{pid}", json={"usage": u}).status_code == 200
     meta = app_module.store.meta(pid)

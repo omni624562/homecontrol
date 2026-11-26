@@ -21,15 +21,27 @@ const KINDS: { key: string; label: string; watts: number; duty: number }[] = [
 const kindOf = (k: string) => KINDS.find((x) => x.key === k);
 const useKwh = (u: Usage) => (u.watts / 1000) * (u.minutes / 60) * (kindOf(u.kind)?.duty ?? 1);
 
-function Pick<T extends string | number>({ label, value, opts, onChange }: { label: string; value: T; opts: [T, string][]; onChange: (v: T) => void }) {
+function Pick({ label, value, opts, onChange, custom }: { label: string; value: number; opts: [number, string][]; onChange: (v: number) => void; custom?: { max: number; unit: string } }) {
+  const isOwn = !opts.some(([v]) => v === value);
+  const [own, setOwn] = useState(isOwn ? String(value) : "");
+  const chip = (on: boolean) => cn("rounded-md border px-2.5 py-1 text-sm transition-colors hover:bg-accent", on && "border-primary bg-primary/10 font-medium text-primary");
   return (
     <div className="space-y-1">
       <div className="text-xs font-bold text-muted-foreground">{label}</div>
-      <div className="flex flex-wrap gap-1.5">
+      <div className="flex flex-wrap items-center gap-1.5">
         {opts.map(([v, l]) => (
-          <button key={String(v)} type="button" aria-pressed={v === value} onClick={() => onChange(v)}
-            className={cn("rounded-md border px-2.5 py-1 text-sm transition-colors hover:bg-accent", v === value && "border-primary bg-primary/10 font-medium text-primary")}>{l}</button>
+          <button key={v} type="button" aria-pressed={v === value} onClick={() => onChange(v)} className={chip(v === value)}>{l}</button>
         ))}
+        {custom && (
+          <label className={cn("flex items-center gap-1 rounded-md border px-2 py-0.5 text-sm", isOwn && "border-primary bg-primary/10 text-primary")}>
+            自訂
+            <Input type="number" inputMode="numeric" min={1} max={custom.max} value={own} aria-label={`自訂${label}`}
+              onFocus={() => Number(own) > 0 && onChange(Number(own))}
+              onChange={(e) => { setOwn(e.target.value); const n = Math.round(Number(e.target.value)); if (n >= 1 && n <= custom.max) onChange(n); }}
+              className="h-7 w-16 bg-background px-2" />
+            {custom.unit}
+          </label>
+        )}
       </div>
     </div>
   );
@@ -69,11 +81,11 @@ function UsageForm({ p, price, compact, onCancel, onSave }: { p: Plug; price?: n
         </div>
       </div>
       <Pick label="一週用幾天" value={u.days} opts={[[7, "每天"], [5, "5 天"], [3, "3 天"], [1, "1 天"]]} onChange={(v) => set({ days: v })} />
-      <Pick label="一天用幾次" value={u.times} opts={[[1, "1 次"], [2, "2 次"], [3, "3 次"]]} onChange={(v) => set({ times: v })} />
-      <Pick label="一次多久" value={u.minutes} opts={[[10, "10 分"], [20, "20 分"], [30, "30 分"], [45, "45 分"], [60, "1 小時"]]} onChange={(v) => set({ minutes: v })} />
+      <Pick label="一天用幾次" value={u.times} opts={[[1, "1 次"], [2, "2 次"], [3, "3 次"], [5, "5 次"]]} onChange={(v) => set({ times: v })} custom={{ max: 20, unit: "次" }} />
+      <Pick label="一次多久" value={u.minutes} opts={[[3, "3 分"], [5, "5 分"], [10, "10 分"], [20, "20 分"], [30, "30 分"], [45, "45 分"], [60, "1 小時"]]} onChange={(v) => set({ minutes: v })} custom={{ max: 240, unit: "分" }} />
       {u.watts > 0 && (
         <div className="rounded-lg bg-emerald-500/10 px-3 py-2 text-sm">
-          用一次大約 <b className="text-emerald-700 dark:text-emerald-400">{fmt(Math.round(once * 100) / 100)} 度</b>、一個月 <b className="text-emerald-700 dark:text-emerald-400">{fmt(Math.round(month))} 度</b>
+          用一次大約 <b className="text-emerald-700 dark:text-emerald-400">{fmt(once, once < 0.1 ? 3 : 2)} 度</b>、一個月 <b className="text-emerald-700 dark:text-emerald-400">{fmt(month, month < 10 ? 1 : 0)} 度</b>
           {price ? <>、約 <b className="text-emerald-700 dark:text-emerald-400">${fmt(Math.round(month * price))}</b></> : null}
           {(kindOf(u.kind)?.duty ?? 1) < 1 && <div className="text-xs text-muted-foreground">到溫度後會斷斷續續加熱，已經打過折</div>}
         </div>
