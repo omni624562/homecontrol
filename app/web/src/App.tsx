@@ -2,7 +2,6 @@ import { Suspense, lazy, useEffect, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { HomePage } from "@/pages/home";
 import { AskProvider } from "@/components/ask-sheet";
-import { TruckRush } from "@/components/truck-rush";
 import { FxLayer } from "@/components/fx";
 import { Standby } from "@/components/standby";
 import { useLook } from "@/lib/look";
@@ -54,7 +53,6 @@ export default function App() {
       <AppShell tab={tab}>
         {Page ? <Suspense fallback={<div className="min-h-[60vh]" />}><Page /></Suspense> : <HomePage />}
       </AppShell>
-      <TruckRush />
       <FxLayer />
       <Standby />
     </AskProvider>

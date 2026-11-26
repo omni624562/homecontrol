@@ -20,7 +20,6 @@ import { WeatherKeys, WeatherSheet } from "@/components/weather-sheet";
 import { LifeSheet } from "@/components/life-sheet";
 import { SettingNumber } from "@/components/settings-bits";
 import { ArriveRules } from "@/components/arrive-rules";
-import { RUSH_STYLES, previewTruckRush } from "@/components/truck-rush";
 import { api } from "@/lib/api";
 import { SetupList, UsageList, useSetup } from "@/components/setup-bits";
 import { pad2 } from "@/lib/format";
@@ -1107,32 +1106,6 @@ export function SettingsPage() {
               onClick={() => setSheet("weather")}
             />
             <LinkRow label="生活資訊" hint="垃圾車、公車、YouBike、停水停電；選清運點、路線、你家的路名，在「生活」頁" href="#life" />
-            {state.calendar.local?.garbage_supported && (
-              <SRow wrap label="垃圾車快到時衝出來" hint="剩 2 站以內時，一台大垃圾車衝出來（一天一次）">
-                <div className="flex flex-wrap items-center justify-end gap-2">
-                  <Select
-                    value={state.calendar.local.truck_rush === false ? "off" : state.calendar.local.truck_rush_style || "random"}
-                    onValueChange={async (v) => {
-                      try {
-                        await api("PUT", "/api/local", v === "off" ? { truck_rush: false } : { truck_rush: true, truck_rush_style: v });
-                        if (v === "off") toast.success("不會再衝出來了");
-                        else previewTruckRush(v);
-                      } catch (e) {
-                        toast.error("沒有成功", { description: (e as Error).message });
-                      }
-                    }}
-                  >
-                    <SelectTrigger className="w-56 bg-background" aria-label="垃圾車衝出來的樣式"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="random">隨機</SelectItem>
-                      {RUSH_STYLES.map(([k, l]) => <SelectItem key={k} value={k}>{l}</SelectItem>)}
-                      <SelectItem value="off">關閉</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Button variant="outline" size="sm" disabled={state.calendar.local.truck_rush === false} onClick={() => previewTruckRush(state.calendar.local.truck_rush_style)}>預覽</Button>
-                </div>
-              </SRow>
-            )}
             <SRow label="趣味小動畫" hint="全部關閉時畫面暗一下、有人回家小人走進門、使用時間比上月少噴彩帶…">
               <Switch
                 checked={state.calendar.local?.fun !== false}

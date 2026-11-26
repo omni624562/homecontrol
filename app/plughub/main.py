@@ -2089,18 +2089,16 @@ async def local_map() -> dict[str, Any]:
 
 @app.put("/api/local")
 async def local_settings(body: dict = Body(...)) -> dict[str, Any]:
-    """生活資訊：{"stop": {"lineid", "rank"}, "roads": [路名], "garbage_notify", "outage_notify", "truck_rush"（快到時畫面上衝出一台垃圾車）, "bus_routes": [路線名], "bus_pick": {"路線代碼:方向": 站牌代碼｜"off"}, "bike_station": 站號, "bike_show"}；只存在樹莓派上。"""
+    """生活資訊：{"stop": {"lineid", "rank"}, "roads": [路名], "garbage_notify", "outage_notify", "bus_routes": [路線名], "bus_pick": {"路線代碼:方向": 站牌代碼｜"off"}, "bike_station": 站號, "bike_show"}；只存在樹莓派上。"""
     cfg = store.data["settings"].setdefault("local", {})
     if isinstance(body.get("stop"), dict):
         cfg["stop"] = {"lineid": str(body["stop"].get("lineid", ""))[:20], "rank": str(body["stop"].get("rank", ""))[:6]}
     if isinstance(body.get("roads"), list):
         cfg["roads"] = [str(r).strip()[:20] for r in body["roads"] if str(r).strip()][:8]
         hub.local.recheck()
-    for k in ("garbage_notify", "outage_notify", "truck_rush", "fun"):
+    for k in ("garbage_notify", "outage_notify", "fun"):
         if k in body:
             cfg[k] = bool(body[k])
-    if body.get("truck_rush_style") in ("side", "front", "drop", "reverse", "parade", "tilt", "chase", "random"):
-        cfg["truck_rush_style"] = body["truck_rush_style"]
     bike = cfg.setdefault("bike", {})
     if "bike_station" in body:  # 首頁顯示哪一站
         bike["station"] = str(body["bike_station"])[:12]
