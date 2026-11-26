@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { track } from "@/lib/usage";
 import { SetupNudge } from "@/components/setup-bits";
 import { SummaryCard } from "@/components/clip-player";
-import { DndContext, KeyboardSensor, PointerSensor, closestCorners, useDroppable, useSensor, useSensors, type DragEndEvent, type DragOverEvent } from "@dnd-kit/core";
+import { DndContext, KeyboardSensor, PointerSensor, closestCorners, useDroppable, useSensor, useSensors, type DragEndEvent, type DragOverEvent, MeasuringStrategy } from "@dnd-kit/core";
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Bike, Bus, DoorOpen, Moon, MessageSquareText, Droplets, Gauge, Home as HomeIcon, Loader2, Pencil, Power, Truck, Wifi, WifiOff, Zap } from "lucide-react";
@@ -91,10 +91,11 @@ function SortSide({ id, children }: { id: SideId; children: (handle: DragHandle,
   );
 }
 
-function RoomColumn({ id, children, dragging, empty }: { id: string; children: React.ReactNode; dragging: boolean; empty: boolean }) {
+// hide：沒在拖的時候，空的那一欄不佔位置（其他欄變寬）；開始拖才出現，讓房間可以拖過去
+function RoomColumn({ id, children, dragging, empty, hide }: { id: string; children: React.ReactNode; dragging: boolean; empty: boolean; hide?: boolean }) {
   const { setNodeRef, isOver } = useDroppable({ id });
   return (
-    <div ref={setNodeRef} className={cn("min-w-0", dragging && "min-h-24")}>
+    <div ref={setNodeRef} className={cn("min-w-0", dragging && "min-h-24", hide && "hidden")}>
       {children}
       {dragging && empty && (
         <div className={cn("flex h-24 items-center justify-center rounded-xl border-2 border-dashed text-sm text-muted-foreground", isOver && "border-primary bg-primary/5")}>拖到這裡</div>
@@ -270,6 +271,8 @@ export function HomePage() {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
   const [dragCols, setDragCols] = useState<string[][] | null>(null);
   const idCols = columns.map((c) => c.items.map(gid));
+  // 實際顯示幾欄：自己排的時候把某一欄拖空了，那欄不佔位置（拖曳中才全部顯示）
+  const shownCols = dragCols ? columns.length : Math.max(1, columns.filter((c) => c.items.length).length);
   const curCols = dragCols || idCols;
   const colOf = (cs: string[][], id: string) => (id.startsWith("col-") ? Number(id.slice(4)) : cs.findIndex((c) => c.includes(id)));
   const onDragOver = ({ active, over }: DragOverEvent) => {
@@ -543,12 +546,12 @@ export function HomePage() {
 
         <div className={cn(side && "grid grid-cols-[minmax(0,1fr)_20rem] items-start gap-4")}>
           <div className="min-w-0">
-            <div ref={gridRef} className="grid items-start gap-4" style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))` }}>
+            <div ref={gridRef} className="grid items-start gap-4" style={{ gridTemplateColumns: `repeat(${shownCols}, minmax(0, 1fr))` }}>
               {canDrag ? (
-                <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={() => setDragCols(idCols)} onDragOver={onDragOver} onDragEnd={onDragEnd} onDragCancel={() => setDragCols(null)}>
+                <DndContext sensors={sensors} collisionDetection={closestCorners} measuring={{ droppable: { strategy: MeasuringStrategy.Always } }} onDragStart={() => setDragCols(idCols)} onDragOver={onDragOver} onDragEnd={onDragEnd} onDragCancel={() => setDragCols(null)}>
                   {curCols.map((ids, i) => (
                     <SortableContext key={i} id={`col-${i}`} items={ids} strategy={verticalListSortingStrategy}>
-                      <RoomColumn id={`col-${i}`} dragging={!!dragCols} empty={!ids.length}>
+                      <RoomColumn id={`col-${i}`} dragging={!!dragCols} empty={!ids.length} hide={!dragCols && !ids.length}>
                         {ids.map((id) => {
                           const grp = groups.find((x) => gid(x) === id);
                           return grp ? <SortRoom key={id} g={grp} onOpen={(p) => setDevice(p.id)} onToggle={toggle} /> : null;
@@ -558,7 +561,7 @@ export function HomePage() {
                   ))}
                 </DndContext>
               ) : (
-                columns.map((c, i) => (
+                columns.filter((c) => c.items.length).map((c, i) => (
                   <div key={i} className="min-w-0">
                     {c.items.map((grp) => <RoomCard key={gid(grp)} g={grp} onOpen={(p) => setDevice(p.id)} onToggle={toggle} />)}
                   </div>
