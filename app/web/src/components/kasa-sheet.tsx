@@ -50,7 +50,7 @@ export function KasaSheet({ open, onClose }: { open: KasaOpen; onClose: () => vo
     setD({ sact: r.sact, mode: (["clock", "sunrise", "sunset"] as TimeMode[])[r.opt] || "clock", offset: r.opt ? r.val : 0, time: minText(r.opt ? ruleMin(r) : r.val), days: kasaDays(r.wday), enable: !!r.enable });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
-  const I = p ? deviceIcon(p.name) : null;
+  const I = p ? deviceIcon(p) : null;
   const up = (x: Partial<Draft>) => {
     setErr("");
     setD((v) => (v ? { ...v, ...x } : v));

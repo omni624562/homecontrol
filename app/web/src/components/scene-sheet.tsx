@@ -77,7 +77,7 @@ export function SceneSheet({ open, onClose }: { open: string | null; onClose: ()
 
   const row = (p: Plug) => {
     const act = d!.actions[p.id] || "keep";
-    const I2 = deviceIcon(p.name);
+    const I2 = deviceIcon(p);
     return (
       <div key={p.id} className={cn("flex items-center gap-3 rounded-xl px-2 py-2", act === "on" && "bg-amber-50 dark:bg-amber-500/10")}>
         <span className={cn("flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground", act === "on" && "bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300")}><I2 className="size-5" /></span>

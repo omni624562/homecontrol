@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 // 一個插座：點整列看詳細，右邊的開關直接開關
 export function PlugRow({ plug: p, onOpen, onToggle }: { plug: Plug; onOpen: () => void; onToggle: () => void }) {
   const { isOn, isPending, now, state } = useHub();
-  const Icon = p.online ? deviceIcon(p.name) : WifiOff;
+  const Icon = p.online ? deviceIcon(p) : WifiOff;
   const on = p.online && isOn(p);
   const pending = isPending(p.id);
   const t = now();

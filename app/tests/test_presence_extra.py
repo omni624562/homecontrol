@@ -301,3 +301,24 @@ def test_arrive_suggestions(hub):
 
     hub.store.data["arrive_rules"] = [arrive_rule(who="p1", plugs=[fan])]
     assert hub.arrive_suggestions() == []
+
+
+def test_plug_icon_pick(app_module):
+    import re
+    from pathlib import Path
+    from fastapi.testclient import TestClient
+    from plughub.store import ICONS
+
+    pid = _fake_plug(app_module.hub, "lamp")
+    c = TestClient(app_module.app, base_url="http://hub:8100")
+    token, _ = app_module.auth.pair(app_module.auth.new_code())
+    c.cookies.set("plughub_token", token)
+    assert c.patch(f"/api/plugs/{pid}", json={"icon": "rocket"}).status_code == 400
+    assert c.patch(f"/api/plugs/{pid}", json={"icon": "lamp-floor"}).status_code == 200
+    plug = next(p for p in c.get("/api/state").json()["plugs"] if p["id"] == pid)
+    assert plug["icon"] == "lamp-floor"
+    c.patch(f"/api/plugs/{pid}", json={"icon": None})
+    assert app_module.store.meta(pid).icon is None
+    # 前端圖庫的代碼要跟後端一致
+    src = (Path(__file__).parent.parent / "web/src/components/icons.tsx").read_text("utf-8")
+    assert set(re.findall(r'\{ key: "([a-z-]+)", label:', src)) == set(ICONS)
