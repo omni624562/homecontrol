@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Sheet } from "@/components/responsive-sheet";
+import { HScroll } from "@/components/h-scroll";
 import { RainLines } from "@/components/schedule-sheet";
 import { api } from "@/lib/api";
 import { weatherIcon } from "@/components/icons";
@@ -147,7 +148,7 @@ export function WeatherSheet({ open, onClose, inline }: { open: boolean; onClose
         {w.hourly.length > 0 && (
           <section className="rounded-2xl border p-3">
             <h3 className="mb-2 px-1 text-sm font-semibold">接下來 24 小時</h3>
-            <div className="scroll-area -mx-1 flex gap-1 overflow-x-auto pb-1 [scrollbar-gutter:auto]">
+            <HScroll label="接下來 24 小時" className="-mx-1 flex gap-1">
               {w.hourly.map((h, i) => {
                 const I = weatherIcon(h.code, h.text, h.day);
                 return (
@@ -159,7 +160,7 @@ export function WeatherSheet({ open, onClose, inline }: { open: boolean; onClose
                   </div>
                 );
               })}
-            </div>
+            </HScroll>
           </section>
         )}
         {days.length > 0 && (
