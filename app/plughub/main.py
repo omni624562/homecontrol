@@ -2296,6 +2296,10 @@ async def edit_net_device(mac: str, body: dict = Body(...)) -> dict[str, Any]:
         d["label"] = label or None
     if "trusted" in body:
         d["trusted"] = bool(body["trusted"])
+    if body.get("not_same"):  # 「可能是同一台」按了「不是」：這兩台不再建議
+        o = _mac(body["not_same"])
+        if o and o not in (d.get("not_same") or []):
+            d["not_same"] = [*(d.get("not_same") or []), o][-20:]
     if "same_as" in body:
         t = _mac(body["same_as"]) if body["same_as"] else None
         if body["same_as"] and (not t or t == m):

@@ -35,6 +35,7 @@ export interface NetData {
   now: number;
   nodes: { mac: string; model: string; ip: string; main: boolean }[];
   clients: NetClient[];
+  same_hints?: { main: string; sub: string; main_name: string; sub_name: string; why: string }[]; // 可能是同一台（按了才合）
 }
 
 export type Kind = "phone" | "tablet" | "watch" | "computer" | "tv" | "speaker" | "camera" | "nas" | "printer" | "network" | "other";

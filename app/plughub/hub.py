@@ -2550,6 +2550,11 @@ class Hub:
             self.store.data["net_seeded"] = True
             self._dirty = True
             return True
+        for m, n in r.names.items():  # 記住路由器給過的看得懂的名字（之後有時只剩 MSFT 5.0），判斷「同一台」用
+            host = n.get("name")
+            if m in known and host and not netprobe.raw_name(host) and known[m].get("host") != host:
+                known[m]["host"] = host[:40]
+                self._dirty = True
         new = [m for m in online if m not in known]
         for m in new:
             known[m] = {"first": now}
@@ -2884,6 +2889,8 @@ class Hub:
             "configured": r.configured, "ok": r.ok, "error": r.error,
             "updated": r.updated, "now": now,
             "nodes": r.nodes, "clients": clients,
+            "same_hints": same_hints(clients, {m: v.get("host") for m, v in known.items() if v.get("host")},
+                                     {(m, x) for m, v in known.items() for x in v.get("not_same") or []}),
         }
 
     def people_report(self) -> list[dict[str, Any]]:
@@ -3650,6 +3657,49 @@ async def _quiet_disconnect(device: Device) -> None:
         await device.disconnect()
     except Exception:  # noqa: BLE001
         pass
+
+
+_NAME_STOP = {"de", "the", "s", "of", "my", "and"}
+
+
+def _name_tokens(n: str | None) -> frozenset[str]:
+    return frozenset(w for w in re.findall(r"[a-z0-9]+", (n or "").lower()) if w not in _NAME_STOP)
+
+
+def same_hints(clients: list[dict[str, Any]], hosts: dict[str, str], no: set[tuple[str, str]]) -> list[dict[str, Any]]:
+    """可能是同一台的兩筆（名字一樣或很像，例如 LAPTOP-NAN／NAN LAPTOP、nan-de-Tab-S11／Tab S11）：只建議，使用者按了才合。
+    不建議：插座、已經合過的、按過「不是」的、兩個都是無線而且現在都連著的（同一台不會同時用兩個 Wi-Fi MAC）。"""
+    def names(c: dict[str, Any]) -> list[frozenset[str]]:
+        out = [c.get("label"), hosts.get(c["mac"]), c.get("guess")]
+        if c.get("router_name") and not netprobe.raw_name(c["router_name"]):
+            out.append(c["router_name"])
+        return [t for t in {_name_tokens(x) for x in out if x} if t]
+
+    def medium(c: dict[str, Any]) -> str:
+        return "有線" if c.get("wired") else c.get("band") or "Wi-Fi"
+
+    cands = [c for c in clients if not c.get("plug") and not c.get("links")]
+    out, used = [], set()
+    for i, a in enumerate(cands):
+        for b in cands[i + 1:]:
+            if a["mac"] in used or b["mac"] in used or (a["mac"], b["mac"]) in no or (b["mac"], a["mac"]) in no:
+                continue
+            if a["online"] and b["online"] and not a.get("wired") and not b.get("wired"):
+                continue
+            why = None
+            for ta in names(a):
+                for tb in names(b):
+                    if len(ta) >= 2 and ta == tb:
+                        why = "名字一樣"
+                    elif why is None and len(ta & tb) >= 2 and any(any(ch.isdigit() for ch in w) for w in ta & tb):
+                        why = "名字很像"
+            if not why:
+                continue
+            main, sub = sorted((a, b), key=lambda c: (not c.get("label"), not c.get("map"), c.get("first") or 9e12))
+            out.append({"main": main["mac"], "sub": sub["mac"], "main_name": main["name"], "sub_name": hosts.get(sub["mac"]) or sub["name"],
+                        "why": f"{why}：一個{medium(main)}、一個{medium(sub)}"})
+            used |= {a["mac"], b["mac"]}
+    return out[:5]
 
 
 def merge_same(clients: list[dict[str, Any]], same: dict[str, str]) -> list[dict[str, Any]]:
