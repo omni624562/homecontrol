@@ -7,6 +7,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet } from "@/components/responsive-sheet";
 import { ChoiceChip } from "@/components/schedule-bits";
 import { LocateSection } from "@/components/locate";
@@ -65,6 +66,17 @@ export function NetDevSheet({ mac, net, onClose, onSaved }: { mac: string | null
       toast.error("沒有成功", { description: (e as Error).message });
     }
   };
+  const same = async (sub: string, target: string | null) => {
+    try {
+      const n = await api<NetData>("PATCH", `/api/net/devices/${encodeURIComponent(sub)}`, { same_as: target });
+      toast.success(target ? "合成一台了" : "拆開了");
+      onSaved(n);
+      if (target) onClose();
+    } catch (e) {
+      toast.error("沒有成功", { description: (e as Error).message });
+    }
+  };
+  const others = net.clients.filter((x) => x.mac !== c.mac && !x.plug).sort((a, b) => a.name.localeCompare(b.name));
   const save = async () => {
     setBusy(true);
     try {
@@ -119,6 +131,33 @@ export function NetDevSheet({ mac, net, onClose, onSaved }: { mac: string | null
               <Switch id="nd-map" checked={map} onCheckedChange={setMap} />
             </Row>
           </Group>
+        )}
+        {!c.plug && (
+          <Section title="同一台裝置（同一台電腦用有線、無線會是兩個 MAC）">
+            {c.links ? (
+              <div className="divide-y rounded-xl border">
+                {c.links.map((l) => (
+                  <div key={l.mac} className="flex items-center gap-3 px-3 py-2.5 text-sm">
+                    <span className="min-w-0 flex-1">
+                      <span className="font-medium">{l.wired ? "有線" : l.band || "Wi-Fi"}</span>
+                      <span className="text-muted-foreground">・{l.online ? `連線中${l.ip ? `・${l.ip}` : ""}` : l.seen ? `最後看到 ${netAgo(l.seen, net.now)}` : "沒連線"}</span>
+                      <span className="block truncate text-xs text-muted-foreground tabular-nums">{l.mac}</span>
+                    </span>
+                    {!l.main && <Button type="button" variant="ghost" size="sm" onClick={() => same(l.mac, null)}>拆開</Button>}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <Select value="" onValueChange={(v) => same(c.mac, v)}>
+                <SelectTrigger className="h-11 w-full bg-background" aria-label="跟哪一台是同一台"><SelectValue placeholder="跟哪一台是同一台？" /></SelectTrigger>
+                <SelectContent>
+                  {others.map((x) => (
+                    <SelectItem key={x.mac} value={x.mac}>{x.name}・{x.wired ? "有線" : x.band || "Wi-Fi"}{x.ip ? `・${x.ip}` : ""}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </Section>
         )}
         <Group>
           <Row label="IP"><Value>{c.ip || "—"}</Value></Row>

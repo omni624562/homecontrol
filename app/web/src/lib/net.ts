@@ -24,6 +24,8 @@ export interface NetClient {
   person: string | null;
   plug: string | null;
   today_bytes: number | null;
+  // 同一台的有線、無線合成一筆時，每個 MAC 的連線（main = 這一筆的 MAC）
+  links?: { mac: string; wired: boolean; band: string | null; ip: string | null; online: boolean; seen: number | null; main: boolean }[];
 }
 
 export interface NetData {
