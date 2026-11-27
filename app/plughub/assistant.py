@@ -413,7 +413,7 @@ class Assistant:
         async def propose_schedule(time_hhmm: str, days: list[int], action: str, plug_ids: list[str] | None = None,
                                    scene_id: str | None = None, duration_minutes: float | None = None,
                                    time_mode: str = "clock", offset_minutes: int = 0,
-                                   skip_holiday: bool = False, skip_rain: bool = False) -> str:
+                                   skip_holiday: bool = False, skip_rain: bool = False, reason: str | None = None) -> str:
             """產生一個排程草稿，使用者按「建立」才會加上去（不會直接建立）。
 
             Args:
@@ -427,6 +427,7 @@ class Assistant:
                 offset_minutes: 日出／日落提早（負）或延後（正）幾分鐘
                 skip_holiday: 國定假日不執行
                 skip_rain: 下雨不執行（澆水用）
+                reason: 為什麼建議這個（從習慣建議時用；一句話附次數）
             """
             if action not in ("on", "off", "scene"):
                 return "action 要是 on、off 或 scene"
@@ -456,7 +457,7 @@ class Assistant:
                 ("，國定假日不執行" if skip_holiday else "") + ("，下雨不執行" if skip_rain else "")
             day_txt = "每天" if len(days) == 7 else "平日" if days == [0, 1, 2, 3, 4] else "週末" if days == [5, 6] else \
                 "星期" + "、".join(DAYS[d] for d in days)
-            pend("schedule", f"{day_txt} {when} {what}{extra}", body=body)
+            pend("schedule", f"{day_txt} {when} {what}{extra}", body=body, **({"reason": reason[:200]} if reason else {}))
             return "草稿好了，等使用者按「建立」"
 
         @beta_async_tool
@@ -512,7 +513,8 @@ class Assistant:
         @beta_async_tool
         async def propose_arrive_rule(who: str = "any", plug_ids: list[str] | None = None, scene_id: str | None = None,
                                       when: str = "all", start: str | None = None, end: str | None = None, days: str = "all",
-                                      only_when_home_was_empty: bool = False, on_for_minutes: int = 0, rule_id: str | None = None) -> str:
+                                      only_when_home_was_empty: bool = False, on_for_minutes: int = 0, rule_id: str | None = None,
+                                      reason: str | None = None) -> str:
             """產生一條「回家自動開」規則草稿（家人的手機連上家裡 Wi-Fi 就算回家），使用者按「建立」才會加上去。
 
             Args:
@@ -526,6 +528,7 @@ class Assistant:
                 only_when_home_was_empty: 只有家裡原本沒人時才做
                 on_for_minutes: 打開幾分鐘後自動關（0 = 不關）
                 rule_id: 要修改的舊規則 ID（get_automations 的 arrive_rules）；新規則不填
+                reason: 為什麼建議這個（從習慣建議時用；一句話附次數）
             """
             ppl = people_ids()
             if who != "any" and who not in ppl:
@@ -554,12 +557,13 @@ class Assistant:
             when_t = {"all": "", "dark": "、天黑後", "range": f"、{start}～{end}"}[when] + {"all": "", "weekday": "（平日）", "weekend": "（週末）"}[days]
             what = f"執行「{hub.store.scene(scene_id)['name']}」" if kind == "scene" else f"打開 {'、'.join(hub.name(hub.plugs[p]) for p in plugs)}"
             extra = ("，家裡原本沒人才做" if only_when_home_was_empty else "") + (f"，{body['for_min']} 分鐘後關" if body["for_min"] else "")
-            pend("arrive", f"{'修改回家規則：' if old else ''}{who_t}回家{when_t} → {what}{extra}", body=body, rule_id=rule_id)
+            pend("arrive", f"{'修改回家規則：' if old else ''}{who_t}回家{when_t} → {what}{extra}", body=body, rule_id=rule_id,
+                 **({"reason": reason[:200]} if reason else {}))
             return "草稿好了，等使用者按「建立」" if not old else "修改草稿好了，等使用者按「修改」"
 
         @beta_async_tool
         async def propose_motion_rule(room_id: str, plug_id: str, off_minutes: int = 5, start: str | None = None, end: str | None = None,
-                                      need_someone_home: bool = True) -> str:
+                                      need_someone_home: bool = True, reason: str | None = None) -> str:
             """產生一條「動靜自動化」規則草稿：房間有人走動（Wi-Fi 感測）就打開插座，沒動靜 off_minutes 分鐘後關掉。使用者按「建立」才會加上去。
 
             Args:
@@ -569,6 +573,7 @@ class Assistant:
                 start: 只在這段時間內作用，開始 "HH:MM"（整天就不填）
                 end: 結束 "HH:MM"
                 need_someone_home: 只有家裡有人時才做
+                reason: 為什麼建議這個（從習慣建議時用；一句話附次數）
             """
             rooms = fp_rooms()
             if room_id not in rooms:
@@ -581,7 +586,7 @@ class Assistant:
             body = {"room": room_id, "plug": p.id, "start": start, "end": end, "off_min": off, "need_home": bool(need_someone_home), "enabled": True}
             label = f"{rooms[room_id]}有動靜 → 打開 {hub.name(p)}，沒動靜 {off} 分鐘後關" + (f"（{start}～{end}）" if start else "") + \
                 ("，有人在家才做" if need_someone_home else "")
-            pend("motion", label, body=body)
+            pend("motion", label, body=body, **({"reason": reason[:200]} if reason else {}))
             return "草稿好了，等使用者按「建立」"
 
         @beta_async_tool
