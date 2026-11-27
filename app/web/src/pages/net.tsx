@@ -184,6 +184,15 @@ export function NetPage() {
   const unnamed = online.filter(raw).length;
   const sig = (v: number | null) => (v == null ? "" : v >= -60 ? "訊號好" : v >= -70 ? "訊號普通" : "訊號弱");
 
+  const sameAct = async (mac: string, body: Record<string, string>, ok: string) => {
+    try {
+      setNet(await api<NetData>("PATCH", `/api/net/devices/${encodeURIComponent(mac)}`, body));
+      toast.success(ok);
+    } catch (e) {
+      toast.error("沒有成功", { description: (e as Error).message });
+    }
+  };
+
   const DevRow = ({ c }: { c: NetClient }) => {
     const k = devKind(c);
     const I = KIND[k].icon;
@@ -206,7 +215,21 @@ export function NetPage() {
             {c.map && <span className="inline-flex items-center gap-0.5 rounded-md bg-muted px-1.5 text-xs leading-5 text-muted-foreground"><Wifi className="size-3" />地圖</span>}
             {c.first && net.now - c.first < day && <span className="rounded-md bg-amber-100 px-1.5 text-xs leading-5 font-medium text-amber-800 dark:bg-amber-500/15 dark:text-amber-300">新</span>}
           </span>
-          <span className="block truncate text-sm text-muted-foreground">{isRaw ? [c.name, where].filter(Boolean).join("・") : sub}</span>
+          {c.links ? (
+            // 同一台的幾種連線：連著的亮燈
+            <span className="flex flex-wrap items-center gap-x-3 text-sm text-muted-foreground">
+              {[...c.links].sort((a, b) => Number(b.online) - Number(a.online)).map((l) => (
+                <span key={l.mac} className="inline-flex items-center gap-1.5">
+                  <span aria-hidden className={cn("size-2 rounded-full", l.online ? "bg-emerald-500 shadow-[0_0_6px] shadow-emerald-500/70" : "border border-muted-foreground/50")} />
+                  {l.wired ? "有線" : l.band || "Wi-Fi"}{l.online && l.ip ? ` ${l.ip}` : ""}
+                  <span className="sr-only">{l.online ? "連線中" : "沒連線"}</span>
+                </span>
+              ))}
+              {!c.online && c.seen ? <span>最後看到 {netAgo(c.seen, net.now)}</span> : null}
+            </span>
+          ) : (
+            <span className="block truncate text-sm text-muted-foreground">{isRaw ? [c.name, where].filter(Boolean).join("・") : sub}</span>
+          )}
         </span>
         {!!c.today_bytes && <span className="shrink-0 text-sm tabular-nums text-muted-foreground">{fmtBytes(c.today_bytes)}</span>}
       </button>
@@ -237,6 +260,19 @@ export function NetPage() {
             <AlertCircle className="mt-0.5 size-4 shrink-0" />連不上路由器{net.error ? `：${net.error}` : ""}。下面是最後讀到的資料。
           </div>
         )}
+        {(net.same_hints || []).map((h) => (
+          <div key={`${h.main}${h.sub}`} className="flex flex-wrap items-center gap-3 rounded-xl border border-primary/20 bg-primary/5 p-3">
+            <Info className="size-5 shrink-0 text-primary" />
+            <div className="min-w-0 flex-1 basis-48 text-sm leading-relaxed">
+              <div className="font-semibold">可能是同一台：「{h.main_name}」和「{h.sub_name}」</div>
+              <div className="text-muted-foreground">{h.why}。合成一台後列表只剩一筆，看得到哪種連線連著（之後也能拆開）</div>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="ghost" size="sm" onClick={() => sameAct(h.sub, { not_same: h.main }, "不會再問這兩台")}>不是</Button>
+              <Button size="sm" onClick={() => sameAct(h.sub, { same_as: h.main }, "合成一台了")}>合成一台</Button>
+            </div>
+          </div>
+        ))}
         <div className="grid items-start gap-4 lg:grid-cols-2">
           <div className="min-w-0 space-y-4">
             {/* 誰在家 */}
