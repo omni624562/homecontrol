@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sheet } from "@/components/responsive-sheet";
 import { api } from "@/lib/api";
+import { applyAction } from "@/lib/actions";
 import { useHub } from "@/lib/hub";
 import type { AskAction } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -128,16 +129,7 @@ function AskSheet({ open, onClose, msgs, setMsgs, seed, clearSeed }: { open: boo
       setMsgs((ms) => ms.map((m, i) => (i !== mi ? m : { ...m, actions: m.actions?.map((a) => (a.id === x.id ? { ...a, ...patch } : a)) })));
     if (skip) return set({ state: "skip" });
     try {
-      if (x.kind === "power") await api("POST", `/api/plugs/${encodeURIComponent(x.plug!)}/power`, { on: x.on });
-      else if (x.kind === "all_off") await api("POST", "/api/off", {});
-      else if (x.kind === "schedule") await api("POST", "/api/schedules", x.body);
-      else if (x.kind === "scene") await api("POST", "/api/scenes", x.body);
-      else if (x.kind === "vision_on") await api("PUT", "/api/claude-vision", { on: true });
-      else if (x.kind === "arrive") await (x.rule_id ? api("PUT", `/api/arrive-rules/${encodeURIComponent(x.rule_id)}`, x.body) : api("POST", "/api/arrive-rules", x.body));
-      else if (x.kind === "motion") {
-        const cur = await api<{ rules: unknown[] }>("GET", "/api/motion-rules");
-        await api("PUT", "/api/motion-rules", { rules: [...cur.rules, x.body] });
-      }
+      await applyAction(x);
       set({ state: "done" });
     } catch (err) {
       set({ state: "err", err: (err as Error).message });

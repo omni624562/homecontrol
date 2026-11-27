@@ -22,6 +22,7 @@ import { useHub, useMedia, useTick } from "@/lib/hub";
 import { useLook } from "@/lib/look";
 import type { KasaRule, Plug, Schedule } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { IdeasCard, useIdeas } from "@/components/ideas-card";
 
 const clockSec = (epoch: number) => {
   const d = new Date(epoch * 1000);
@@ -119,6 +120,7 @@ function SchedSkeleton() {
 export function SchedulePage() {
   const { state, isOn, now } = useHub();
   const fun = useFun();
+  const [ideas, setIdeas] = useIdeas(); // Claude 從習慣建議的自動化
   const ruleMin = useRuleMin();
   const narrow = !useMedia("(min-width: 1024px)");
   const [sched, setSched] = useState<SchedOpen>(null);
@@ -217,7 +219,8 @@ export function SchedulePage() {
   if (c.day_off) calParts.push("今天放假");
   if (c.rain && state.schedules.some((x) => x.skip_rain)) calParts.push(`下雨：${c.rain}`);
 
-  const habitCard = habits.length > 0 && (
+  const ideasCard = ideas?.configured && ideas.items.length > 0 && <IdeasCard info={ideas} setInfo={setIdeas} />;
+  const habitCard = ideasCard || (habits.length > 0 && (
     <Card className="gap-0 overflow-hidden py-0">
       <CardHead icon={History} title="建議的排程" end={<Badge variant="secondary">{habits.length}</Badge>} />
       <div className="divide-y px-4 sm:px-5">
@@ -248,7 +251,7 @@ export function SchedulePage() {
       </div>
       <Foot>從你手動開關的紀錄找出來的（App、Google Home、插座上的按鈕都算）。按「不用」之後就不會再建議這一條。</Foot>
     </Card>
-  );
+  ));
 
   return (
     <>

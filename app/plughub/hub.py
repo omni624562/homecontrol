@@ -3240,6 +3240,9 @@ class Hub:
         patrol = getattr(self, "patrol", None)
         if patrol is not None and patrol.due():
             self._spawn(patrol.run())  # Claude 巡家
+        ideas = getattr(self, "ideas", None)
+        if ideas is not None and ideas.due():
+            self._spawn(ideas.run())  # Claude 從習慣建議自動化（每週日晚上）
         if time.time() - self._calendar_at < 600:
             return
         self._calendar_at = time.time()
