@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { CalendarClock, Check, Loader2, MessageSquareText, Mic, Power, Send, Star, Eye } from "lucide-react";
+import { Activity, CalendarClock, Check, Eye, House, Loader2, MessageSquareText, Mic, Power, Send, Star } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -133,6 +133,11 @@ function AskSheet({ open, onClose, msgs, setMsgs, seed, clearSeed }: { open: boo
       else if (x.kind === "schedule") await api("POST", "/api/schedules", x.body);
       else if (x.kind === "scene") await api("POST", "/api/scenes", x.body);
       else if (x.kind === "vision_on") await api("PUT", "/api/claude-vision", { on: true });
+      else if (x.kind === "arrive") await (x.rule_id ? api("PUT", `/api/arrive-rules/${encodeURIComponent(x.rule_id)}`, x.body) : api("POST", "/api/arrive-rules", x.body));
+      else if (x.kind === "motion") {
+        const cur = await api<{ rules: unknown[] }>("GET", "/api/motion-rules");
+        await api("PUT", "/api/motion-rules", { rules: [...cur.rules, x.body] });
+      }
       set({ state: "done" });
     } catch (err) {
       set({ state: "err", err: (err as Error).message });
@@ -160,7 +165,9 @@ function AskSheet({ open, onClose, msgs, setMsgs, seed, clearSeed }: { open: boo
     r.start();
   };
 
-  const ActIcon = (k: AskAction["kind"]) => (k === "schedule" ? CalendarClock : k === "scene" ? Star : k === "vision_on" ? Eye : Power);
+  const ActIcon = (k: AskAction["kind"]) =>
+    k === "schedule" ? CalendarClock : k === "scene" ? Star : k === "vision_on" ? Eye : k === "arrive" ? House : k === "motion" ? Activity : Power;
+  const creates = (x: AskAction) => ["schedule", "scene", "arrive", "motion"].includes(x.kind);
 
   return (
     <Sheet
@@ -202,13 +209,13 @@ function AskSheet({ open, onClose, msgs, setMsgs, seed, clearSeed }: { open: boo
                 ))}
                 {m.actions?.filter((x) => x.kind !== "look").map((x) => {
                   const I = ActIcon(x.kind);
-                  const btn = x.kind === "schedule" || x.kind === "scene" ? "建立" : x.kind === "vision_on" ? "打開" : "確認";
+                  const btn = x.rule_id ? "修改" : creates(x) ? "建立" : x.kind === "vision_on" ? "打開" : "確認";
                   return (
                     <div key={x.id} className="flex w-full max-w-[85%] flex-wrap items-center gap-3 rounded-xl border bg-background p-3">
                       <I className="size-5 shrink-0 text-primary" />
                       <span className="min-w-0 flex-1 leading-relaxed">{x.label}</span>
                       {x.state === "done" ? (
-                        <span className="inline-flex items-center gap-1 text-sm font-medium text-emerald-600"><Check className="size-4" />{x.kind === "schedule" || x.kind === "scene" ? "已建立" : x.kind === "vision_on" ? "已打開，再問一次" : "已執行"}</span>
+                        <span className="inline-flex items-center gap-1 text-sm font-medium text-emerald-600"><Check className="size-4" />{x.rule_id ? "已修改" : creates(x) ? "已建立" : x.kind === "vision_on" ? "已打開，再問一次" : "已執行"}</span>
                       ) : x.state === "skip" ? (
                         <span className="text-sm text-muted-foreground">不用了</span>
                       ) : x.state === "err" ? (
