@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { KeyRound, Loader2, Send } from "lucide-react";
+import { KeyRound, Loader2, Lock, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -10,6 +10,7 @@ import { api } from "@/lib/api";
 
 interface AuthStatus {
   paired: boolean;
+  outside?: boolean;
   can_send: boolean;
   locked_for: number;
 }
@@ -40,7 +41,22 @@ export function PairGate({ children }: { children: ReactNode }) {
     );
   if (!status) return null;
   if (status.paired) return <>{children}</>;
+  if (status.outside) return <OutsideScreen />;
   return <PairScreen canSend={status.can_send} onDone={() => location.reload()} />;
+}
+
+// 從外面連進來、但這台還沒核准：什麼資料都不給看、也不能配對
+function OutsideScreen() {
+  return (
+    <Center>
+      <Card className="w-full max-w-sm items-center gap-3 px-6 py-7 text-center">
+        <div className="flex size-14 items-center justify-center rounded-2xl bg-muted"><Lock className="size-7 text-foreground/70" /></div>
+        <h1 className="text-xl font-bold">這台不能在外面用</h1>
+        <p className="leading-relaxed text-muted-foreground">回到家連上家裡的 Wi-Fi 配對一次，再請家人在「設定 → 在外面用」打開這台。</p>
+      </Card>
+      <p className="text-center text-sm text-muted-foreground">從外面看不到家裡的資料，也不能輸入配對碼。</p>
+    </Center>
+  );
 }
 
 function Center({ children }: { children: ReactNode }) {

@@ -45,11 +45,11 @@ def local_ips() -> list[str]:
     return out
 
 
-def wanted_names(ips: list[str] | None = None) -> tuple[list[str], list[str]]:
-    """憑證要包含的 IP 和名稱。"""
+def wanted_names(ips: list[str] | None = None, names: list[str] | None = None) -> tuple[list[str], list[str]]:
+    """憑證要包含的 IP 和名稱（names：從外面連的網址，例如路由器的 DDNS 名稱）。"""
     host = socket.gethostname()
     ips = sorted(set((ips if ips is not None else local_ips()) + ["127.0.0.1"]))
-    dns = sorted({host, f"{host}.local", "localhost"})
+    dns = sorted({host, f"{host}.local", "localhost", *(n for n in names or [] if n)})
     return ips, dns
 
 
@@ -64,7 +64,7 @@ def _write(path: Path, data: bytes, secret: bool = False) -> None:
     tmp.replace(path)
 
 
-def ensure(data_dir: Path, ips: list[str] | None = None, now: dt.datetime | None = None) -> dict[str, Path]:
+def ensure(data_dir: Path, ips: list[str] | None = None, now: dt.datetime | None = None, names: list[str] | None = None) -> dict[str, Path]:
     """確定根憑證和伺服器憑證都在、都有效、包含現在的 IP；需要就產生或重簽。回傳檔案路徑。"""
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
@@ -99,7 +99,7 @@ def ensure(data_dir: Path, ips: list[str] | None = None, now: dt.datetime | None
     ca = x509.load_pem_x509_certificate(p["ca_crt"].read_bytes())
 
     # 伺服器憑證：沒有、快到期、或 IP／名稱變了就重簽
-    ip_list, dns = wanted_names(ips)
+    ip_list, dns = wanted_names(ips, names)
     reason = None
     try:
         cur = x509.load_pem_x509_certificate(p["crt"].read_bytes())

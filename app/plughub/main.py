@@ -38,7 +38,8 @@ PUT  /api/matter            Google Home 串接外掛回報配對狀態（只接�
 GET  /api/matter/qr.svg     配對用的 QR code
 GET  /api/auth              這台裝置配對了沒；POST /api/auth/pair {"code","name"} 配對（拿到 cookie）
 POST /api/auth/send-code    配對碼送到手機通知；POST /api/auth/code 已配對的裝置產生配對碼
-GET/PATCH/DELETE /api/auth/devices[/{id}]  已配對的裝置
+GET/PATCH/DELETE /api/auth/devices[/{id}]  已配對的裝置（PATCH {"name"} 改名、{"remote"} 在外面也能用）
+GET/PUT /api/remote        在外面用：網址、轉送、總開關 {"on"}
 GET  /api/tls               HTTPS 狀態；GET /api/tls/ca.crt 下載根憑證（不用配對）
 GET  /api/health            健康檢查（不用配對）：{"ok", "version"}；主程式卡住回 503
 POST /api/backup            立刻備份 data/
@@ -76,6 +77,7 @@ from . import camera as camera_mod
 from . import vision as vision_mod
 from . import segment as segment_mod
 from . import tls as tlsmod
+from . import remote as remotemod
 from .locate import MIN_SAMPLES as LOCATE_MIN, TRAIN_S as LOCATE_TRAIN_S
 from .assistant import MODELS as ASSISTANT_MODELS, Assistant
 from .claude_vision import FEATURES as CV_FEATURES, ClaudeVision
@@ -104,6 +106,13 @@ _LOGGER = logging.getLogger(__name__)
 
 
 HTTPS_PORT = int(os.environ.get("PLUGHUB_HTTPS_PORT", "8443"))  # 0 = 不開 HTTPS
+remote = remotemod.Remote(hub, auth, HTTPS_PORT, tlsmod.local_ips)  # 在外面用（不用 VPN）
+
+
+def _tls_names() -> list[str]:
+    """憑證除了家裡的 IP 和名稱，也包含從外面連的網址（路由器的 DDNS 名稱）。"""
+    host = remote.sync_host()
+    return [host] if host else []
 
 
 class _QuietServer(uvicorn.Server):
@@ -116,7 +125,7 @@ class _QuietServer(uvicorn.Server):
 async def _https(app_: FastAPI) -> tuple[uvicorn.Server, asyncio.Task] | None:
     """開 HTTPS（8443）：憑證不在、快到期、IP 變了就先重簽。失敗只記一行，不影響原本的 HTTP。"""
     try:
-        p = await asyncio.to_thread(tlsmod.ensure, DATA_DIR)
+        p = await asyncio.to_thread(tlsmod.ensure, DATA_DIR, names=_tls_names())
         cfg = uvicorn.Config(app_, host="0.0.0.0", port=HTTPS_PORT, ssl_keyfile=str(p["key"]), ssl_certfile=str(p["crt"]),
                              lifespan="off", proxy_headers=True, log_level="warning", timeout_graceful_shutdown=3)
         srv = _QuietServer(cfg)
@@ -129,11 +138,11 @@ async def _https(app_: FastAPI) -> tuple[uvicorn.Server, asyncio.Task] | None:
 
 
 async def _tls_renew(srv: uvicorn.Server) -> None:
-    """每天檢查一次：IP 變了、快到期就重簽，直接換上（新的連線就用新的憑證，不用重開）。"""
+    """每 10 分鐘檢查一次：IP、外面的網址變了、快到期就重簽，直接換上（新的連線就用新的憑證，不用重開）。"""
     while True:
-        await asyncio.sleep(86400)
+        await asyncio.sleep(600)
         try:
-            p = await asyncio.to_thread(tlsmod.ensure, DATA_DIR)
+            p = await asyncio.to_thread(tlsmod.ensure, DATA_DIR, names=_tls_names())
             if srv.config.ssl is not None:
                 srv.config.ssl.load_cert_chain(str(p["crt"]), str(p["key"]))
         except Exception as err:  # noqa: BLE001
@@ -186,6 +195,7 @@ app.add_middleware(_Gzip)
 LOCAL = {"127.0.0.1", "::1", "localhost"}
 # 不用配對就能用的：配對本身、健康檢查
 OPEN_PATHS = {"/api/auth", "/api/auth/pair", "/api/auth/send-code", "/api/health", "/api/tls/ca.crt"}  # 根憑證是公開的，還沒配對的裝置也要能先裝
+HOME_ONLY = {"/api/auth/pair", "/api/auth/send-code"}  # 從外面不能配對、不能要配對碼
 
 
 def _is_local(request: Request) -> bool:
@@ -256,7 +266,16 @@ async def require_pairing(request: Request, call_next):
 
             if urlsplit(origin).netloc != request.headers.get("host", ""):
                 return JSONResponse({"detail": "不接受其他網站的請求"}, status_code=403)
-    if guarded and path not in OPEN_PATHS and not _is_local(request):
+    outside = bool(request.client) and remotemod.is_outside(request.client.host)
+    if outside and path in HOME_ONLY:
+        return JSONResponse({"detail": "配對只能在家裡做：連上家裡的 Wi-Fi 再配對", "outside": True}, status_code=403)
+    if outside and guarded and path not in OPEN_PATHS:
+        # 外面來的：只認通行證，而且那台要打開「在外面也能用」；Wi-Fi 自動認得的不算
+        device = auth.check(_token(request))
+        if not remote.allow(device, request.client.host):
+            return JSONResponse({"detail": "這台裝置不能在外面用", "unpaired": True, "outside": True}, status_code=401)
+        request.state.device = device
+    elif guarded and path not in OPEN_PATHS and not _is_local(request):
         device = auth.check(_token(request))
         if device and request.client:
             mac = _mac_of(request.client.host)
@@ -296,6 +315,11 @@ _last_sent: float | None = None  # 上次送配對碼（monotonic；開機不到
 
 @app.get("/api/auth")
 async def auth_status(request: Request) -> dict[str, Any]:
+    if request.client and remotemod.is_outside(request.client.host):
+        device = auth.check(_token(request))
+        ok = remote.allow(device, request.client.host)
+        return {"paired": ok, "outside": True, "device": {"id": device["id"], "name": device["name"]} if ok and device else None,
+                "can_send": False, "locked_for": 0}
     device = auth.check(_token(request)) or _trusted(request)
     return {
         "paired": bool(device) or _is_local(request),
@@ -353,9 +377,28 @@ async def auth_devices(request: Request) -> dict[str, Any]:
 
 @app.patch("/api/auth/devices/{device_id}")
 async def auth_rename(device_id: str, body: dict = Body(...)) -> dict[str, Any]:
-    if not auth.rename(device_id, str(body.get("name") or "")):
+    if "remote" in body:
+        if not auth.set_remote(device_id, bool(body["remote"])):
+            raise HTTPException(404, "找不到這台裝置")
+    if "name" in body and not auth.rename(device_id, str(body.get("name") or "")):
         raise HTTPException(404, "找不到這台裝置")
     return {"ok": True}
+
+
+@app.get("/api/remote")
+def remote_status() -> dict[str, Any]:
+    """在外面用：網址、路由器有沒有轉送、憑證有沒有包含網址。"""
+    try:
+        cert = tlsmod.info(DATA_DIR) if HTTPS_PORT else {}
+    except Exception:  # noqa: BLE001
+        cert = {}
+    return remote.status(cert)
+
+
+@app.put("/api/remote")
+def remote_set(body: dict = Body(...)) -> dict[str, Any]:
+    remote.set(body)
+    return remote_status()
 
 
 @app.delete("/api/auth/devices/{device_id}")

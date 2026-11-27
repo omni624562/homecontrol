@@ -3,7 +3,7 @@
 用 SSH 金鑰登入路由器，開一條一直連著的連線，路由器那邊跑一個小迴圈：
 - 每 4 秒：主路由器上每個 Wi-Fi 裝置的即時訊號強度（wl assoclist / rssi）
 - 每 12 秒：/tmp/clientlist.json（主路由器＋節點的所有裝置，節點的資料大約 10～20 秒更新一次）
-- 每 2 分鐘：裝置名稱、廠商（/jffs/nmp_cl_json.js）、AiMesh 節點清單、在路由器上自訂的名稱
+- 每 2 分鐘：裝置名稱、廠商（/jffs/nmp_cl_json.js）、AiMesh 節點清單、在路由器上自訂的名稱、DDNS 名稱和連接埠轉送規則（給「在外面用」看）
 
 只讀，不會改路由器任何設定。資料只留在樹莓派上。
 """
@@ -53,6 +53,8 @@ while true; do
     echo "@N $(tr -d '\n' < /jffs/nmp_cl_json.js)"
     echo "@D $(nvram get cfg_device_list)"
     echo "@C $(nvram get custom_clientlist)"
+    echo "@W $(nvram get ddns_enable_x) $(nvram get ddns_hostname_x)"
+    echo "@V $(nvram get vts_enable_x) $(nvram get vts_rulelist)"
   fi
   echo "@E"
   n=$((n + 1))
@@ -84,6 +86,16 @@ def mlo_links(mac: str, info: dict[str, Any]) -> set[str]:
     return links
 
 
+def read_forwards(raw: str) -> list[dict[str, Any]]:
+    """虛擬伺服器（連接埠轉送）規則：<名稱>外部埠>內部IP>內部埠>協定>…"""
+    out = []
+    for part in raw.split("<"):
+        f = part.split(">")
+        if len(f) >= 5 and f[1] and f[2]:
+            out.append({"name": f[0], "ext": f[1], "ip": f[2], "port": f[3] or f[1], "proto": f[4]})
+    return out
+
+
 def norm(mac: str) -> str:
     return mac.strip().upper()
 
@@ -97,6 +109,7 @@ class Router:
         self.error: str | None = None
         self.updated = 0.0
         self.nodes: list[dict[str, Any]] = []  # [{mac, model, ip, main}]
+        self.wan: dict[str, Any] = {}  # {ddns: 名稱或 None, forwards: [{name, ext, ip, port, proto}]}（只讀）
         self.clients: dict[str, dict[str, Any]] = {}  # MAC → {mac, node, band, ssid, rssi, ip, wired, seen}
         self.names: dict[str, dict[str, Any]] = {}  # MAC → {name, vendor, custom}
         # Wi-Fi 7（MLO）的手機：每個頻段的連線用另一個 MAC（link），路由器管理頁顯示的是主 MAC（MLD）。
@@ -194,6 +207,12 @@ class Router:
                     self._read_nodes(rest)
                 elif tag == "@C":
                     self._read_custom(rest)
+                elif tag == "@W":
+                    on, _, host = rest.partition(" ")
+                    self.wan["ddns"] = host.strip() if on == "1" and host.strip() else None
+                elif tag == "@V":
+                    on, _, rules = rest.partition(" ")
+                    self.wan["forwards"] = read_forwards(rules) if on == "1" else []
                 elif tag == "@E":
                     self._apply_live(live)
                     if not self.ok:
