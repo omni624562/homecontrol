@@ -79,6 +79,7 @@ from . import tls as tlsmod
 from .locate import MIN_SAMPLES as LOCATE_MIN, TRAIN_S as LOCATE_TRAIN_S
 from .assistant import MODELS as ASSISTANT_MODELS, Assistant
 from .claude_vision import FEATURES as CV_FEATURES, ClaudeVision
+from .patrol import Patrol
 from .hub import APP_VERSION, SOURCE, Hub, Locked, arrive_rule
 from .summary import build_summary
 from .notify import LineError, Notifier
@@ -94,6 +95,7 @@ hub = Hub(store, Notifier(store.dir / "secrets.json"))
 assistant = Assistant(hub)
 hub.assistant = assistant
 hub.claude = ClaudeVision(hub)  # Claude 看影像（預設關）
+hub.patrol = Patrol(hub)  # Claude 巡家（預設關）
 hub.assistant = assistant
 auth = authmod.Auth(DATA_DIR)
 _LOGGER = logging.getLogger(__name__)
@@ -2141,6 +2143,32 @@ async def assistant_settings(body: dict = Body(...)) -> dict[str, Any]:
         store.save()
     await hub.changed()
     return assistant.status()
+
+
+@app.get("/api/patrol")
+async def patrol_get() -> dict[str, Any]:
+    """Claude 巡家：設定和最近一次的結果。"""
+    return hub.patrol.status()
+
+
+@app.put("/api/patrol")
+async def patrol_set(body: dict = Body(...)) -> dict[str, Any]:
+    """{"on", "time": "22:30", "items": [...], "extra": 另外交代, "notify": "issue"|"always"}"""
+    try:
+        return hub.patrol.set(body)
+    except ValueError as err:
+        raise HTTPException(400, str(err)) from err
+
+
+@app.post("/api/patrol/run")
+async def patrol_run() -> dict[str, Any]:
+    """現在巡一次（要等 Claude 回來，大約 10 秒）。"""
+    if not assistant.configured:
+        raise HTTPException(400, "還沒設定 Anthropic API 金鑰")
+    if hub.patrol.busy:
+        raise HTTPException(409, "正在巡")
+    await hub.patrol.run()
+    return hub.patrol.status()
 
 
 @app.post("/api/assistant/chat")

@@ -20,6 +20,7 @@ import { WeatherKeys, WeatherSheet } from "@/components/weather-sheet";
 import { LifeSheet } from "@/components/life-sheet";
 import { SettingNumber } from "@/components/settings-bits";
 import { ArriveRules } from "@/components/arrive-rules";
+import { PatrolRows } from "@/components/patrol-rows";
 import { api } from "@/lib/api";
 import { SetupList, UsageList, useSetup } from "@/components/setup-bits";
 import { pad2 } from "@/lib/format";
@@ -292,6 +293,7 @@ function AskCard() {
         </>
       )}
       {st.configured && <ClaudeVisionRows />}
+      {st.configured && <PatrolRows />}
     </SCard>
   );
 }
@@ -897,7 +899,7 @@ const SEARCH: [string, string, string][] = [
   ["使用時間異常 開太久", "notify", "s-notify"], ["功率過高 待機門檻", "notify", "s-notify"],
   ["每週摘要", "notify", "s-notify"], ["每月報告", "notify", "s-notify"],
   ["攝影機 誰可以看 權限", "cam", "s-cam"], ["錄影 保留 硬碟", "cam", "s-cam"], ["夜間畫面增強", "cam", "s-cam"], ["Jetson GPU", "link", "s-jetson"],
-  ["問家裡 Claude 金鑰 模型 上限", "ai", "s-ask"], ["Claude 看攝影機畫面", "ai", "s-ask"],
+  ["問家裡 Claude 金鑰 模型 上限", "ai", "s-ask"], ["Claude 看攝影機畫面", "ai", "s-ask"], ["Claude 巡家 每天檢查", "ai", "s-ask"],
   ["回家自動開 回家開燈", "auto", "s-arrive"], ["晚安檢查 睡前", "auto", "s-night"], ["排程 動靜自動化", "auto", "s-auto"], ["天氣 授權碼 氣象署", "life", "s-life"], ["垃圾車 公車 YouBike", "life", "s-life"], ["趣味小動畫", "life", "s-life"],
   ["裝置檢查 網路", "home", "s-dev"], ["停電後恢復插座", "auto", "s-auto"], ["Wi-Fi 感測", "home", "s-dev"], ["TP-Link 雲端", "home", "s-dev"], ["找新插座", "home", "s-dev"],
   ["Google Home Matter", "link", "s-google"], ["在外面連回家 VPN OpenVPN 遠端", "link", "s-remote"], ["存取碼 配對 備份 還原", "security", "s-sys"], ["HTTPS 憑證 安全連線", "security", "s-tls"],
