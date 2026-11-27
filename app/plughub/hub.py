@@ -2636,6 +2636,8 @@ class Hub:
                     arrived_ids.append(p["id"])
         for pid in [k for k in self._presence if k not in {p["id"] for p in people}]:
             del self._presence[pid]
+        if "home_count" not in self.store.data:  # 第一次算人數：從「手機在家」的人數開始
+            self._home_count_set(sum(1 for p in people if self._presence[p["id"]]["home"]))
         if not changed:
             return False
         self._dirty = True
