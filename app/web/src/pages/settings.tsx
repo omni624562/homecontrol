@@ -633,14 +633,98 @@ function AutoCards({ s }: { s: HubState }) {
   );
 }
 
-// 連接與遠端：Google Home、從外面連回家、Jetson
+// 在外面用（不用 VPN）：路由器把外部的埠轉到樹莓派的 HTTPS；外面只認打開「在外面也能用」的配對裝置
+interface RemoteInfo {
+  on: boolean;
+  host: string | null;
+  router_read: boolean;
+  forward: { ext: string; ip: string; port: string } | null;
+  url: string | null;
+  https_port: number;
+  cert_ok: boolean;
+  cert_until: string | null;
+}
+
 function RemoteCard() {
+  const [r, setR] = useState<RemoteInfo | null>(null);
+  const [devices, setDevices] = useState<PairedDevice[]>([]);
+  const [trusted, setTrusted] = useState<{ mac: string; name: string }[]>([]);
+  const load = () => {
+    api<RemoteInfo>("GET", "/api/remote").then(setR).catch(() => setR(null));
+    api<{ devices: PairedDevice[]; trusted?: { mac: string; name: string }[] }>("GET", "/api/auth/devices")
+      .then((x) => { setDevices(x.devices); setTrusted(x.trusted || []); })
+      .catch(() => {});
+  };
+  useEffect(load, []);
+  const fail = (e: unknown) => toast.error("沒有成功", { description: (e as Error).message });
+  const setOn = async (on: boolean) => {
+    try {
+      setR(await api<RemoteInfo>("PUT", "/api/remote", { on }));
+      toast.success(on ? "在外面用打開了" : "在外面用關了：外面都連不進來");
+    } catch (e) {
+      fail(e);
+    }
+  };
+  const setDev = async (d: PairedDevice, remote: boolean) => {
+    try {
+      await api("PATCH", `/api/auth/devices/${d.id}`, { remote });
+      setDevices((xs) => xs.map((x) => (x.id === d.id ? { ...x, remote } : x)));
+      toast.success(remote ? `${d.name} 在外面也能用了` : `${d.name} 在外面不能用了`);
+    } catch (e) {
+      fail(e);
+    }
+  };
+  const ok = "bg-emerald-50 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300";
+  const warn = "bg-amber-50 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300";
+  const chip = (good: boolean, text: string) => (
+    <span className={cn("inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm", good ? ok : warn)}>
+      <span aria-hidden className={cn("size-2 rounded-full", good ? "bg-emerald-500" : "bg-amber-500")} />{text}
+    </span>
+  );
   return (
-    <SCard id="s-remote" icon={Link2} title="在外面連回家">
-      <div className="space-y-2 px-4 py-3.5 text-sm leading-relaxed sm:px-5">
-        <p>家裡的網頁、攝影機都<b>沒有</b>直接放上網路。在外面要用，先在手機連上路由器的 <b>OpenVPN</b>，再照平常的網址打開就好；攝影機誰能看照原本的設定。</p>
-        <p className="text-muted-foreground">路由器建議：OpenVPN 用 UDP、開 TLS 控制通道、加密選 AES-GCM、用戶端只連「區域網路」；從外網進路由器管理頁、SSH、AiCloud、UPnP 都關掉，韌體自動更新打開。</p>
+    <SCard id="s-remote" icon={Link2} title="在外面用" badge={r && <Switch checked={r.on} onCheckedChange={setOn} aria-label="在外面用" />}>
+      <div className="space-y-3 px-4 py-3.5 sm:px-5">
+        <p className="text-sm leading-relaxed text-muted-foreground">不用 VPN，從外面的網路打開家庭中控。外面看不到手機的 MAC，所以只認在家配對過、而且打開「在外面也能用」的裝置；配對只能在家做。</p>
+        {r && (
+          <>
+            {r.url ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-medium">網址</span>
+                <span className="min-w-0 flex-1 break-all font-mono text-sm">{r.url}</span>
+                <Button variant="outline" size="sm" onClick={() => navigator.clipboard?.writeText(r.url!).then(() => toast.success("複製了"), fail)}>複製</Button>
+              </div>
+            ) : null}
+            <div className="flex flex-wrap gap-2">
+              {!r.router_read
+                ? chip(false, "還沒讀到路由器的設定")
+                : r.forward
+                  ? chip(true, `路由器把外部 ${r.forward.ext} 轉到這台`)
+                  : chip(false, `路由器沒有轉送到這台的 ${r.https_port}`)}
+              {r.host ? chip(r.cert_ok, r.cert_ok ? `憑證包含 ${r.host}（到 ${r.cert_until}）` : "憑證還沒更新（10 分鐘內）") : chip(false, "路由器沒有開 DDNS")}
+            </div>
+            {!r.forward && r.router_read && (
+              <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm leading-relaxed text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+                華碩 App → 外部網路 → 虛擬伺服器：新增一條，外部埠自訂（例如 9443）→ 這台樹莓派的 {r.https_port}，TCP。
+              </p>
+            )}
+            <p className="text-sm leading-relaxed text-muted-foreground">在外面用的手機、電腦要先裝過家裡的根憑證（下面「安全連線」）。</p>
+          </>
+        )}
       </div>
+      {devices.map((d) => (
+        <SRow
+          key={d.id}
+          label={<span className="flex items-center gap-2">{d.name}{d.current && <Badge variant="secondary">這台</Badge>}</span>}
+          hint={d.last_remote ? `上次從外面用：${when(d.last_remote.t)}・${d.last_remote.ip}` : "還沒從外面用過"}
+        >
+          <span className="text-sm text-muted-foreground max-sm:sr-only">在外面也能用</span>
+          <Switch checked={!!d.remote} disabled={!r?.on} onCheckedChange={(v) => setDev(d, v)} aria-label={`${d.name} 在外面也能用`} />
+        </SRow>
+      ))}
+      {trusted.length > 0 && (
+        <SRow label="Wi-Fi 自動認得的裝置" hint={`${trusted.map((t) => t.name).join("、")}：在外面不算數，要在家用配對碼配對一次（安全與備份 → 新增裝置），才能打開「在外面也能用」`} />
+      )}
+      <SRow label="也可以用 VPN" hint="手機連上路由器的 OpenVPN 後，照家裡的網址打開；VPN 連進來算在家裡。" />
     </SCard>
   );
 }
@@ -902,7 +986,7 @@ const SEARCH: [string, string, string][] = [
   ["問家裡 Claude 金鑰 模型 上限", "ai", "s-ask"], ["Claude 看攝影機畫面", "ai", "s-ask"], ["Claude 巡家 每天檢查", "ai", "s-ask"],
   ["回家自動開 回家開燈", "auto", "s-arrive"], ["晚安檢查 睡前", "auto", "s-night"], ["排程 動靜自動化", "auto", "s-auto"], ["天氣 授權碼 氣象署", "life", "s-life"], ["垃圾車 公車 YouBike", "life", "s-life"], ["趣味小動畫", "life", "s-life"],
   ["裝置檢查 網路", "home", "s-dev"], ["停電後恢復插座", "auto", "s-auto"], ["Wi-Fi 感測", "home", "s-dev"], ["TP-Link 雲端", "home", "s-dev"], ["找新插座", "home", "s-dev"],
-  ["Google Home Matter", "link", "s-google"], ["在外面連回家 VPN OpenVPN 遠端", "link", "s-remote"], ["存取碼 配對 備份 還原", "security", "s-sys"], ["HTTPS 憑證 安全連線", "security", "s-tls"],
+  ["Google Home Matter", "link", "s-google"], ["在外面用 外面連回家 VPN 遠端 DDNS 核准裝置", "link", "s-remote"], ["存取碼 配對 備份 還原", "security", "s-sys"], ["HTTPS 憑證 安全連線", "security", "s-tls"],
   ["畫面風格 科技感", "other", "s-look"], ["手機選單 下方分頁", "other", "s-look"], ["待機畫面 平板", "other", "s-look"], ["使用統計", "other", "s-usage"],
   ["隱私 資料 Anthropic", "privacy", ""], ["設定進度 還沒設定", "setup", ""],
 ];

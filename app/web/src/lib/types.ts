@@ -328,6 +328,8 @@ export interface PairedDevice {
   created: number;
   last_seen: number;
   current: boolean;
+  remote?: boolean;
+  last_remote?: { t: number; ip: string } | null;
 }
 
 // /api/energy：插座記錄的開機時間 × 瓦數

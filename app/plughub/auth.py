@@ -147,9 +147,19 @@ class Auth:
                 return True
         return False
 
+    def set_remote(self, device_id: str, on: bool) -> bool:
+        """「在外面也能用」：只有打開的裝置能從家裡以外的網路連進來。"""
+        for d in self.devices:
+            if d["id"] == device_id:
+                d["remote"] = bool(on)
+                self.save()
+                return True
+        return False
+
     def public(self, current: str | None = None) -> list[dict[str, Any]]:
         return [
-            {"id": d["id"], "name": d["name"], "created": d["created"], "last_seen": d["last_seen"], "current": d["id"] == current, "mac": d.get("mac")}
+            {"id": d["id"], "name": d["name"], "created": d["created"], "last_seen": d["last_seen"], "current": d["id"] == current, "mac": d.get("mac"),
+             "remote": bool(d.get("remote")), "last_remote": d.get("last_remote")}
             for d in self.devices
         ]
 
