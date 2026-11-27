@@ -4,6 +4,7 @@ import { HomePage } from "@/pages/home";
 import { AskProvider } from "@/components/ask-sheet";
 import { FxLayer } from "@/components/fx";
 import { Standby } from "@/components/standby";
+import { PageMenu } from "@/components/context-menu";
 import { useLook } from "@/lib/look";
 import { track } from "@/lib/usage";
 import { useAutoUpdate } from "@/lib/auto-update";
@@ -41,9 +42,8 @@ export default function App() {
       document.querySelectorAll('meta[name="theme-color"]').forEach((m) => m.setAttribute("content", bg));
     };
     sync();
-    const mq = matchMedia("(prefers-color-scheme: dark)");
-    mq.addEventListener("change", sync);
-    return () => mq.removeEventListener("change", sync);
+    addEventListener("themechange", sync);
+    return () => removeEventListener("themechange", sync);
   }, [look]);
   useEffect(() => { track(tab); }, [tab]);
   useAutoUpdate();
@@ -55,6 +55,7 @@ export default function App() {
       </AppShell>
       <FxLayer />
       <Standby />
+      <PageMenu />
     </AskProvider>
   );
 }
