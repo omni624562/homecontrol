@@ -27,41 +27,16 @@ DAYS = "一二三四五六日"
 
 SYSTEM = """你是「家庭中控」的助理，幫一個台灣家庭從生活習慣找出值得自動化的事。用台灣的繁體中文。
 你會拿到過去 4 週每個插座「手動」開關的時間、家人回家的時間、每個插座平均每天開幾小時、已經有的排程和規則、使用者拒絕過的建議。
-找出最多 3 條真的有規律、做了會省事的自動化，呼叫 suggest 一次。沒有夠明顯的規律就給空的 items，不要硬湊。
-
-每條 item：
-- kind：schedule（固定時間開／關）、arrive（某人回家就開）、motion（房間有人走動就開、沒動靜就關）
-- params：跟 propose_schedule／propose_arrive_rule／propose_motion_rule 的參數一樣（插座、家人、房間都用給你的 ID）
-- reason：一句話、附次數，例如「過去 4 週的平日，有 17 天在 07:05～07:20 打開，每次開 30 分鐘左右」
+找出最多 3 條真的有規律、做了會省事的自動化，每條呼叫一次 propose_schedule（固定時間開／關）、propose_arrive_rule（某人回家就開）或 propose_motion_rule（房間有人走動就開、沒動靜就關）。
+插座、家人、房間都用給你的 ID；reason 填一句話、附次數，例如「過去 4 週的平日，有 17 天在 07:05～07:20 打開，每次開 30 分鐘左右」。
+工具回傳錯誤就照錯誤修正參數再試；都做完就結束，不用另外說明。沒有夠明顯的規律就什麼都不要建議，不要硬湊。
 規則：
 - 至少要 4 週裡有 6 次以上、而且時間集中，才算規律
 - 已經有排程或規則在做的不要再建議；使用者拒絕過的、或很像的，不要再建議
 - 天黑才開的燈，排程用 time_mode=sunset、回家規則用 when=dark
 - 只建議開或關插座的自動化；跟安全有關的（電熱器、熨斗）不要建議自動打開"""
 
-SUGGEST_TOOL = {
-    "name": "suggest",
-    "description": "建議的自動化（最多 3 條；沒有就給空陣列）",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "items": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "kind": {"type": "string", "enum": ["schedule", "arrive", "motion"]},
-                        "params": {"type": "object", "description": "propose_schedule／propose_arrive_rule／propose_motion_rule 的參數"},
-                        "reason": {"type": "string"},
-                    },
-                    "required": ["kind", "params", "reason"],
-                },
-            },
-        },
-        "required": ["items"],
-    },
-}
-TOOL_FOR = {"schedule": "propose_schedule", "arrive": "propose_arrive_rule", "motion": "propose_motion_rule"}
+TOOLS = ("propose_schedule", "propose_arrive_rule", "propose_motion_rule")
 
 
 def idea_key(a: dict[str, Any]) -> str:
@@ -126,6 +101,16 @@ class Ideas:
                 "plugs": plugs, "arrivals": arrivals[-150:], "schedules": scheds,
                 "dismissed": [x["label"] for x in hub.store.data["settings"].get("idea_dismissed") or []]}
 
+    async def _ask(self, model: str, tools: list[Any], content: str) -> None:
+        """讓 Claude 用 propose_* 工具提出建議（參數錯了它看得到錯誤、會自己修正）。"""
+        a = self.hub.assistant
+        client = anthropic.AsyncAnthropic(api_key=a._secrets().get("anthropic_api_key"), timeout=120.0,
+                                          base_url=a._secrets().get("anthropic_base_url") or None)
+        runner = client.beta.messages.tool_runner(model=model, max_tokens=3000, system=SYSTEM, tools=tools, max_iterations=8,
+                                                  messages=[{"role": "user", "content": content}], output_config={"effort": "low"})
+        async for message in runner:
+            a._track(model, message.usage)
+
     async def run(self) -> dict[str, Any]:
         hub, a = self.hub, self.hub.assistant
         self.busy = True
@@ -140,32 +125,12 @@ class Ideas:
             auto = json.loads(await tools["get_automations"].call({}))
             ctx = {**self.context(), "people": auto["people"], "rooms": auto["rooms"], "arrive_rules": auto["arrive_rules"],
                    "motion_rules": auto["motion_rules"]}
-            client = anthropic.AsyncAnthropic(api_key=a._secrets().get("anthropic_api_key"), timeout=120.0,
-                                              base_url=a._secrets().get("anthropic_base_url") or None)
-            msg = await client.messages.create(model=st["model"], max_tokens=2000, system=SYSTEM, tools=[SUGGEST_TOOL],
-                                               tool_choice={"type": "tool", "name": "suggest"},
-                                               messages=[{"role": "user", "content": "過去 4 週的紀錄（JSON）：\n" + json.dumps(ctx, ensure_ascii=False)}])
-            a._track(st["model"], msg.usage)
-            got = next((b.input for b in msg.content if b.type == "tool_use" and b.name == "suggest"), None) or {}
+            content = "過去 4 週的紀錄（JSON）：\n" + json.dumps(ctx, ensure_ascii=False)
+            await self._ask(st["model"], [tools[n] for n in TOOLS], content)
             dismissed = {x["key"] for x in hub.store.data["settings"].get("idea_dismissed") or []}
             items = []
-            for it in (got.get("items") or [])[:MAX_ITEMS]:
-                tool = tools.get(TOOL_FOR.get(it.get("kind"), ""))
-                params = it.get("params") if isinstance(it.get("params"), dict) else {}
-                if tool is None:
-                    continue
-                before = len(actions)
-                try:
-                    res = await tool.call(params)
-                except Exception as err:  # noqa: BLE001  參數不對（插座 ID 錯）：這條不要
-                    _LOGGER.info("建議被擋下：%s", err)
-                    continue
-                if len(actions) == before:
-                    _LOGGER.info("建議被擋下：%s", res)
-                    continue
-                x = actions[-1]
+            for x in actions[:MAX_ITEMS]:
                 x.pop("rule_id", None)  # 建議只建新的，不改舊的
-                x["reason"] = str(it.get("reason") or "")[:200]
                 x["key"] = idea_key(x)
                 if x["key"] not in dismissed:
                     items.append(x)
