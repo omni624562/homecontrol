@@ -99,3 +99,56 @@ def test_tls_includes_name(tmp_path):
     from plughub import tls
     tls.ensure(tmp_path, ips=["10.0.2.77"], names=["home.example.net"])
     assert "home.example.net" in tls.info(tmp_path)["names"]
+
+
+def _issue(host, self_signed=False):
+    import datetime as dt
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID, ExtendedKeyUsageOID
+    now = dt.datetime.now(dt.timezone.utc)
+    ca_key = ec.generate_private_key(ec.SECP256R1())
+    ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Test Root"), x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Test CA")])
+    ca = (x509.CertificateBuilder().subject_name(ca_name).issuer_name(ca_name).public_key(ca_key.public_key())
+          .serial_number(1).not_valid_before(now - dt.timedelta(days=1)).not_valid_after(now + dt.timedelta(days=30))
+          .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+          .add_extension(x509.KeyUsage(digital_signature=True, key_cert_sign=True, crl_sign=True, content_commitment=False, key_encipherment=False,
+                                       data_encipherment=False, key_agreement=False, encipher_only=False, decipher_only=False), critical=True)
+          .add_extension(x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key()), critical=False)
+          .sign(ca_key, hashes.SHA256()))
+    key = ec.generate_private_key(ec.SECP256R1())
+    signer = key if self_signed else ca_key
+    leaf = (x509.CertificateBuilder().subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, host)]))
+            .issuer_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, host)]) if self_signed else ca_name)
+            .public_key(key.public_key()).serial_number(2)
+            .not_valid_before(now - dt.timedelta(days=1)).not_valid_after(now + dt.timedelta(days=20))
+            .add_extension(x509.SubjectAlternativeName([x509.DNSName(host)]), critical=False)
+            .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
+            .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(signer.public_key()), critical=False)
+            .sign(signer, hashes.SHA256()))
+    pem = serialization.Encoding.PEM
+    chain = leaf.public_bytes(pem) + (b"" if self_signed else ca.public_bytes(pem))
+    return chain, key.private_bytes(pem, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()), ca
+
+
+def test_public_cert(tmp_path):
+    from plughub import tls
+    chain, key, ca = _issue("home.example.net")
+    info = tls.check_public(chain, key, "home.example.net", trust=[ca])
+    assert info["issuer"] == "Test CA" and info["names"] == ["home.example.net"]
+    with pytest.raises(ValueError):
+        tls.check_public(chain, key, "other.example.net", trust=[ca])
+    _, other_key, _ = _issue("home.example.net")
+    with pytest.raises(ValueError):
+        tls.check_public(chain, other_key, "home.example.net", trust=[ca])
+    ss_chain, ss_key, _ = _issue("home.example.net", self_signed=True)
+    with pytest.raises(ValueError):
+        tls.check_public(ss_chain, ss_key, "home.example.net", trust=[ca])
+    assert tls.save_public(tmp_path, chain, key, "home.example.net", trust=[ca]) is True
+    assert tls.save_public(tmp_path, chain, key, "home.example.net", trust=[ca]) is False
+    assert oct(tls.public_paths(tmp_path)["key"].stat().st_mode & 0o777) == "0o600"
+    sw = tls.SniSwitch()
+    assert sw.load(tmp_path, "home.example.net", trust=[ca])["until"]
+    assert sw.names == {"home.example.net"} and sw.ctx is not None
+    assert sw.load(tmp_path, "home.example.net", trust=[]) is None and sw.ctx is None

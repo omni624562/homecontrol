@@ -643,6 +643,7 @@ interface RemoteInfo {
   https_port: number;
   cert_ok: boolean;
   cert_until: string | null;
+  public: { issuer: string; until: string } | null;
 }
 
 function RemoteCard() {
@@ -700,14 +701,18 @@ function RemoteCard() {
                 : r.forward
                   ? chip(true, `路由器把外部 ${r.forward.ext} 轉到這台`)
                   : chip(false, `路由器沒有轉送到這台的 ${r.https_port}`)}
-              {r.host ? chip(r.cert_ok, r.cert_ok ? `憑證包含 ${r.host}（到 ${r.cert_until}）` : "憑證還沒更新（10 分鐘內）") : chip(false, "路由器沒有開 DDNS")}
+              {!r.host
+                ? chip(false, "路由器沒有開 DDNS")
+                : r.public
+                  ? chip(true, `用路由器的 ${r.public.issuer} 憑證（到 ${r.public.until}，路由器自動更新）`)
+                  : chip(r.cert_ok, r.cert_ok ? `用家裡的憑證（要先裝根憑證）` : "憑證還沒更新（10 分鐘內）")}
             </div>
             {!r.forward && r.router_read && (
               <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm leading-relaxed text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
                 華碩 App → 外部網路 → 虛擬伺服器：新增一條，外部埠自訂（例如 9443）→ 這台樹莓派的 {r.https_port}，TCP。
               </p>
             )}
-            <p className="text-sm leading-relaxed text-muted-foreground">在外面用的手機、電腦要先裝過家裡的根憑證（下面「安全連線」）。</p>
+            {!r.public && <p className="text-sm leading-relaxed text-muted-foreground">在外面用的手機、電腦要先裝過家裡的根憑證（下面「安全連線」）；路由器開了 Let's Encrypt 就不用。</p>}
           </>
         )}
       </div>
