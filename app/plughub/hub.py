@@ -3697,7 +3697,7 @@ def same_hints(clients: list[dict[str, Any]], hosts: dict[str, str], no: set[tup
                 continue
             main, sub = sorted((a, b), key=lambda c: (not c.get("label"), not c.get("map"), c.get("first") or 9e12))
             out.append({"main": main["mac"], "sub": sub["mac"], "main_name": main["name"], "sub_name": hosts.get(sub["mac"]) or sub["name"],
-                        "why": f"{why}：一個{medium(main)}、一個{medium(sub)}"})
+                        "why": f"{why}：" + (f"都是 {medium(main)}，可能是換了隨機 MAC" if medium(main) == medium(sub) else f"一個{medium(main)}、一個 {medium(sub)}")})
             used |= {a["mac"], b["mac"]}
     return out[:5]
 
