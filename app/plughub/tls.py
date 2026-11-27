@@ -148,3 +148,95 @@ def info(data_dir: Path) -> dict[str, Any]:
     return {"ready": True, "fingerprint": ":".join(fp[i:i + 2] for i in range(0, len(fp), 2)),
             "ca_until": ca.not_valid_after_utc.date().isoformat(), "until": cur.not_valid_after_utc.date().isoformat(),
             "ips": [str(x) for x in san.get_values_for_type(x509.IPAddress)], "names": san.get_values_for_type(x509.DNSName)}
+
+
+# ---- 公開憑證（路由器用 Let's Encrypt 幫 DDNS 名稱申請的）----
+# 從外面用 DDNS 網址連時給這張：手機不用裝根憑證，也能裝成 App。家裡用 IP 連照舊給自己簽的。
+
+
+def public_paths(data_dir: Path) -> dict[str, Path]:
+    d = data_dir / "tls"
+    return {"crt": d / "public.crt", "key": d / "public.key"}
+
+
+SYSTEM_CA = "/etc/ssl/certs/ca-certificates.crt"
+
+
+def check_public(chain_pem: bytes, key_pem: bytes, host: str, now: dt.datetime | None = None, trust: list[Any] | None = None) -> dict[str, Any]:
+    """確認是公開憑證機構簽給這個網址的、還沒過期、私鑰對得上；不對就丟 ValueError。
+    （路由器沒開 Let's Encrypt 時那張是自己簽的，不能用）"""
+    from cryptography import x509
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.x509.verification import PolicyBuilder, Store
+
+    now = now or dt.datetime.now(dt.timezone.utc)
+    try:
+        chain = x509.load_pem_x509_certificates(chain_pem)
+        cert = chain[0]
+        key = serialization.load_pem_private_key(key_pem, None)
+    except Exception as err:  # noqa: BLE001
+        raise ValueError(f"看不懂憑證或私鑰：{err}") from err
+    try:
+        roots = trust if trust is not None else x509.load_pem_x509_certificates(Path(SYSTEM_CA).read_bytes())
+        PolicyBuilder().store(Store(roots)).time(now.replace(tzinfo=None)).build_server_verifier(x509.DNSName(host)).verify(cert, chain[1:])
+    except Exception as err:  # noqa: BLE001
+        raise ValueError(f"不是公開憑證機構簽給 {host} 的有效憑證：{err}") from err
+    names = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value.get_values_for_type(x509.DNSName)
+    pub = serialization.PublicFormat.SubjectPublicKeyInfo
+    if key.public_key().public_bytes(serialization.Encoding.DER, pub) != cert.public_key().public_bytes(serialization.Encoding.DER, pub):
+        raise ValueError("私鑰跟憑證對不上")
+    org = cert.issuer.get_attributes_for_oid(x509.NameOID.ORGANIZATION_NAME)
+    return {"names": names, "until": cert.not_valid_after_utc.date().isoformat(), "issuer": org[0].value if org else cert.issuer.rfc4514_string()}
+
+
+def save_public(data_dir: Path, chain_pem: bytes, key_pem: bytes, host: str, trust: list[Any] | None = None) -> bool:
+    """檢查過才存（私鑰 600）；跟現在的一樣就不動。回傳有沒有換。"""
+    check_public(chain_pem, key_pem, host, trust=trust)
+    p = public_paths(data_dir)
+    p["crt"].parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if p["crt"].read_bytes() == chain_pem and p["key"].read_bytes() == key_pem:
+            return False
+    except OSError:
+        pass
+    _write(p["key"], key_pem, secret=True)
+    _write(p["crt"], chain_pem)
+    return True
+
+
+def public_info(data_dir: Path, host: str | None, trust: list[Any] | None = None) -> dict[str, Any] | None:
+    p = public_paths(data_dir)
+    if not host or not p["crt"].exists():
+        return None
+    try:
+        return check_public(p["crt"].read_bytes(), p["key"].read_bytes(), host, trust=trust)
+    except (OSError, ValueError):
+        return None
+
+
+class SniSwitch:
+    """連線時看要的網址（SNI）：是公開憑證上的名稱就換成公開憑證，其他照舊。"""
+
+    def __init__(self) -> None:
+        self.ctx = None
+        self.names: set[str] = set()
+
+    def load(self, data_dir: Path, host: str | None, trust: list[Any] | None = None) -> dict[str, Any] | None:
+        import ssl
+
+        info = public_info(data_dir, host, trust)
+        if not info:
+            self.ctx, self.names = None, set()
+            return None
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        p = public_paths(data_dir)
+        ctx.load_cert_chain(str(p["crt"]), str(p["key"]))
+        self.ctx, self.names = ctx, {n.lower() for n in info["names"]}
+        return info
+
+    def attach(self, base) -> None:
+        def pick(sock, name, _ctx):
+            if name and self.ctx is not None and name.lower() in self.names:
+                sock.context = self.ctx
+        base.sni_callback = pick

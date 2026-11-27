@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import logging
 import time
@@ -18,6 +19,8 @@ if TYPE_CHECKING:
     from .hub import Hub
 
 _LOGGER = logging.getLogger(__name__)
+ROUTER_CERT = ("/etc/cert.pem", "/etc/key.pem")  # 路由器現在用的憑證（開了 Let's Encrypt 就是那張）
+PULL_EVERY = 6 * 3600
 NOTIFY_GAP = 6 * 3600  # 同一台最多 6 小時通知一次
 SEEN_MAX = 30
 SAVE_GAP = 300
@@ -105,7 +108,19 @@ class Remote:
                 return r
         return None
 
-    def status(self, cert: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def pull_public(self, data_dir: Any) -> bool:
+        """把路由器的 Let's Encrypt 憑證讀過來（只讀）；檢查過是公開機構簽給這個網址的才用。回傳有沒有換新的。"""
+        from . import tls
+
+        host = self.sync_host()
+        if not host or not self.hub.router.configured:
+            return False
+        crt, key = await self.hub.router.read_files(list(ROUTER_CERT))
+        if not crt or not key:
+            raise RuntimeError("路由器上沒有憑證")
+        return await asyncio.to_thread(tls.save_public, data_dir, (crt + "\n").encode(), (key + "\n").encode(), host)
+
+    def status(self, cert: dict[str, Any] | None = None, public: dict[str, Any] | None = None) -> dict[str, Any]:
         host = self.sync_host()
         fw = self.forward()
         url = None
@@ -115,7 +130,8 @@ class Remote:
         return {"on": self.cfg["on"], "host": host, "router_read": "forwards" in self.hub.router.wan,
                 "forward": {"ext": fw["ext"], "ip": fw["ip"], "port": fw["port"]} if fw else None,
                 "url": url, "https_port": self.https_port,
-                "cert_ok": bool(host and host in (cert.get("names") or [])), "cert_until": cert.get("until")}
+                "cert_ok": bool(public) or bool(host and host in (cert.get("names") or [])), "cert_until": cert.get("until"),
+                "public": public}
 
     # ---- 外面來的連線 ----
 

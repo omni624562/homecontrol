@@ -311,6 +311,28 @@ class Router:
             if link in self.traffic:
                 self.traffic.setdefault(main, self.traffic.pop(link))
 
+    async def read_files(self, paths: list[str], timeout: float = 20) -> list[str]:
+        """用同一把金鑰讀路由器上的幾個檔案（只讀，不改任何東西）。讀不到的是空字串。"""
+        import shlex
+
+        c = self._cfg()
+        sep = "@@PLUGHUB-EOF@@"
+        cmd = "; ".join(f"cat {shlex.quote(x)} 2>/dev/null; echo; echo {sep}" for x in paths)
+        proc = await asyncio.create_subprocess_exec(
+            "ssh", "-T", "-i", KEY, "-p", str(int(c.get("port") or 22)),
+            "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes", "-o", "ConnectTimeout=10",
+            "-o", "StrictHostKeyChecking=accept-new", "-o", f"UserKnownHostsFile={self._known_hosts}",
+            f"{c['user']}@{c['host']}", cmd,
+            stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+        )
+        try:
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout)
+        except asyncio.TimeoutError:
+            proc.kill()
+            raise RuntimeError("路由器沒有回應")
+        parts = out.decode(errors="replace").split(sep + "\n")
+        return [x.strip() for x in parts[:len(paths)]] + [""] * (len(paths) - len(parts[:len(paths)]))
+
     def _read_nodes(self, raw: str) -> None:
         nodes = []
         host = self._cfg().get("host")

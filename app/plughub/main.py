@@ -107,6 +107,7 @@ _LOGGER = logging.getLogger(__name__)
 
 HTTPS_PORT = int(os.environ.get("PLUGHUB_HTTPS_PORT", "8443"))  # 0 = 不開 HTTPS
 remote = remotemod.Remote(hub, auth, HTTPS_PORT, tlsmod.local_ips)  # 在外面用（不用 VPN）
+_sni = tlsmod.SniSwitch()
 
 
 def _tls_names() -> list[str]:
@@ -128,6 +129,9 @@ async def _https(app_: FastAPI) -> tuple[uvicorn.Server, asyncio.Task] | None:
         p = await asyncio.to_thread(tlsmod.ensure, DATA_DIR, names=_tls_names())
         cfg = uvicorn.Config(app_, host="0.0.0.0", port=HTTPS_PORT, ssl_keyfile=str(p["key"]), ssl_certfile=str(p["crt"]),
                              lifespan="off", proxy_headers=True, log_level="warning", timeout_graceful_shutdown=3)
+        cfg.load()
+        _sni.attach(cfg.ssl)  # 用外面網址連時換成路由器的 Let's Encrypt 憑證
+        _sni.load(DATA_DIR, remote.sync_host())
         srv = _QuietServer(cfg)
         task = asyncio.create_task(srv.serve())
         _LOGGER.info("HTTPS 開在 %s 埠", HTTPS_PORT)
@@ -138,15 +142,29 @@ async def _https(app_: FastAPI) -> tuple[uvicorn.Server, asyncio.Task] | None:
 
 
 async def _tls_renew(srv: uvicorn.Server) -> None:
-    """每 10 分鐘檢查一次：IP、外面的網址變了、快到期就重簽，直接換上（新的連線就用新的憑證，不用重開）。"""
+    """每 10 分鐘檢查一次：IP、外面的網址變了、快到期就重簽，直接換上（新的連線就用新的憑證，不用重開）。
+    每 6 小時（開機後 1 分鐘先一次）從路由器讀 Let's Encrypt 憑證，有換新就換上。"""
+    last_pull = 0.0
+    await asyncio.sleep(60)
     while True:
-        await asyncio.sleep(600)
         try:
             p = await asyncio.to_thread(tlsmod.ensure, DATA_DIR, names=_tls_names())
             if srv.config.ssl is not None:
                 srv.config.ssl.load_cert_chain(str(p["crt"]), str(p["key"]))
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning("檢查 HTTPS 憑證失敗：%s", err)
+        if time.time() - last_pull > remotemod.PULL_EVERY:
+            last_pull = time.time()
+            try:
+                if await remote.pull_public(DATA_DIR):
+                    _LOGGER.info("換上路由器的 Let's Encrypt 憑證")
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.info("沒有用路由器的憑證：%s", err)
+            try:
+                await asyncio.to_thread(_sni.load, DATA_DIR, remote.sync_host())
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning("載入公開憑證失敗：%s", err)
+        await asyncio.sleep(600)
 
 
 @asynccontextmanager
@@ -392,7 +410,11 @@ def remote_status() -> dict[str, Any]:
         cert = tlsmod.info(DATA_DIR) if HTTPS_PORT else {}
     except Exception:  # noqa: BLE001
         cert = {}
-    return remote.status(cert)
+    try:
+        public = tlsmod.public_info(DATA_DIR, remote.sync_host()) if HTTPS_PORT else None
+    except Exception:  # noqa: BLE001
+        public = None
+    return remote.status(cert, public)
 
 
 @app.put("/api/remote")
