@@ -34,7 +34,8 @@ function PresenceLog({ log, now }: { log: PresenceEvent[]; now: number }) {
           <li key={`${e.t}-${i}`} className="flex gap-3">
             <span className="w-20 shrink-0 tabular-nums text-muted-foreground">{netAgo(e.t, now)}</span>
             <span className="min-w-0 flex-1 leading-relaxed">
-              {e.hold ? <>先不執行「出門」<span className="text-muted-foreground">（{e.why}）</span></>
+              {e.door ? <>{e.why}：{e.door === "in" ? "進來" : "出去"} {e.k} 人<span className="text-muted-foreground">（家裡估計 {e.n} 人）</span></>
+                : e.hold ? <>先不執行「出門」<span className="text-muted-foreground">（{e.why}）</span></>
                 : e.scene ? <>執行「{e.scene}」<span className="text-muted-foreground">（{e.why}{e.n ? `，動了 ${e.n} 個插座` : ""}）</span></>
                 : <><b className="font-medium">{e.name}</b> {e.home ? "回家" : "出門"}<span className="text-muted-foreground">：{e.why}</span></>}
             </span>
