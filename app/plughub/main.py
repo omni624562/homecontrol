@@ -2286,7 +2286,7 @@ async def net() -> dict[str, Any]:
 
 @app.patch("/api/net/devices/{mac}")
 async def edit_net_device(mac: str, body: dict = Body(...)) -> dict[str, Any]:
-    """{"label": 自己取的名字 或 null, "map": 放到訊號地圖, "trusted": 不用配對}"""
+    """{"label": 自己取的名字 或 null, "map": 放到訊號地圖, "trusted": 不用配對, "same_as": 跟哪台是同一台（MAC；null 拆開）}"""
     m = _mac(mac)
     if not m:
         raise HTTPException(400, "MAC 格式不對")
@@ -2296,6 +2296,18 @@ async def edit_net_device(mac: str, body: dict = Body(...)) -> dict[str, Any]:
         d["label"] = label or None
     if "trusted" in body:
         d["trusted"] = bool(body["trusted"])
+    if "same_as" in body:
+        t = _mac(body["same_as"]) if body["same_as"] else None
+        if body["same_as"] and (not t or t == m):
+            raise HTTPException(400, "要選另一台裝置")
+        if t:
+            if (store.data["net_devices"].get(t) or {}).get("same_as"):
+                t = store.data["net_devices"][t]["same_as"]  # 選到已經併進別台的：併到那台
+            for v in store.data["net_devices"].values():
+                if v.get("same_as") == m:
+                    v["same_as"] = t  # 原本併到這台的，跟著一起過去
+            store.data["net_devices"].setdefault(t, {"first": time.time()})
+        d["same_as"] = t if t != m else None
     if "map" in body:
         d["map"] = bool(body["map"])
         if not d["map"]:

@@ -2847,7 +2847,8 @@ class Hub:
         usage_today = self.store.data.get("net_usage", {}).get(date.today().isoformat(), {})
         probes = self.store.data.get("net_probe", {})
         clients = []
-        for mac in set(r.clients) | {m for m, v in known.items() if v.get("map") or v.get("label")} | set(owner):
+        same = {m for m, v in known.items() if v.get("same_as")} | {v["same_as"] for v in known.values() if v.get("same_as")}
+        for mac in set(r.clients) | {m for m, v in known.items() if v.get("map") or v.get("label")} | set(owner) | same:
             c = r.clients.get(mac, {})
             k = known.get(mac, {})
             names = r.names.get(mac, {})
@@ -2877,6 +2878,7 @@ class Hub:
                 "plug": plug_names.get(mac),
                 "today_bytes": usage_today.get(mac),
             })
+        clients = merge_same(clients, {m: v["same_as"] for m, v in known.items() if v.get("same_as")})
         clients.sort(key=lambda c: (not c["online"], c["plug"] is not None, c["name"].lower()))
         return {
             "configured": r.configured, "ok": r.ok, "error": r.error,
@@ -3648,6 +3650,36 @@ async def _quiet_disconnect(device: Device) -> None:
         await device.disconnect()
     except Exception:  # noqa: BLE001
         pass
+
+
+def merge_same(clients: list[dict[str, Any]], same: dict[str, str]) -> list[dict[str, Any]]:
+    """同一台裝置的有線、無線（不同 MAC）合成一筆：名字用使用者取的，連線資訊用現在連著的那個（都連著用有線）。
+    same：副 MAC → 主 MAC（在主 MAC 的那一筆底下列出 links，可以拆開）。"""
+    by = {c["mac"]: c for c in clients}
+    groups: dict[str, list[str]] = {}
+    for sub, main in same.items():
+        if sub in by and main in by and sub != main and main not in same:
+            groups.setdefault(main, []).append(sub)
+    if not groups:
+        return clients
+    drop = set()
+    for main, subs in groups.items():
+        members = [by[main], *(by[s] for s in subs)]
+        live = sorted(members, key=lambda c: (not c["online"], not c["wired"], -(c.get("seen") or 0)))[0]
+        m = by[main]
+        merged = {**m, **{k: live[k] for k in ("ip", "node", "node_model", "node_main", "band", "ssid", "rssi", "wired", "online")}}
+        merged["seen"] = max((c.get("seen") or 0 for c in members), default=0) or None
+        merged["label"] = m["label"] or next((c["label"] for c in members if c["label"]), None)
+        if merged["label"]:
+            merged["name"] = merged["label"]
+        merged["person"] = m["person"] or next((c["person"] for c in members if c["person"]), None)
+        tb = [c["today_bytes"] for c in members if c.get("today_bytes")]
+        merged["today_bytes"] = sum(tb) if tb else m.get("today_bytes")
+        merged["links"] = [{"mac": c["mac"], "wired": c["wired"], "band": c["band"], "ip": c["ip"], "online": c["online"], "seen": c.get("seen"),
+                            "main": c["mac"] == main} for c in members]
+        by[main] = merged
+        drop.update(subs)
+    return [by[c["mac"]] for c in clients if c["mac"] not in drop]
 
 
 def arrive_rule(**kw: Any) -> dict[str, Any]:
