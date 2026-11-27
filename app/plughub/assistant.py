@@ -45,6 +45,7 @@ SYSTEM = """你是「家庭中控」的助理，幫一個台灣家庭控制和�
 - 「全部關閉」用 turn_off_all，它會請使用者確認。
 - 有「防呆」的插座，set_power 會回傳「等使用者確認」，照實告訴使用者畫面上有確認按鈕。鎖定的插座不能動。
 - 要建立排程或情境時，用 propose_schedule／propose_scene 產生草稿，告訴使用者「按『建立』就會加上去」；不要說已經建好了。
+- 「誰回家就開什麼」用 propose_arrive_rule；「房間有人走動就開、沒動靜就關」用 propose_motion_rule。先用 get_automations 看已經有的規則、家人和房間；要改舊的回家規則就帶 rule_id。一樣是草稿，按「建立」才會加上去。
 - 問使用時間、紀錄、誰在家、訊號、動靜，就用對應的查詢工具，回答重點和數字，必要時給一個建議。
 - 插座量不到電，只有「開了多久」；被問到用電、電費時，說只能看使用時間，不要自己估度數或電費。
 - 問題沒有現成答案時，自己用查詢工具找資料、組合起來算（例如分別查兩天再比較），不要叫使用者自己去看。
@@ -483,6 +484,106 @@ class Assistant:
             pend("scene", label, body={"name": name, "icon": "", "actions": acts, "others": "off" if others_off else "keep"})
             return "草稿好了，等使用者按「建立」"
 
+        def people_ids() -> dict[str, str]:
+            return {p["id"]: p["name"] for p in hub.store.data["people"]}
+
+        def fp_rooms() -> dict[str, str]:
+            return {r["id"]: r.get("name") or r["id"] for r in (hub.store.data.get("floorplan") or {}).get("rooms") or []}
+
+        @beta_async_tool
+        async def get_automations() -> str:
+            """已經有的「回家自動開」和「動靜自動化」規則，以及建規則要用的家人 ID、房間 ID（平面圖上的房間）。"""
+            ppl, rooms = people_ids(), fp_rooms()
+            arrive = [{"id": r["id"], "enabled": r.get("enabled", True), "who": ppl.get(r.get("who"), "任何人") if r.get("who") != "any" else "任何人",
+                       "only_when_home_was_empty": r.get("only_empty"), "when": r.get("when"), "start": r.get("start"), "end": r.get("end"),
+                       "days": r.get("days"), "kind": r.get("kind"), "plugs": [hub.name(hub.plugs[p]) for p in r.get("plugs") or [] if p in hub.plugs],
+                       "scene": (hub.store.scene(r["scene"]) or {}).get("name") if r.get("scene") else None, "on_for_minutes": r.get("for_min") or None}
+                      for r in hub.store.data.get("arrive_rules") or []]
+            motion = [{"room": rooms.get(r["room"], r["room"]), "plug": hub.name(hub.plugs[r["plug"]]) if r["plug"] in hub.plugs else r["plug"],
+                       "start": r.get("start"), "end": r.get("end"), "off_minutes": r.get("off_min"), "need_someone_home": r.get("need_home"),
+                       "enabled": r.get("enabled", True)} for r in hub.store.data.get("motion_rules") or []]
+            return json.dumps({"people": [{"id": k, "name": v} for k, v in ppl.items()], "rooms": [{"id": k, "name": v} for k, v in rooms.items()],
+                               "arrive_rules": arrive, "motion_rules": motion}, ensure_ascii=False)
+
+        def hm_ok(v: str | None) -> str:
+            v = (v or "").strip()
+            return v if len(v) == 5 and v[2] == ":" and v[:2].isdigit() and v[3:].isdigit() and int(v[:2]) < 24 and int(v[3:]) < 60 else ""
+
+        @beta_async_tool
+        async def propose_arrive_rule(who: str = "any", plug_ids: list[str] | None = None, scene_id: str | None = None,
+                                      when: str = "all", start: str | None = None, end: str | None = None, days: str = "all",
+                                      only_when_home_was_empty: bool = False, on_for_minutes: int = 0, rule_id: str | None = None) -> str:
+            """產生一條「回家自動開」規則草稿（家人的手機連上家裡 Wi-Fi 就算回家），使用者按「建立」才會加上去。
+
+            Args:
+                who: 家人 ID（get_automations 的 people），任何人回家都算就用 "any"
+                plug_ids: 要打開的插座 ID（跟 scene_id 二選一）
+                scene_id: 要執行的情境 ID
+                when: "all" 任何時間、"dark" 天黑後、"range" 自訂時段（要填 start、end）
+                start: 自訂時段開始 "HH:MM"
+                end: 自訂時段結束 "HH:MM"（可以跨午夜）
+                days: "all" 每天、"weekday" 平日、"weekend" 週末
+                only_when_home_was_empty: 只有家裡原本沒人時才做
+                on_for_minutes: 打開幾分鐘後自動關（0 = 不關）
+                rule_id: 要修改的舊規則 ID（get_automations 的 arrive_rules）；新規則不填
+            """
+            ppl = people_ids()
+            if who != "any" and who not in ppl:
+                return "沒有這位家人，先用 get_automations 查 ID"
+            if when not in ("all", "dark", "range") or days not in ("all", "weekday", "weekend"):
+                return "when 要是 all／dark／range，days 要是 all／weekday／weekend"
+            start, end = hm_ok(start), hm_ok(end)
+            if when == "range" and (not start or not end or start == end):
+                return "自訂時段要填不一樣的 start、end（HH:MM）"
+            old = next((r for r in hub.store.data.get("arrive_rules") or [] if r["id"] == rule_id), None) if rule_id else None
+            if rule_id and old is None:
+                return "沒有這條規則"
+            if scene_id:
+                if not hub.store.scene(scene_id):
+                    return "沒有這個情境"
+                kind, plugs = "scene", []
+            else:
+                plugs = list(dict.fromkeys(plug(p).id for p in plug_ids or []))
+                if not plugs:
+                    return "要選插座或情境"
+                kind = "plugs"
+            body = {"who": who, "kind": kind, "plugs": plugs, "scene": scene_id if kind == "scene" else None, "when": when,
+                    "start": start if when == "range" else "", "end": end if when == "range" else "", "days": days,
+                    "only_empty": bool(only_when_home_was_empty), "for_min": max(0, min(720, int(on_for_minutes or 0))), "enabled": True}
+            who_t = ppl.get(who, "任何人")
+            when_t = {"all": "", "dark": "、天黑後", "range": f"、{start}～{end}"}[when] + {"all": "", "weekday": "（平日）", "weekend": "（週末）"}[days]
+            what = f"執行「{hub.store.scene(scene_id)['name']}」" if kind == "scene" else f"打開 {'、'.join(hub.name(hub.plugs[p]) for p in plugs)}"
+            extra = ("，家裡原本沒人才做" if only_when_home_was_empty else "") + (f"，{body['for_min']} 分鐘後關" if body["for_min"] else "")
+            pend("arrive", f"{'修改回家規則：' if old else ''}{who_t}回家{when_t} → {what}{extra}", body=body, rule_id=rule_id)
+            return "草稿好了，等使用者按「建立」" if not old else "修改草稿好了，等使用者按「修改」"
+
+        @beta_async_tool
+        async def propose_motion_rule(room_id: str, plug_id: str, off_minutes: int = 5, start: str | None = None, end: str | None = None,
+                                      need_someone_home: bool = True) -> str:
+            """產生一條「動靜自動化」規則草稿：房間有人走動（Wi-Fi 感測）就打開插座，沒動靜 off_minutes 分鐘後關掉。使用者按「建立」才會加上去。
+
+            Args:
+                room_id: 平面圖上的房間 ID（get_automations 的 rooms）
+                plug_id: 要開關的插座 ID
+                off_minutes: 沒動靜幾分鐘後關（1～120）
+                start: 只在這段時間內作用，開始 "HH:MM"（整天就不填）
+                end: 結束 "HH:MM"
+                need_someone_home: 只有家裡有人時才做
+            """
+            rooms = fp_rooms()
+            if room_id not in rooms:
+                return "沒有這個房間，先用 get_automations 查 ID（要先在家中地圖畫好房間）"
+            p = plug(plug_id)
+            start, end = hm_ok(start), hm_ok(end)
+            if not start or not end:
+                start = end = ""
+            off = max(1, min(120, int(off_minutes or 5)))
+            body = {"room": room_id, "plug": p.id, "start": start, "end": end, "off_min": off, "need_home": bool(need_someone_home), "enabled": True}
+            label = f"{rooms[room_id]}有動靜 → 打開 {hub.name(p)}，沒動靜 {off} 分鐘後關" + (f"（{start}～{end}）" if start else "") + \
+                ("，有人在家才做" if need_someone_home else "")
+            pend("motion", label, body=body)
+            return "草稿好了，等使用者按「建立」"
+
         @beta_async_tool
         async def get_signal_map() -> str:
             """訊號地圖：平面圖上的房間位置、每個裝置的 Wi-Fi 訊號（dBm）、擺在哪、高度、連到哪一台路由器、跟基地台的距離，
@@ -537,7 +638,7 @@ class Assistant:
             }, ensure_ascii=False)
 
         tools = [get_home, set_power, set_timer, run_scene, turn_off_all, get_weather, get_energy, query_usage, get_history,
-                 get_schedules, propose_schedule, propose_scene, get_signal_map]
+                 get_schedules, propose_schedule, propose_scene, get_signal_map, get_automations, propose_arrive_rule, propose_motion_rule]
         cv = getattr(hub, "claude", None)
         if cv is not None and cv.allowed("ask"):
             tools += self._camera_tools(actions)

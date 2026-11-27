@@ -375,11 +375,12 @@ export interface Assistant {
 
 export interface AskAction {
   id: string;
-  kind: "power" | "all_off" | "schedule" | "scene" | "look" | "vision_on";
+  kind: "power" | "all_off" | "schedule" | "scene" | "look" | "vision_on" | "arrive" | "motion";
   label: string;
   plug?: string;
   on?: boolean;
   body?: unknown;
+  rule_id?: string | null;
   state?: "done" | "skip" | "err";
   err?: string;
 }
