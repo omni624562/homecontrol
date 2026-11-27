@@ -1,6 +1,7 @@
 import { Lock, WifiOff } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Steam, useFun } from "@/components/fx";
+import { claimMenu, plugMenu } from "@/components/context-menu";
 import { deviceIcon } from "@/components/icons";
 import { fmtDur, fmtLeft, fmtSec, fmtWatts } from "@/lib/format";
 import { useHub } from "@/lib/hub";
@@ -39,6 +40,7 @@ export function PlugRow({ plug: p, onOpen, onToggle }: { plug: Plug; onOpen: () 
       role="button"
       tabIndex={0}
       onClick={onOpen}
+      onContextMenu={() => claimMenu(plugMenu(p, on, onOpen, onToggle))}
       onKeyDown={(e) => {
         if (e.key === "Enter") onOpen();
       }}
