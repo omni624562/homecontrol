@@ -52,6 +52,7 @@ NET_OUTAGE_SECONDS = 90  # 同一個 Wi-Fi 的插座全部斷線多久才算路�
 
 POLL_SECONDS = 5
 FACE_COOL = 600  # 秒：同一個人的回家動作、訪客通知，至少隔這麼久
+ROOM_SEEN_HOLD = 900  # 秒：房間的攝影機這麼久內看過人，手機都不在 Wi-Fi 也先不當作大家出門（有人關了 Wi-Fi）
 FACE_LEAVE_COOL = 1800  # 秒：「要出門了嗎」提醒至少隔這麼久
 FACE_LINGER = 30  # 秒：門口的陌生人要待這麼久才通知（路人經過不吵）
 FACE_LATE = (0, 6)  # 半夜：這段時間看到陌生人一律緊急通知、開門口燈
@@ -206,6 +207,8 @@ class Hub:
         self.cameras.stream = self.gpu.stream
         self._cam_started = time.time()  # 剛開機還沒看到人：從這時候開始算「沒人多久」
         self._still: dict[str, dict[str, Any]] = {}
+        self._room_seen: tuple[float, str] = (0.0, "")  # 房間的攝影機上次看到人：(時間, 攝影機名稱)
+        self._away_hold = False  # 手機都不在、但攝影機剛看到人：「出門」先不執行
         self._sound_seen: dict[str, float] = {}  # 攝影機 → 已經處理過的最後一個聲音事件
         self.activity = Activity(self.store.dir)  # 活動熱圖
         self._act_seen: dict[str, float] = {}  # 很久沒動靜：攝影機 → {last 上次有動, prev 上次的框, alerted}
@@ -1464,6 +1467,9 @@ class Hub:
             if self.cameras.state.get(c["id"], {}).get("sounds"):
                 self._sound_events(c)
             self._activity_feed(c, now)
+            st = self.cameras.state.get(c["id"], {})
+            if c.get("role", "room") == "room" and (st.get("person") or st.get("tracks")):
+                self._room_seen = (now, c.get("name") or c["id"])
         self.activity.maybe_save()
         if getattr(self, "_dirty_cams", False):
             self._dirty_cams = False
@@ -2375,6 +2381,7 @@ class Hub:
         self._router_traffic()
         changed = self._router_new_devices(now)
         changed = self._router_presence(now) or changed
+        self._away_hold_check(now)
         self._check_left_on(now)
         self._check_aps(now)
         sig = (self.router.ok, frozenset(m for m in self.router.clients if self.router.online(m)))
@@ -2481,6 +2488,8 @@ class Hub:
                 self._dirty = True
             return
         self._home_since = None
+        if self.room_seen_recently(now):  # 手機都不在，但攝影機剛看到人：當作有人在家，先不講、不關
+            return
         # 高風險電器（電暖器、熨斗…）：大家一出門就關，不等 10 分鐘（設定裡可以改成只通知）
         self._risky_left_on(cfg, notice)
         if mode == "none":
@@ -2621,12 +2630,35 @@ class Hub:
         self._dirty = True
         after = any(self._presence[p["id"]]["home"] for p in people)
         if before and not after:
-            self._presence_scene(cfg.get("away_scene"), "大家都出門了")
+            if self.room_seen_recently(now):
+                self._away_hold = True
+                mins = max(1, round((now - self._room_seen[0]) / 60))
+                why = f"手機都不在 Wi-Fi，但{self._room_seen[1]} {mins} 分鐘內看到人"
+                self._presence_log({"hold": True, "why": why})
+                self.notifier.send("手機都不在 Wi-Fi，但家裡有人？", why + "。先不執行「出門」，家裡 15 分鐘都沒看到人才執行")
+            else:
+                self._presence_scene(cfg.get("away_scene"), "大家都出門了")
         elif after and not before and arrived:
             self._away_end(arrived)
+        if after:
+            self._away_hold = False
         if arrived_ids:
             self._arrive(arrived_ids, was_empty=not before)
         return True
+
+    def room_seen_recently(self, now: float) -> bool:
+        """房間的攝影機最近看過人（手機都不在 Wi-Fi 時，多半是有人把手機的 Wi-Fi 關了）。"""
+        return now - self._room_seen[0] < ROOM_SEEN_HOLD
+
+    def _away_hold_check(self, now: float) -> None:
+        """先不執行的「出門」：還是沒人的手機在家、攝影機也 15 分鐘沒看到人了，才執行。"""
+        if not self._away_hold or self.room_seen_recently(now):
+            return
+        self._away_hold = False
+        if any(st.get("home") for st in self._presence.values()):
+            return
+        cfg = self.store.data["settings"].get("presence") or {}
+        self._presence_scene(cfg.get("away_scene"), "大家都出門了（家裡 15 分鐘沒看到人）")
 
     def _presence_why(self, p: dict[str, Any], home: bool, last: float, grace: float) -> str:
         """誰在家改變的原因（給「最近變化」看）。"""
