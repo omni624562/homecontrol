@@ -79,6 +79,7 @@ from . import tls as tlsmod
 from .locate import MIN_SAMPLES as LOCATE_MIN, TRAIN_S as LOCATE_TRAIN_S
 from .assistant import MODELS as ASSISTANT_MODELS, Assistant
 from .claude_vision import FEATURES as CV_FEATURES, ClaudeVision
+from .ideas import Ideas
 from .patrol import Patrol
 from .hub import APP_VERSION, SOURCE, Hub, Locked, arrive_rule
 from .summary import build_summary
@@ -96,6 +97,7 @@ assistant = Assistant(hub)
 hub.assistant = assistant
 hub.claude = ClaudeVision(hub)  # Claude 看影像（預設關）
 hub.patrol = Patrol(hub)  # Claude 巡家（預設關）
+hub.ideas = Ideas(hub)  # Claude 從習慣建議自動化（有金鑰才做）
 hub.assistant = assistant
 auth = authmod.Auth(DATA_DIR)
 _LOGGER = logging.getLogger(__name__)
@@ -2169,6 +2171,30 @@ async def patrol_run() -> dict[str, Any]:
         raise HTTPException(409, "正在巡")
     await hub.patrol.run()
     return hub.patrol.status()
+
+
+@app.get("/api/ideas")
+async def ideas_get() -> dict[str, Any]:
+    """Claude 從習慣建議的自動化（草稿；前端按「建立」時呼叫原本的 API）。"""
+    return hub.ideas.status()
+
+
+@app.post("/api/ideas/run")
+async def ideas_run() -> dict[str, Any]:
+    if not assistant.configured:
+        raise HTTPException(400, "還沒設定 Anthropic API 金鑰")
+    if hub.ideas.busy:
+        raise HTTPException(409, "正在想")
+    return await hub.ideas.run()
+
+
+@app.post("/api/ideas/{item_id}/{what}")
+async def ideas_drop(item_id: str, what: str) -> dict[str, Any]:
+    """建立了（done）或按「不要」（dismiss，之後不再建議）：從清單拿掉。"""
+    if what not in ("done", "dismiss"):
+        raise HTTPException(404, "沒有這個")
+    hub.ideas.drop(item_id[:20], what == "dismiss")
+    return hub.ideas.status()
 
 
 @app.post("/api/assistant/chat")
