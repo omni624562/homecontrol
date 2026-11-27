@@ -156,3 +156,12 @@ def test_counting_ignored_when_camera_not_tracking(hub):
     hub.router.clients[PIXEL]["seen"] = now - 700
     hub._router_presence(now)
     assert hub.ran == ["大家都出門了"]  # 沒在算進出：照原本的（只看手機）
+
+
+def test_count_starts_from_phones_when_presence_restored(hub):
+    """重開後「誰在家」是還原的（沒有變化）：人數還是要從手機在家的人數開始。"""
+    now = time.time()
+    home(hub, now, ("May", PIXEL))
+    hub.store.data.pop("home_count", None)
+    hub._router_presence(now + 5)
+    assert hub.home_count == 1 and "home_count" in hub.store.data
