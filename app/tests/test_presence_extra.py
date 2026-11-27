@@ -347,3 +347,56 @@ def test_plug_usage_habit(app_module):
     # 改回一般瓦數：使用習慣清掉
     c.patch(f"/api/plugs/{pid}", json={"watts": 40})
     assert meta.watts == 40 and meta.usage is None
+
+
+def test_away_held_while_room_camera_sees_people(hub):
+    """手機都不在 Wi-Fi（有人把 Wi-Fi 關了），但房間的攝影機剛看到人：「出門」先不執行。"""
+    ran = []
+    hub._presence_scene = lambda sid, why: ran.append(why)
+    hub.store.data["people"] = [{"id": "p1", "name": "May", "macs": [PIXEL]}]
+    now = time.time()
+    hub._router_since = now - 3600
+    hub.router.clients = {PIXEL: {"mac": PIXEL, "seen": now}}
+    hub._router_presence(now)
+    hub._room_seen = (now - 120, "IN_HOUSE")
+    hub.router.clients[PIXEL]["seen"] = now - 700
+    hub._router_presence(now)
+    assert ran == [] and hub._away_hold
+    assert hub.store.data["presence_log"][-1]["hold"] is True
+    assert any("先不執行" in n[1] for n in hub.notes)
+    hub._away_hold_check(now + 300)  # 攝影機還在 15 分鐘內看過人
+    assert ran == []
+    hub._away_hold_check(now + 900)  # 15 分鐘都沒看到人：執行
+    assert len(ran) == 1 and not hub._away_hold
+
+
+def test_away_hold_cancelled_when_phone_back(hub):
+    ran = []
+    hub._presence_scene = lambda sid, why: ran.append(why)
+    hub.store.data["people"] = [{"id": "p1", "name": "May", "macs": [PIXEL]}]
+    now = time.time()
+    hub._router_since = now - 3600
+    hub.router.clients = {PIXEL: {"mac": PIXEL, "seen": now}}
+    hub._router_presence(now)
+    hub._room_seen = (now, "IN_HOUSE")
+    hub.router.clients[PIXEL]["seen"] = now - 700
+    hub._router_presence(now)
+    hub.router.clients[PIXEL]["seen"] = now + 60  # Wi-Fi 打開了
+    hub._router_presence(now + 60)
+    assert not hub._away_hold
+    hub._away_hold_check(now + 2000)
+    assert ran == []
+
+
+def test_away_runs_when_no_one_seen(hub):
+    ran = []
+    hub._presence_scene = lambda sid, why: ran.append(why)
+    hub.store.data["people"] = [{"id": "p1", "name": "May", "macs": [PIXEL]}]
+    now = time.time()
+    hub._router_since = now - 3600
+    hub.router.clients = {PIXEL: {"mac": PIXEL, "seen": now}}
+    hub._router_presence(now)
+    hub._room_seen = (now - 3600, "IN_HOUSE")
+    hub.router.clients[PIXEL]["seen"] = now - 700
+    hub._router_presence(now)
+    assert ran == ["大家都出門了"]
