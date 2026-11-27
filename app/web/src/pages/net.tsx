@@ -84,6 +84,11 @@ const putPres = async (body: object) => {
 
 type Filter = "all" | "mobile" | "computer" | "media" | "unnamed";
 
+
+// 連線燈：連著的亮綠燈，沒連的空心
+function Dot({ on }: { on: boolean }) {
+  return <span aria-hidden className={cn("size-2 shrink-0 rounded-full", on ? "bg-emerald-500 shadow-[0_0_6px] shadow-emerald-500/70" : "border border-muted-foreground/50")} />;
+}
 export function NetPage() {
   const { state } = useHub();
   const [net, setNet] = useState<NetData | null>(null);
@@ -220,7 +225,7 @@ export function NetPage() {
             <span className="flex flex-wrap items-center gap-x-3 text-sm text-muted-foreground">
               {[...c.links].sort((a, b) => Number(b.online) - Number(a.online)).map((l) => (
                 <span key={l.mac} className="inline-flex items-center gap-1.5">
-                  <span aria-hidden className={cn("size-2 rounded-full", l.online ? "bg-emerald-500 shadow-[0_0_6px] shadow-emerald-500/70" : "border border-muted-foreground/50")} />
+                  <Dot on={l.online} />
                   {l.wired ? "有線" : l.band || "Wi-Fi"}{l.online && l.ip ? ` ${l.ip}` : ""}
                   <span className="sr-only">{l.online ? "連線中" : "沒連線"}</span>
                 </span>
@@ -228,7 +233,11 @@ export function NetPage() {
               {!c.online && c.seen ? <span>最後看到 {netAgo(c.seen, net.now)}</span> : null}
             </span>
           ) : (
-            <span className="block truncate text-sm text-muted-foreground">{isRaw ? [c.name, where].filter(Boolean).join("・") : sub}</span>
+            <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+              <Dot on={c.online} />
+              <span className="truncate">{isRaw ? [c.name, where].filter(Boolean).join("・") : sub}</span>
+              <span className="sr-only">{c.online ? "連線中" : "沒連線"}</span>
+            </span>
           )}
         </span>
         {!!c.today_bytes && <span className="shrink-0 text-sm tabular-nums text-muted-foreground">{fmtBytes(c.today_bytes)}</span>}
@@ -307,7 +316,8 @@ export function NetPage() {
                               const I = KIND[devKind(c)].icon;
                               return (
                                 <span key={c.mac} className={cn("inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs text-muted-foreground", c.online && "border-emerald-300 text-emerald-700 dark:border-emerald-500/40 dark:text-emerald-400")}>
-                                  <I className="size-3.5" />{netName(c)}
+                                  <Dot on={c.online} /><I className="size-3.5" />{netName(c)}
+                                  <span className="sr-only">{c.online ? "連線中" : "沒連線"}</span>
                                 </span>
                               );
                             }) : <span className="text-xs text-muted-foreground">還沒選裝置</span>}
