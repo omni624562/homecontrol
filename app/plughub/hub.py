@@ -3237,6 +3237,9 @@ class Hub:
             self.mark_native()
             self._check_weekly()
         self._check_monthly()
+        patrol = getattr(self, "patrol", None)
+        if patrol is not None and patrol.due():
+            self._spawn(patrol.run())  # Claude 巡家
         if time.time() - self._calendar_at < 600:
             return
         self._calendar_at = time.time()
