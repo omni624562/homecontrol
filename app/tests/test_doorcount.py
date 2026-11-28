@@ -215,3 +215,51 @@ def test_family_between_lift_and_home_door(hub):
     assert real(hub, OUT_OF_LIFT, AT_HOME_DOOR) == "in"
     assert real(hub, AT_HOME_DOOR, INTO_LIFT) == "out"
     assert real(hub, AT_HOME_DOOR, AT_HOME_DOOR) is None
+
+
+def test_person_reason_and_door_clip_time(hub):
+    now = time.time()
+    home(hub, now, ("May", PIXEL))
+    t = feed(hub, now, 7, OUT)
+    hub.router.clients[PIXEL]["seen"] = t - 700
+    hub._router_presence(t + 1)
+    p = hub.people_report()[0]
+    assert p["home"] is False and "看到人出去" in p["why"] and p["door_cam"] == "outdoor" and abs(p["door_t"] - t) < 10
+    log = [e for e in hub.store.data["presence_log"] if e.get("home") is False][-1]
+    assert log["cam"] == "outdoor" and log["door_t"] == p["door_t"]
+
+
+def test_away_wait_and_run_now(hub):
+    now = time.time()
+    home(hub, now, ("May", PIXEL))
+    hub.cameras.state["outdoor"] = {"engine": "stream", "samples": []}
+    hub._door_feed(CAM, now + 1)
+    hub.router.clients[PIXEL]["seen"] = now - 700
+    hub._router_presence(now + 1)
+    w = hub.away_wait()
+    assert w and w["names"] == ["May"] and w["until"] > now and hub.people_report()[0]["stay"]
+    hub.away_now()
+    assert hub.ran == ["大家都出門了（手動）"] and hub.away_wait() is None and hub.people_report()[0]["home"] is False
+
+
+def test_override_actually_home_sticks_until_door_exit(hub):
+    now = time.time()
+    home(hub, now, ("May", PIXEL))
+    hub._door_live = 0.0  # 門口沒在追蹤：只看手機
+    hub.router.clients[PIXEL]["seen"] = now - 700
+    hub._router_presence(now + 1)
+    assert hub.ran == ["大家都出門了"]
+    hub.presence_override("p0", True)  # 其實在家
+    t0 = time.time()
+    hub._router_presence(t0 + 600)
+    assert hub._presence["p0"]["home"] and len(hub.ran) == 1  # 手機還是沒連線，但不再被改回出門
+    t = feed(hub, t0 + 700, 9, OUT)  # 之後大門口看到人出去：恢復照常判斷
+    hub._router_presence(t + 1)
+    assert hub._presence["p0"]["home"] is False and len(hub.ran) == 2
+
+
+def test_away_now_refused_when_someone_really_home(hub):
+    now = time.time()
+    home(hub, now, ("May", PIXEL))
+    with pytest.raises(ValueError):
+        hub.away_now()

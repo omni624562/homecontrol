@@ -207,7 +207,7 @@ class Hub(PresenceMixin):
         self._door_seen: dict[str, float] = {}  # 門口的攝影機 → 已經算過的追蹤時間
         self._door_live = 0.0  # 門口的攝影機上次有在追蹤的時間
         self._door_out = 0.0  # 上次看到有人從大門出去的時間
-        self._door_outs: list[float] = []  # 大門口看到有人出去的時間（一筆一個人）；配給一個手機斷線的家人就拿掉
+        self._door_outs: list[tuple[float, str]] = []  # 大門口看到有人出去：(時間, 攝影機)，一筆一個人；配給一個手機斷線的家人就拿掉
         self.store.data.pop("home_count", None)  # 舊版的「家裡估計幾個人」：不準，拿掉了
         self._sound_seen: dict[str, float] = {}  # 攝影機 → 已經處理過的最後一個聲音事件
         self.activity = Activity(self.store.dir)  # 活動熱圖
@@ -3349,6 +3349,8 @@ class Hub(PresenceMixin):
                        "nodes": self.router.nodes,
                        "ssids": sorted({i["ssid"] for i in self.router.ifaces.values() if i.get("ssid")})},
             "people": self.people_report(),
+            "away_wait": self.away_wait(),
+            "room_seen": round(self._room_seen[0]) or None,
             "presence_log": self.store.data.get("presence_log", [])[-40:],
             "assistant": self.assistant.status() if getattr(self, "assistant", None) else None,
             "backup": self.backup.report(),

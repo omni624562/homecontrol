@@ -2416,6 +2416,28 @@ async def edit_person(pid: str, body: dict = Body(...)) -> dict[str, Any]:
     return await _done()
 
 
+@app.post("/api/people/{pid}/presence")
+async def override_presence(pid: str, body: dict = Body(...)) -> dict[str, Any]:
+    """判斷錯了，手動改：{"home": true}＝其實在家、{"home": false}＝其實出門了。"""
+    try:
+        hub.presence_override(pid, bool(body.get("home")))
+    except KeyError:
+        raise HTTPException(404, "找不到這個人") from None
+    store.save()
+    return await _done()
+
+
+@app.post("/api/presence/away-now")
+async def away_now() -> dict[str, Any]:
+    """不等了，現在就執行「出門」。"""
+    try:
+        hub.away_now()
+    except ValueError as err:
+        raise HTTPException(409, str(err)) from None
+    store.save()
+    return await _done()
+
+
 @app.delete("/api/people/{pid}")
 async def delete_person(pid: str) -> dict[str, Any]:
     store.data["people"] = [x for x in store.data["people"] if x["id"] != pid]

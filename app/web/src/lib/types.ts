@@ -134,6 +134,11 @@ export interface Person {
   macs: string[];
   home: boolean | null;
   since?: number;
+  why?: string; // 為什麼這樣判斷（一句話）
+  stay?: number; // 手機從這時候斷線，但大門口沒看到人出去：先當作在家
+  door_t?: number; // 出門時大門口看到人出去的時間
+  door_cam?: string;
+  phone?: number | null; // 手機最後連線的時間
   where?: Where | null; // 在哪個房間（實驗，教過房間才有）
 }
 
@@ -276,6 +281,8 @@ export interface HubState {
   scenes: Scene[];
   people: Person[];
   presence_log?: PresenceEvent[];
+  away_wait?: { names: string[]; why: string; until: number | null } | null; // 還沒執行「出門」是在等什麼
+  room_seen?: number | null; // 房間的攝影機上次看到有人走動
   summary: { power: number | null; energy_today: number; cost_today: number; cost_month: number; hours_today?: number; on_count?: number; history?: { day: string; kwh: number; hours?: number }[] };
   settings: {
     long_on_hours?: number;
@@ -322,6 +329,8 @@ export interface PresenceEvent {
   k?: number;
   hold?: boolean; // 手機都不在、但攝影機剛看到人：「出門」先不執行
   n?: number;
+  door_t?: number; // 這次出門，大門口看到人出去的時間（看錄影用）
+  cam?: string;
   why: string;
 }
 
