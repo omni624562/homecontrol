@@ -952,7 +952,7 @@ def _arrive_clean(x: dict[str, Any], old: dict[str, Any] | None = None) -> dict[
         if x["who"] != "any" and x["who"] not in people:
             raise HTTPException(400, "找不到這位家人")
         r["who"] = x["who"]
-    for k in ("enabled", "only_empty"):
+    for k in ("enabled", "only_empty", "only_occupied"):
         if k in x:
             r[k] = bool(x[k])
     if "when" in x:

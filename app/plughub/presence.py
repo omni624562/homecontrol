@@ -39,7 +39,7 @@ SOURCE: contextvars.ContextVar[str] = contextvars.ContextVar("source", default="
 
 def arrive_rule(**kw: Any) -> dict[str, Any]:
     """一條「回家自動開」規則（沒給的用預設值）。"""
-    r = {"id": uuid.uuid4().hex[:8], "enabled": True, "who": "any", "only_empty": False, "when": "all", "start": "", "end": "",
+    r = {"id": uuid.uuid4().hex[:8], "enabled": True, "who": "any", "only_empty": False, "only_occupied": False, "when": "all", "start": "", "end": "",
          "days": "all", "kind": "plugs", "plugs": [], "scene": None, "for_min": 0, "lights_dark": True, "last": None}
     r.update(kw)
     return r
@@ -411,7 +411,7 @@ class PresenceMixin:
             who = r.get("who") or "any"
             if who != "any" and who not in ids:
                 continue
-            if r.get("only_empty") and not was_empty:
+            if (r.get("only_empty") and not was_empty) or (r.get("only_occupied") and was_empty):
                 continue
             days = r.get("days") or "all"
             if (days == "weekday" and wd >= 5) or (days == "weekend" and wd < 5):

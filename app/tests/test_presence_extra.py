@@ -483,3 +483,14 @@ def test_arrive_rule_skips_lights_in_daytime(app_module, monkeypatch):
     monkeypatch.setattr(hub, "is_dark", lambda: True)
     asyncio.run(hub._arrive_plugs({"plugs": ["a", "b"]}, "ERIC回家了"))
     assert on == ["a", "b"]
+
+
+def test_arrive_rule_only_when_someone_already_home(hub, monkeypatch):
+    from plughub.hub import arrive_rule
+
+    now, ran, opened = _arrive_setup(hub, monkeypatch)
+    hub.store.data["arrive_rules"] = [arrive_rule(id="o", who="any", only_occupied=True, kind="scene", scene="s-home")]
+    hub._arrive(["p1"], was_empty=True)  # 家裡原本沒人：不做
+    assert ran == []
+    hub._arrive(["p2"], was_empty=False)  # 家裡原本有人：做
+    assert len(ran) == 1

@@ -14,13 +14,13 @@ type When = "all" | "dark" | "range";
 type Days = "all" | "weekday" | "weekend";
 type Kind = "plugs" | "scene";
 export interface ArriveRule {
-  id: string; enabled: boolean; who: string; only_empty: boolean; when: When; start: string; end: string;
+  id: string; enabled: boolean; who: string; only_empty: boolean; only_occupied?: boolean; when: When; start: string; end: string;
   days: Days; kind: Kind; plugs: string[]; scene: string | null; for_min: number; lights_dark?: boolean; last: number | null;
 }
 interface Suggestion { who: string; name: string; plug: string; plug_name: string; hits: number; n: number }
 interface Data { rules: ArriveRule[]; suggestions: Suggestion[] }
 
-const BLANK: Omit<ArriveRule, "id" | "last"> = { enabled: true, who: "any", only_empty: false, when: "all", start: "17:00", end: "22:00", days: "all", kind: "plugs", plugs: [], scene: null, for_min: 0, lights_dark: true };
+const BLANK: Omit<ArriveRule, "id" | "last"> = { enabled: true, who: "any", only_empty: false, only_occupied: false, when: "all", start: "17:00", end: "22:00", days: "all", kind: "plugs", plugs: [], scene: null, for_min: 0, lights_dark: true };
 const FOR_MIN: [number, string][] = [[0, "不自動關"], [10, "10 分鐘"], [30, "30 分鐘"], [60, "1 小時"], [120, "2 小時"], [180, "3 小時"]];
 
 async function call(method: string, path: string, body?: unknown, ok?: string): Promise<Data | null> {
@@ -64,7 +64,7 @@ export function ArriveRules({ s }: { s: HubState }) {
   const sceneName = (id: string | null) => s.scenes.find((x) => x.id === id)?.name || "（已刪除的情境）";
   const whoName = (who: string) => (who === "any" ? "任何人" : people.find((p) => p.id === who)?.name || "（已移除的家人）");
   const whenText = (r: Omit<ArriveRule, "id" | "last">) => [
-    r.only_empty ? "家裡原本沒人時" : "每次回家",
+    r.only_empty ? "家裡原本沒人時" : r.only_occupied ? "家裡原本有人時" : "每次回家",
     r.when === "dark" ? "天黑後" : r.when === "range" ? `${r.start}～${r.end}` : "全天",
     r.days === "weekday" ? "平日" : r.days === "weekend" ? "週末" : "",
   ].filter(Boolean).join("・");
@@ -99,7 +99,7 @@ export function ArriveRules({ s }: { s: HubState }) {
       <div className="space-y-3 rounded-lg border border-primary/60 bg-background p-3 ring-2 ring-primary/10">
         <div className="font-medium">{edit.id ? "修改規則" : "新增規則"}</div>
         <Field label="誰回家"><Pick label="誰回家" value={r.who} opts={[["any", "任何人"], ...people.map((p) => [p.id, p.name] as [string, string])]} onChange={(v) => set({ who: v })} /></Field>
-        <Field label="什麼情況"><Pick label="什麼情況" value={r.only_empty ? "empty" : "each"} opts={[["each", r.who === "any" ? "每次有人回家" : "每次他回家"], ["empty", "家裡原本沒人時"]]} onChange={(v) => set({ only_empty: v === "empty" })} /></Field>
+        <Field label="什麼情況"><Pick label="什麼情況" value={r.only_empty ? "empty" : r.only_occupied ? "occupied" : "each"} opts={[["each", r.who === "any" ? "每次有人回家" : "每次他回家"], ["empty", "家裡原本沒人時"], ["occupied", "家裡原本有人時"]]} onChange={(v) => set({ only_empty: v === "empty", only_occupied: v === "occupied" })} /></Field>
         <Field label="什麼時候">
           <Pick label="什麼時候" value={r.when} opts={[["all", "全天"], ["dark", "天黑後"], ["range", "自訂時段"]]} onChange={(v) => set({ when: v })} />
           {r.when === "range" && (
