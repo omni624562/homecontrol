@@ -29,6 +29,7 @@ ARRIVE_KEEP_OFF = 2 * 3600  # 秒：家裡有人時，這麼久內被人手動�
 ARRIVE_SOURCES = ("app", "matter", "button")
 DOOR_BEFORE = 600  # 秒：手機最後連線前這麼久內（到現在）大門口看到人出去，這個人才算出門（手機常比人早睡著）
 DOOR_WAIT = 1800  # 秒：大門口沒看到人出去，手機斷線這麼久、家裡也沒動靜，還是算出門（門口漏看）
+PIN_MAX = 12 * 3600  # 秒：手動改成「其實在家」最多維持這麼久
 DOOR_LIVE = 60  # 秒：門口的攝影機這麼久內有在追蹤（Jetson 串流），進出人數才算數
 ROOM_MOVED = 0.05  # 追蹤中的人，腳離第一次看到的位置這麼遠（畫面寬高的比例）才算真的有人在動
 ROOM_SEEN_HOLD = 900  # 秒：房間的攝影機這麼久內看過人，手機都不在 Wi-Fi 也先不當作大家出門（有人關了 Wi-Fi）
@@ -64,8 +65,58 @@ class PresenceMixin:
         out = []
         for p in self.store.data["people"]:
             st = self._presence.get(p["id"], {"home": None, "since": None})
-            out.append({**p, **st, "where": self.person_where(p) if st.get("home") else None})
+            phone = max((self.router.clients.get(m, {}).get("seen", 0) for m in p["macs"]), default=0)
+            out.append({**p, **st, "phone": round(phone) or None, "where": self.person_where(p) if st.get("home") else None})
         return out
+
+    def away_wait(self) -> dict[str, Any] | None:
+        """還沒執行「出門」是在等什麼（首頁顯示）；沒有在等就回 None。"""
+        people = self.people_report()
+        if not people or any(p.get("home") is None for p in people):
+            return None
+        if self._away_hold is not None:
+            return {"names": [], "why": f"{self._room_seen[1] or '攝影機'}還看到有人在動", "until": None}
+        stay = [p for p in people if p.get("home") and p.get("stay")]
+        if stay and all(p.get("stay") or not p.get("home") for p in people):
+            return {"names": [p["name"] for p in stay], "why": "手機斷線了，但大門口沒看到人出去", "until": round(min(p["stay"] for p in stay) + DOOR_WAIT)}
+        return None
+
+    def presence_override(self, pid: str, home: bool) -> None:
+        """判斷錯了，手動改：「其實在家」會維持到他的手機再連上、大門口再看到人出去、或 12 小時；
+        「其實出門了」如果大家都出門了就執行「出門」。不觸發回家規則。"""
+        p = next((x for x in self.store.data["people"] if x["id"] == pid), None)
+        st = self._presence.get(pid)
+        if p is None or st is None:
+            raise KeyError(pid)
+        now = time.time()
+        why = "手動改成在家" if home else "手動改成出門"
+        for k in ("stay", "pin", "door_t", "door_cam"):
+            st.pop(k, None)
+        st.update(home=home, since=now, why=why)
+        if home:
+            st["pin"] = now
+            self._away_hold = None
+        self._presence_log({"name": p["name"], "home": home, "why": why})
+        self._dirty = True
+        if not home and not any(x.get("home") for x in self._presence.values()):
+            self._away_hold = None
+            self._away_done(self.store.data["settings"].get("presence") or {}, "大家都出門了")
+
+    def away_now(self) -> None:
+        """不等了，現在就執行「出門」：還在「先當作在家」的人都改成出門。真的有人在家（手機連著）就不做。"""
+        people = self.people_report()
+        if any(p.get("home") and not p.get("stay") for p in people):
+            raise ValueError("還有人在家")
+        now = time.time()
+        for p in people:
+            st = self._presence[p["id"]]
+            if st.get("home"):
+                st.pop("stay", None)
+                st.update(home=False, since=now, why="手動執行「出門」")
+                self._presence_log({"name": p["name"], "home": False, "why": "手動執行「出門」"})
+        self._away_hold = None
+        self._dirty = True
+        self._away_done(self.store.data["settings"].get("presence") or {}, "大家都出門了（手動）")
 
     def everyone_out(self) -> bool:
         """大家都出門了嗎：每個家人都確定不在家，而且沒有「手機都斷線但家裡好像有人」在等。
@@ -94,13 +145,29 @@ class PresenceMixin:
                 self._presence[p["id"]] = {"home": home, "since": now}
                 changed = True
                 first = True
+            elif st["home"] and home and (st.get("stay") or st.get("pin")):  # 「先當作在家」的人手機又連上了
+                st.pop("stay", None)
+                st.pop("pin", None)
+                st["why"] = self._presence_why(p, True, last, grace)
+                self._dirty = True
             elif st["home"] != home and (home or settled):
+                if not home and st.get("pin"):  # 手動改成「其實在家」：到大門口再看到人出去、或 12 小時為止
+                    if now - st["pin"] < PIN_MAX and not any(t >= st["pin"] for t, _ in self._door_outs):
+                        continue
+                    st.pop("pin")
                 extra = "" if home else self._left_check(p, st, last, now)
                 if extra is None:  # 手機斷線，但大門口沒看到人出去：先當作還在家
                     continue
-                st.update(home=home, since=now if home else last)
+                why = self._presence_why(p, home, last, grace) + extra
+                st.update(home=home, since=now if home else last, why=why)
                 changed = True
-                self._presence_log({"name": p["name"], "home": home, "why": self._presence_why(p, home, last, grace) + extra})
+                item = {"name": p["name"], "home": home, "why": why}
+                if home:
+                    st.pop("door_t", None)
+                    st.pop("door_cam", None)
+                elif st.get("door_t"):
+                    item.update(door_t=st["door_t"], cam=st.get("door_cam"))
+                self._presence_log(item)
                 if home:
                     arrived.append(p["name"])
                     arrived_ids.append(p["id"])
@@ -130,20 +197,24 @@ class PresenceMixin:
     def _left_check(self, p: dict[str, Any], st: dict[str, Any], last: float, now: float) -> str | None:
         """手機斷線了：大門口有沒有看到人出去？兩個都對上才算出門（手機睡著、關 Wi-Fi 不算）。
         回傳要接在原因後面的字；None = 先當作還在家。門口的攝影機沒在追蹤時只看手機（跟以前一樣）。"""
+        st.pop("door_t", None)
+        st.pop("door_cam", None)
         if now - self._door_live >= DOOR_LIVE:
             st.pop("stay", None)
             return ""
-        i = next((i for i, t in enumerate(self._door_outs) if t >= last - DOOR_BEFORE), None)
+        i = next((i for i, (t, _) in enumerate(self._door_outs) if t >= last - DOOR_BEFORE), None)
         if i is not None:
-            at = datetime.fromtimestamp(self._door_outs.pop(i)).strftime("%H:%M")
+            t, cam = self._door_outs.pop(i)
             st.pop("stay", None)
-            return f"，大門口 {at} 看到人出去"
+            st.update(door_t=round(t), door_cam=cam)
+            return f"，大門口 {datetime.fromtimestamp(t).strftime('%H:%M')} 看到人出去"
         if now - last >= DOOR_WAIT and now - self._room_seen[0] >= ROOM_SEEN_HOLD:
             st.pop("stay", None)
             return f"；大門口沒看到人出去，但 {DOOR_WAIT // 60} 分鐘了家裡也沒動靜"
         if st.get("stay") != last:
             st["stay"] = last
-            self._presence_log({"name": p["name"], "stay": True, "why": f"手機 {datetime.fromtimestamp(last).strftime('%H:%M')} 後沒連線，但大門口沒看到人出去"})
+            st["why"] = f"手機 {datetime.fromtimestamp(last).strftime('%H:%M')} 後沒連線，但大門口沒看到人出去"
+            self._presence_log({"name": p["name"], "stay": True, "why": st["why"]})
             self._dirty = True
         return None
 
@@ -272,7 +343,8 @@ class PresenceMixin:
         n_in, n_out = ways.count("in"), ways.count("out")
         if n_out:
             self._door_out = now
-            self._door_outs = [t for t in self._door_outs if now - t < 7200] + [now] * n_out
+            # 記人消失那一刻往前幾秒（之後看錄影用）
+            self._door_outs = [x for x in self._door_outs if now - x[0] < 7200] + [(now - doorcount.GONE, cam["id"])] * n_out
         name = cam.get("name") or cam["id"]
         for way, k in (("in", n_in), ("out", n_out)):
             if k:

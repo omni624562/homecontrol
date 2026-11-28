@@ -1,5 +1,9 @@
 import { useState } from "react";
-import { ArrowRight, CalendarClock, ChartColumn, GripVertical, MapPin, Sparkles, Timer, Users } from "lucide-react";
+import { ArrowRight, CalendarClock, ChartColumn, CircleAlert, GripVertical, MapPin, Sparkles, Timer, Users } from "lucide-react";
+import { toast } from "sonner";
+import { PersonSheet, personStatus } from "@/components/person-sheet";
+import { Button } from "@/components/ui/button";
+import { api } from "@/lib/api";
 import { Card } from "@/components/ui/card";
 import { useAsk } from "@/components/ask-sheet";
 import type { DragHandle } from "@/components/room-card";
@@ -168,40 +172,74 @@ export function NextPanel({ state, now, className, handle }: { state: HubState; 
 export function PeoplePanel({ state, now, className, handle }: { state: HubState; now: number; className?: string; handle?: DragHandle }) {
   const people = [...(state.people || [])].sort((a, b) => Number(!!b.home) - Number(!!a.home));
   const [shut, toggle] = useCollapsed("side:people");
+  const [open, setOpen] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   if (!people.length) return null;
   const home = people.filter((x) => x.home).length;
+  const wait = state.away_wait;
+  const left = wait?.until ? Math.max(1, Math.round((wait.until - now) / 60)) : null;
+  const awayNow = async () => {
+    setBusy(true);
+    try {
+      await api("POST", "/api/presence/away-now");
+      toast.success("已經執行「出門」");
+    } catch (e) {
+      toast.error("沒有執行", { description: (e as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <Card className={cn("gap-0 overflow-hidden py-0", className)}>
       <Head icon={Users} title="誰在家" handle={handle} shut={shut} onToggle={toggle} right={<a href="#map" className="hover:text-foreground">{home ? `${home}／${people.length} 人在家` : "都出門了"} ›</a>} />
-      {!shut && <ul className="divide-y px-4">
+      {!shut && <ul className="divide-y">
         {people.map((x) => {
           const w = x.home ? x.where : null;
           const room = w ? (w.room ? w.name : w.top[0] ? `可能在${w.top[0].name}` : null) : null;
           const ago = x.since ? fmtDur(now - x.since) : null;
+          const unsure = !!x.home && !!x.stay;
           return (
-            <li key={x.id} className="flex items-center gap-3 py-2.5">
-              <span className={cn("flex size-8 shrink-0 items-center justify-center rounded-full text-sm font-semibold",
-                x.home ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300" : "bg-muted text-muted-foreground")}>
-                {x.name.trim().slice(0, 1).toUpperCase() || "?"}
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className={cn("truncate text-sm font-medium", !x.home && "text-muted-foreground")}>{x.name}</div>
-                {room && (
-                  <div className="flex items-center gap-1 truncate text-xs text-muted-foreground">
-                    <MapPin className="size-3 shrink-0" />{room}
-                  </div>
-                )}
-              </div>
-              <div className="shrink-0 text-right">
-                <div className={cn("text-[13px] font-medium", x.home ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground")}>
-                  {x.home ? "在家" : x.home === false ? "出門" : "不確定"}
-                </div>
-                {ago && x.home !== null && <div className="text-[11px] text-muted-foreground tabular-nums">{ago}</div>}
-              </div>
+            <li key={x.id}>
+              <button type="button" onClick={() => setOpen(x.id)}
+                className="flex min-h-14 w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset">
+                <span className={cn("flex size-8 shrink-0 items-center justify-center rounded-full text-sm font-semibold",
+                  unsure ? "bg-orange-100 text-orange-800 dark:bg-orange-500/15 dark:text-orange-300"
+                    : x.home ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300" : "bg-muted text-muted-foreground")}>
+                  {x.name.trim().slice(0, 1).toUpperCase() || "?"}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className={cn("block truncate text-sm font-medium", !x.home && "text-muted-foreground")}>{x.name}</span>
+                  {x.why && <span className={cn("block text-xs leading-relaxed", unsure ? "text-orange-700 dark:text-orange-300" : "text-muted-foreground")}>{x.why}</span>}
+                  {room && (
+                    <span className="flex items-center gap-1 truncate text-xs text-muted-foreground">
+                      <MapPin className="size-3 shrink-0" />{room}
+                    </span>
+                  )}
+                </span>
+                <span className="shrink-0 text-right">
+                  <span className={cn("block text-[13px] font-medium", unsure ? "text-orange-700 dark:text-orange-300" : x.home ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground")}>
+                    {personStatus(x)}
+                  </span>
+                  {ago && x.home !== null && <span className="block text-[11px] tabular-nums text-muted-foreground">{ago}</span>}
+                </span>
+              </button>
             </li>
           );
         })}
       </ul>}
+      {!shut && wait && (
+        <div className="flex items-center gap-3 border-t bg-orange-500/5 px-4 py-3">
+          <CircleAlert className="size-4.5 shrink-0 text-orange-700 dark:text-orange-300" aria-hidden />
+          <div className="min-w-0 flex-1 text-[13px] leading-relaxed">
+            <div className="font-medium">還沒執行「出門」</div>
+            <div className="text-muted-foreground">
+              {wait.names.length ? `等${wait.names.join("、")}：看到出門，或${left ? ` ${left} 分鐘後` : "之後"}家裡還是沒動靜` : `${wait.why}；一陣子沒動靜就會執行`}
+            </div>
+          </div>
+          <Button variant="outline" className="h-11 shrink-0 bg-background" disabled={busy} onClick={awayNow}>現在執行</Button>
+        </div>
+      )}
+      <PersonSheet person={people.find((x) => x.id === open) || null} state={state} now={now} onClose={() => setOpen(null)} />
     </Card>
   );
 }
