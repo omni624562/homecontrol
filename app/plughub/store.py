@@ -168,6 +168,7 @@ class Store:
         self.energy = EnergyLog(self.dir / "energy.db")
         if self.data["schedules"] is None:
             self._migrate_schedule()
+        self.data.pop("schedule", None)  # 舊版那一組夜間排程：已經轉成排程清單，不再用
         # 舊資料只到分鐘（"HH:MM"），補上秒
         for sched in self.schedules:
             sched["time"] = _hms(sched.get("time")) or "23:00:00"

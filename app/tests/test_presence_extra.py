@@ -418,3 +418,35 @@ def test_away_hold_survives_restart(app_module):
     assert hub.store.data["away_hold"] == 123.0
     hub._away_hold = None
     assert hub._away_hold is None
+
+
+def test_camera_alert_skips_thing_that_never_moved(app_module, monkeypatch):
+    """沒人在家，客廳攝影機一直「看到人」但那個人從沒動過（衣服堆）：不發警報；有在動的才發。"""
+    hub = app_module.hub
+    notes = []
+    monkeypatch.setattr(hub.notifier, "send", lambda title, msg, priority="default": notes.append(title))
+    monkeypatch.setattr(hub, "people_report", lambda: [{"name": "May", "home": False}])
+    monkeypatch.setattr(hub.cameras, "get", lambda cid: {"id": cid, "name": "IN_HOUSE", "role": "room"})
+    monkeypatch.setattr(hub.cameras, "state", {"inhouse": {"engine": "stream"}})
+    now = time.time()
+    hub._cam_moved.clear()
+    hub._cam_quiet.clear()
+    hub._cam_pending = {"inhouse": now - 300}
+    hub._camera_pending(now)
+    assert notes == [] and not hub._cam_pending
+    hub._cam_pending = {"inhouse": now - 300}
+    hub._cam_moved["inhouse"] = now - 200
+    hub._camera_pending(now)
+    assert notes == ["⚠️ 沒人在家，但攝影機看到人"]
+    hub._cam_quiet.clear()
+    hub._cam_alert.clear()
+
+
+def test_everyone_out_false_while_holding(app_module, monkeypatch):
+    hub = app_module.hub
+    monkeypatch.setattr(hub, "people_report", lambda: [{"name": "May", "home": False}])
+    hub._away_hold = None
+    assert hub.everyone_out()
+    hub._away_hold = time.time()
+    assert not hub.everyone_out()
+    hub._away_hold = None

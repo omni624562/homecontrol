@@ -77,7 +77,6 @@ def hub(app_module, monkeypatch):
     monkeypatch.setattr(h, "_presence_scene", lambda sid, why: h.ran.append(why))
     monkeypatch.setattr(h.cameras, "state", {})
     h._door_outs, h._door_out, h._door_live, h._room_seen = [], 0.0, 0.0, (0.0, "")
-    h.store.data.pop("home_count", None)
     return h
 
 
@@ -99,16 +98,14 @@ def home(hub, now, *macs):
     hub._router_presence(now)
 
 
-def test_hub_counts_and_logs(hub):
+def test_hub_logs_door_events(hub):
     now = time.time()
     home(hub, now, ("May", PIXEL), ("ERIC", "AA:BB:CC:00:00:01"))
-    assert hub.home_count == 2  # 兩支手機在家：至少 2 人
     feed(hub, now, 7, OUT)
-    assert hub.home_count == 1
     last = hub.store.data["presence_log"][-1]
-    assert last["door"] == "out" and last["k"] == 1 and last["n"] == 1 and last["why"] == "大門口"
+    assert last["door"] == "out" and last["k"] == 1 and last["why"] == "大門口" and "n" not in last
     feed(hub, now + 30, 8, IN)
-    assert hub.home_count == 2
+    assert hub.store.data["presence_log"][-1]["door"] == "in"
 
 
 def test_wifi_off_but_nobody_left_holds(hub):
