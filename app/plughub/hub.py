@@ -29,6 +29,7 @@ from .sensing import INTERVAL as SENSE_INTERVAL, SAVE_EVERY as SENSE_SAVE_EVERY,
 from .notify import Notifier
 from .presence import (ARRIVE_LOOK, ARRIVE_SOURCES, DOOR_BEFORE, DOOR_FAR, DOOR_LIVE, DOOR_NEAR, DOOR_WAIT, PRESENCE_LOG_DAYS,  # noqa: F401
                        PRESENCE_LOG_MAX, ROOM_MOVED, ROOM_SEEN_HOLD, SOURCE, PresenceMixin, _in_window, arrive_rule)
+from .owed import OwedMixin
 from .usage import Usage
 from .recorder import Recorder
 from .gpu import GPU_PERSON_ON, GpuVision
@@ -88,6 +89,7 @@ def fmt_secs(sec: float) -> str:
     text = " ".join(x for x in parts if x) or "0 秒"
     return text + "鐘" if text.endswith("分") and not h else text
 SCHEDULE_GRACE = 10  # 排程最多晚幾秒還會補執行
+SCHEDULE_CATCHUP = 900  # 樹莓派重開（更新、當機）那段時間錯過的排程：這麼久以內的，開起來之後補做
 DISCOVER_SECONDS = 60
 DEVICE_TIMEOUT = 4
 # 插座自己的倒數關閉（保險）：比樹莓派晚這幾秒，平常由樹莓派先關（才會發通知）；
@@ -155,7 +157,7 @@ def _add_ref(z: dict[str, Any], sig: str, when: str, keep: int) -> None:
     z["ref_when"] = [p[1] for p in pairs]
     z.pop("_refs", None)
 
-class Hub(PresenceMixin):
+class Hub(PresenceMixin, OwedMixin):
     def __init__(self, store: Store, notifier: Notifier) -> None:
         self.store = store
         self.notifier = notifier
@@ -293,6 +295,7 @@ class Hub(PresenceMixin):
                     v["seed"] = True
         # 執行中的資料（插座清單、網路裝置、通知紀錄…）存在主機上：重開後先載入，再向各裝置拿最新的
         self._runtime_file = store.dir / "runtime.json"
+        self._down: tuple[float, float] | None = None  # 上次存檔 ～ 這次開起來：樹莓派沒在跑的那一段
         self._runtime_sig = ""
         self._restored: dict[str, str] = {}  # 上次看過、這次還沒找到的插座：裝置 MAC → IP
         self._load_runtime()
@@ -326,6 +329,9 @@ class Hub(PresenceMixin):
             "router": {"nodes": self.router.nodes, "clients": self.router.clients, "updated": self.router.updated},
             "local": self.local.dump(),
             "home_loc": list(self._home_loc) if self._home_loc else None,
+            # 攝影機看到的事：重開（更新程式）之後還要記得，不然「誰出門了」「家裡有沒有人在動」又要從頭等
+            "seen": {"door_outs": self._door_outs, "room_seen": list(self._room_seen), "cam_moved": self._cam_moved,
+                     "cam_pending": self._cam_pending, "cam_alert": self._cam_alert, "cam_quiet": self._cam_quiet},
         }
 
     def _load_runtime(self) -> None:
@@ -369,6 +375,14 @@ class Hub(PresenceMixin):
             self.router.clients = r.get("clients") or {}
             self.router.updated = r.get("updated") or 0.0
             self.local.load(d.get("local") or {})
+            seen = d.get("seen") or {}
+            self._door_outs = [(float(t), str(c)) for t, c in seen.get("door_outs") or [] if now - float(t) < 7200]
+            if seen.get("room_seen"):
+                self._room_seen = (float(seen["room_seen"][0]), str(seen["room_seen"][1]))
+            for name in ("cam_moved", "cam_pending", "cam_alert", "cam_quiet"):
+                getattr(self, "_" + name).update({k: float(v) for k, v in (seen.get(name) or {}).items()})
+            if d.get("saved_at"):
+                self._down = (float(d["saved_at"]), now)  # 這段時間樹莓派沒在跑：錯過的排程要補
             _LOGGER.info("載入上次的資料：%d 個插座、%d 台網路裝置", len(self.plugs), len(self.router.clients))
         except Exception:  # noqa: BLE001
             _LOGGER.exception("載入上次的資料失敗，當作第一次啟動")
@@ -381,7 +395,8 @@ class Hub(PresenceMixin):
             _LOGGER.exception("整理要保存的資料失敗")
             return
         # 訊號強度、看到的時間每次都不一樣：不拿來判斷有沒有變，但最久 10 分鐘還是寫一次
-        sig = str(len(text) // 64) + str(sorted(p.id + str(p.online) + str(p.is_on) for p in self.plugs.values()))
+        sig = (str(len(text) // 64) + str(sorted(p.id + str(p.online) + str(p.is_on) for p in self.plugs.values()))
+               + str(self._door_outs) + str(sorted(self._cam_pending)))
         if sig == self._runtime_sig and time.time() - getattr(self, "_runtime_at", 0) < 600:
             return
         self._runtime_sig, self._runtime_at = sig, time.time()
@@ -573,6 +588,7 @@ class Hub(PresenceMixin):
     async def poll(self) -> None:
         await asyncio.gather(*(self._poll_one(e) for e in list(self.devices.values())))
         self._accrue()
+        await self._owed_tick()
         self._check_alerts()
         self._default_max_on()
         for pid, plug in self.plugs.items():
@@ -612,6 +628,7 @@ class Hub(PresenceMixin):
             now_on = bool(source.is_on)
             if pid in self._state_known and plug.online and now_on != plug.is_on:
                 self._log_switch(plug, now_on, "button")
+                self._owed_drop(pid)
             if not plug.online:
                 self._maybe_restore(plug, now_on)
                 # 插座連線健檢：這次開著的期間看過它在線、又斷掉再回來的，記一筆
@@ -795,6 +812,8 @@ class Hub(PresenceMixin):
     def _maybe_restore(self, plug: Plug, now_on: bool) -> None:
         """插座斷線（或樹莓派停電重開）後又連上：開關跟斷線前不一樣，多半是停電後插座回到預設，排著一起恢復。"""
         was = self._before.pop(plug.id, None)
+        if plug.id in self.store.data.get("owed", {}):  # 有欠著要補的開關：以那個為準，不恢復成斷線前
+            return
         if was is None or was == now_on or not self.store.data["settings"].get("power_restore", True):
             return
         if time.time() - (plug.offline_since or time.time()) > netlog.RESTORE_MAX_H * 3600:
@@ -886,6 +905,7 @@ class Hub(PresenceMixin):
         entry = self._entry(plug)
         target = entry.device.children[plug.child_index] if plug.child_index is not None else entry.device
         await asyncio.wait_for(target.turn_on() if on else target.turn_off(), DEVICE_TIMEOUT)
+        self._owed_drop(plug_id)  # 有人（或別的自動化）動過了：之前欠著的不用補
         if plug.is_on != on:
             self._log_switch(plug, on, SOURCE.get())
         self._set_is_on(plug, on)
@@ -2847,11 +2867,20 @@ class Hub(PresenceMixin):
         self.store.save_scene(None, "睡覺", "mdi:weather-night", sleep, "keep")
         self.store.save_scene(None, "看電影", "mdi:television", movie, "keep")
 
-    async def run_scene(self, scene_id: str, remember: str | None = None) -> list[str]:
-        """執行情境；常開的插座不會被關。remember 有給就記住原本的狀態，可以復原。"""
+    async def run_scene(self, scene_id: str, remember: str | None = None, why: str | None = None) -> list[str]:
+        """執行情境；常開的插座不會被關。remember 有給就記住原本的狀態，可以復原。
+        why 有給（排程自己跑的，沒有人在看結果）：連不上、沒回應的插座欠著，連回來補做。"""
         scene = self.store.scene(scene_id)
         if scene is None:
             raise KeyError(scene_id)
+        if why:
+            wants = {pid: act == "on" for pid in self.plugs
+                     if (act := scene["actions"].get(pid, scene.get("others", "keep"))) != "keep"
+                     and (act == "on" or not self.store.meta(pid).keep_on)}
+            done, owed = await self.switch_all(wants, why)
+            if owed:
+                self.notifier.send("排程沒做完", f"{why}：{self.owed_text(owed)}", "high")
+            return done
         targets: dict[str, bool] = {}
         for pid, plug in self.plugs.items():
             act = scene["actions"].get(pid, scene.get("others", "keep"))
@@ -2917,8 +2946,15 @@ class Hub(PresenceMixin):
         h, m, sec = (int(x) for x in hms.split(":"))
         late = now.hour * 3600 + now.minute * 60 + now.second - (h * 3600 + m * 60 + sec)
         mark = f"{now.date().isoformat()} {hms}"
-        if 0 <= late <= SCHEDULE_GRACE and self._schedule_done.get(key) != mark:
+        ok = 0 <= late <= SCHEDULE_GRACE
+        if not ok and SCHEDULE_GRACE < late <= SCHEDULE_CATCHUP and self._down:
+            # 排程的時間落在樹莓派沒在跑的那一段（更新程式、當機重開）：開起來之後補做
+            ok = self._down[0] <= now.timestamp() - late <= self._down[1]
+            if ok and self._schedule_done.get(key) != mark:
+                _LOGGER.info("排程 %s（%s）在重開的時候錯過了，現在補做", key, hms)
+        if ok and self._schedule_done.get(key) != mark:
             self._schedule_done[key] = mark
+            self._runtime_sig = ""  # 做過了要馬上記下來：不然當機重開會再做一次
             return True
         return False
 
@@ -3110,19 +3146,20 @@ class Hub(PresenceMixin):
         if people and not any(p.get("home") for p in people):  # 沒人在家：交給「沒人在家」的檢查
             return
         on = self.night_left_on()
+        if cfg.get("mode") == "off":  # 直接關的：剛好連不上、斷線前開著（或不知道）的也算，連回來補關
+            keep = set(cfg.get("keep") or [])
+            on += [p for p in self.ordered() if not p.online and p.is_on is not False and not self.store.meta(p.id).keep_on and p.id not in keep]
         if not on:
             return
         risky = any(self.store.meta(p.id).risky for p in on)
         names = "、".join(self.name(p) for p in on[:8]) + (f" 等 {len(on)} 個" if len(on) > 8 else "")
         if cfg.get("mode") == "off":
-            todo = [p for p in on if self.store.meta(p.id).protect != "lock"]
-
             async def go() -> None:
                 SOURCE.set("night")
-                results = await asyncio.gather(*(self.set_power(p.id, False) for p in todo), return_exceptions=True)
-                done = [self.name(p) for p, r in zip(todo, results) if not isinstance(r, Exception)]
-                if done:
-                    self.notifier.send("晚安，已經關掉電器", "、".join(done))
+                done, owed = await self.switch_all({p.id: False for p in on}, "晚安檢查")
+                if done or owed:
+                    text = "；".join(x for x in ("、".join(self.name(self.plugs[i]) for i in done), self.owed_text(owed)) if x)
+                    self.notifier.send("晚安，已經關掉電器" if done else "晚安檢查：有電器沒關成", text, "default" if done and not owed else "high")
                 await self.changed()
 
             self._spawn(go())
@@ -3213,17 +3250,16 @@ class Hub(PresenceMixin):
     async def _run_one(self, sched: dict[str, Any]) -> None:
         if sched["action"] == "scene":
             if self.store.scene(sched.get("scene") or ""):
-                done = await self.run_scene(sched["scene"])
+                hm = (self.sched_time(sched, date.today()) or "")[:5]
+                done = await self.run_scene(sched["scene"], why=f"{hm} 的排程")
                 _LOGGER.info("排程執行情境 %s：%d 個插座", sched["scene"], len(done))
             return
         on = sched["action"] == "on"
-        targets = [
-            pid for pid in sched["plugs"]
-            if pid in self.plugs and self.plugs[pid].online and self.plugs[pid].is_on is not on
-            and (on or not self.store.meta(pid).keep_on)
-        ]
-        results = await asyncio.gather(*(self.set_power(pid, on) for pid in targets), return_exceptions=True)
-        done = [pid for pid, r in zip(targets, results) if not isinstance(r, Exception)]
+        wants = {pid: on for pid in sched["plugs"] if pid in self.plugs and (on or not self.store.meta(pid).keep_on)}
+        hm = (self.sched_time(sched, date.today()) or "")[:5]
+        done, owed = await self.switch_all(wants, f"{hm} 的排程", for_s=sched.get("duration_s") or 0 if on else 0)
+        if owed:
+            self.notifier.send("排程沒做完", f"{hm} 的排程：{self.owed_text(owed)}", "high")
         if not on and sched.get("restore_at"):
             self.store.data["remembered"][f"sched:{sched['id']}"] = done
             self.store.save()
