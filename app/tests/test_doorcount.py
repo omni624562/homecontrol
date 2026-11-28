@@ -76,7 +76,7 @@ def hub(app_module, monkeypatch):
     h.ran = []
     monkeypatch.setattr(h, "_presence_scene", lambda sid, why: h.ran.append(why))
     monkeypatch.setattr(h.cameras, "state", {})
-    h.store.data["settings"].setdefault("presence", {})["door_decides"] = True
+    h._door_outs, h._door_out, h._door_live, h._room_seen = [], 0.0, 0.0, (0.0, "")
     h.store.data.pop("home_count", None)
     return h
 
@@ -112,7 +112,7 @@ def test_hub_counts_and_logs(hub):
 
 
 def test_wifi_off_but_nobody_left_holds(hub):
-    """ERIC 出門（大門口看到 1 人出去），May 在家把 Wi-Fi 關了：家裡還有 1 人，不執行「出門」。"""
+    """ERIC 出門（大門口看到 1 人出去），May 在家把 Wi-Fi 關了：只有一個人對得上，另一個先當作還在家。"""
     now = time.time()
     home(hub, now, ("May", PIXEL), ("ERIC", "AA:BB:CC:00:00:01"))
     t = feed(hub, now, 7, OUT)
@@ -120,12 +120,18 @@ def test_wifi_off_but_nobody_left_holds(hub):
         c["seen"] = t - 700
     hub._door_feed(CAM, t + 1)
     hub._router_presence(t + 1)
-    assert hub.ran == [] and hub._away_hold
-    assert "大門口沒看到最後 1 個人出去" in hub.store.data["presence_log"][-1]["why"]
-    # May 也出門了：大門口看到最後一個人出去 → 執行
+    assert hub.ran == []
+    assert sorted(st["home"] for st in hub._presence.values()) == [False, True]
+    log = hub.store.data["presence_log"]
+    assert any(e.get("stay") and "大門口沒看到人出去" in e["why"] for e in log)
+    assert any(e.get("home") is False and "看到人出去" in e["why"] for e in log)
+    n = len(log)
+    hub._router_presence(t + 60)
+    assert len(hub.store.data["presence_log"]) == n  # 「先當作還在家」只記一次
+    # 另一個人也出門了：大門口又看到一個人出去 → 執行
     t2 = feed(hub, t + 600, 9, OUT)
-    hub._away_hold_check(t2)
-    assert hub.ran == ["大家都出門了（大門口看到最後一個人出去）"] and hub.home_count == 0
+    hub._router_presence(t2)
+    assert hub.ran == ["大家都出門了"]
 
 
 def test_everyone_seen_leaving_runs_at_once(hub):
@@ -139,40 +145,53 @@ def test_everyone_seen_leaving_runs_at_once(hub):
     assert hub.ran == ["大家都出門了"]
 
 
-def test_door_hold_gives_up_after_quiet_hour(hub):
-    """兩個人貼著走被算成一個（少算一個出去）：家裡 1 小時都沒動靜就照常執行。"""
+def test_missed_exit_gives_up_after_quiet_half_hour(hub):
+    """兩個人貼著走被算成一個（少算一個出去）：手機斷線 30 分鐘、家裡也沒動靜，還是算出門。"""
     now = time.time()
     home(hub, now, ("May", PIXEL), ("ERIC", "AA:BB:CC:00:00:01"))
     t = feed(hub, now, 7, OUT)
     for c in hub.router.clients.values():
         c["seen"] = t - 700
     hub._router_presence(t + 1)
-    assert hub._away_hold
-    hub._door_feed(CAM, t + 1800)
-    hub._away_hold_check(t + 1800)
     assert hub.ran == []
-    hub._door_feed(CAM, t + 3700)
-    hub._away_hold_check(t + 3700)
-    assert hub.ran == ["大家都出門了（家裡一陣子沒動靜）"]
+    hub._door_feed(CAM, t + 1500)
+    hub._router_presence(t + 1500)
+    assert hub.ran == ["大家都出門了"]
+    assert any("家裡也沒動靜" in (e.get("why") or "") for e in hub.store.data["presence_log"])
 
 
-def test_counting_ignored_when_camera_not_tracking(hub):
+def test_moving_in_room_keeps_person_home(hub):
+    """手機斷線、門口沒人出去、客廳還有人在動：一直算在家。"""
     now = time.time()
     home(hub, now, ("May", PIXEL))
-    hub.cameras.state["outdoor"] = {"engine": "cpu"}
-    hub._door_feed(CAM, now)
+    hub.cameras.state["outdoor"] = {"engine": "stream", "samples": []}
+    hub._door_feed(CAM, now + 4000)
+    hub.router.clients[PIXEL]["seen"] = now
+    hub._room_seen = (now + 3900, "IN_HOUSE")
+    hub._router_presence(now + 4000)
+    assert hub.ran == [] and hub._presence["p0"]["home"]
+
+
+def test_phone_back_cancels_stay(hub):
+    now = time.time()
+    home(hub, now, ("May", PIXEL))
     hub.router.clients[PIXEL]["seen"] = now - 700
-    hub._router_presence(now)
-    assert hub.ran == ["大家都出門了"]  # 沒在算進出：照原本的（只看手機）
+    hub.cameras.state["outdoor"] = {"engine": "stream", "samples": []}
+    hub._door_feed(CAM, now + 1)
+    hub._router_presence(now + 1)
+    assert hub._presence["p0"]["home"] and hub._presence["p0"].get("stay")
+    hub.router.clients[PIXEL]["seen"] = now + 100
+    hub._router_presence(now + 100)
+    assert hub._presence["p0"]["home"] and hub.ran == []
 
 
-def test_count_starts_from_phones_when_presence_restored(hub):
-    """重開後「誰在家」是還原的（沒有變化）：人數還是要從手機在家的人數開始。"""
+def test_door_camera_down_uses_wifi_only(hub):
     now = time.time()
     home(hub, now, ("May", PIXEL))
-    hub.store.data.pop("home_count", None)
-    hub._router_presence(now + 5)
-    assert hub.home_count == 1 and "home_count" in hub.store.data
+    hub._door_live = now - 600
+    hub.router.clients[PIXEL]["seen"] = now - 700
+    hub._router_presence(now + 1)
+    assert hub.ran == ["大家都出門了"]
 
 
 # 真的畫面（2026-11-28 重跑錄影得到的腳的位置）：家門在左邊牆面，上緣緊貼著電梯
@@ -199,16 +218,3 @@ def test_family_between_lift_and_home_door(hub):
     assert real(hub, OUT_OF_LIFT, AT_HOME_DOOR) == "in"
     assert real(hub, AT_HOME_DOOR, INTO_LIFT) == "out"
     assert real(hub, AT_HOME_DOOR, AT_HOME_DOOR) is None
-
-
-def test_count_only_observes_by_default(hub):
-    """還沒驗證完：人數照記，但不拿來擋「出門」。"""
-    hub.store.data["settings"]["presence"]["door_decides"] = False
-    now = time.time()
-    home(hub, now, ("May", PIXEL), ("ERIC", "AA:BB:CC:00:00:01"))
-    t = feed(hub, now, 7, OUT)
-    assert hub.home_count == 1 and hub.store.data["presence_log"][-1]["door"] == "out"
-    for c in hub.router.clients.values():
-        c["seen"] = t - 700
-    hub._router_presence(t + 1)
-    assert hub.ran == ["大家都出門了"]
