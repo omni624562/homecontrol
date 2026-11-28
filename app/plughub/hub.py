@@ -54,6 +54,7 @@ POLL_SECONDS = 5
 FACE_COOL = 600  # 秒：同一個人的回家動作、訪客通知，至少隔這麼久
 DOOR_HOLD = 3600  # 秒：大門口沒看到最後一個人出去，「出門」最多先等這麼久（這段時間家裡都沒動靜才執行）
 DOOR_LIVE = 60  # 秒：門口的攝影機這麼久內有在追蹤（Jetson 串流），進出人數才算數
+ROOM_MOVED = 0.05  # 追蹤中的人，腳離第一次看到的位置這麼遠（畫面寬高的比例）才算真的有人在動
 ROOM_SEEN_HOLD = 900  # 秒：房間的攝影機這麼久內看過人，手機都不在 Wi-Fi 也先不當作大家出門（有人關了 Wi-Fi）
 FACE_LEAVE_COOL = 1800  # 秒：「要出門了嗎」提醒至少隔這麼久
 FACE_LINGER = 30  # 秒：門口的陌生人要待這麼久才通知（路人經過不吵）
@@ -211,7 +212,7 @@ class Hub:
         self._cam_started = time.time()  # 剛開機還沒看到人：從這時候開始算「沒人多久」
         self._still: dict[str, dict[str, Any]] = {}
         self._room_seen: tuple[float, str] = (0.0, "")  # 房間的攝影機上次看到人：(時間, 攝影機名稱)
-        self._away_hold: float | None = None  # 手機都不在、但看起來還有人在家：「出門」先不執行（從什麼時候開始等）
+        self._room_from: dict[str, dict[Any, tuple[float, float]]] = {}  # 房間的攝影機 → 追蹤中的每個人第一次看到時腳在哪（有沒有在動）
         self._doorcount: dict[str, doorcount.DoorCount] = {}  # 門口的攝影機 → 進出人數的追蹤
         self._door_seen: dict[str, float] = {}  # 門口的攝影機 → 已經算過的追蹤時間
         self._door_live = 0.0  # 門口的攝影機上次有在追蹤的時間
@@ -1476,9 +1477,11 @@ class Hub:
                 self._sound_events(c)
             self._activity_feed(c, now)
             st = self.cameras.state.get(c["id"], {})
-            if c.get("role", "room") == "room" and (st.get("person") or st.get("tracks")):
-                self._room_seen = (now, c.get("name") or c["id"])
-                self._home_count_set(max(self.home_count, len(st.get("tracks") or [])))  # 房間裡同時看到幾個人，家裡至少就有幾個
+            if c.get("role", "room") == "room":
+                n = self._room_people(c["id"], st)
+                if n:
+                    self._room_seen = (now, c.get("name") or c["id"])
+                    self._home_count_set(max(self.home_count, n))  # 房間裡同時看到幾個人，家裡至少就有幾個
             if c.get("role") == "entry":
                 self._door_feed(c, now)
         self.activity.maybe_save()
@@ -2662,6 +2665,29 @@ class Hub:
         if arrived_ids:
             self._arrive(arrived_ids, was_empty=not before)
         return True
+
+    @property
+    def _away_hold(self) -> float | None:
+        """手機都不在、但看起來還有人在家：「出門」先不執行（從什麼時候開始等）。存起來：重開後還記得要補執行。"""
+        return self.store.data.get("away_hold") or None
+
+    @_away_hold.setter
+    def _away_hold(self, t: float | None) -> None:
+        if t != self.store.data.get("away_hold"):
+            self.store.data["away_hold"] = t
+            self._dirty = True
+
+    def _room_people(self, cid: str, st: dict[str, Any]) -> int:
+        """房間的攝影機現在看到幾個「真的人」：追蹤中、而且從第一次看到的地方移動過的才算。
+        一直在同一個位置的多半是被認成人的東西（沙發上的衣服堆）——它會讓「出門」永遠不執行（2026-11-28）。
+        沒有追蹤資料（Jetson 沒在看）時，看到人就算 1 個。"""
+        if st.get("engine") != "stream":
+            self._room_from.pop(cid, None)
+            return 1 if st.get("person") else 0
+        tracks = [t for t in st.get("tracks") or [] if t.get("foot")]
+        was = self._room_from.get(cid) or {}
+        first = self._room_from[cid] = {t["id"]: was.get(t["id"], tuple(t["foot"])) for t in tracks}
+        return sum(1 for t in tracks if abs(t["foot"][0] - first[t["id"]][0]) + abs(t["foot"][1] - first[t["id"]][1]) > ROOM_MOVED)
 
     # ---- 家裡估計幾個人：大門口算進出，手機、房間的攝影機往上修正 ----
 

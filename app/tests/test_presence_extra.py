@@ -400,3 +400,21 @@ def test_away_runs_when_no_one_seen(hub):
     hub.router.clients[PIXEL]["seen"] = now - 700
     hub._router_presence(now)
     assert ran == ["大家都出門了"]
+
+
+def test_static_fake_person_is_not_someone_home(app_module):
+    """沙發上的衣服堆一直被認成人（位置不動、編號一直換）：不算有人在家；走動的人才算。"""
+    hub = app_module.hub
+    pile = lambda i: {"engine": "stream", "person": 0.6, "tracks": [{"id": i, "foot": (0.19, 0.996)}]}  # noqa: E731
+    assert [hub._room_people("inhouse", pile(i)) for i in (1, 1, 2, 3, 3)] == [0, 0, 0, 0, 0]
+    walk = lambda x: {"engine": "stream", "person": 0.9, "tracks": [{"id": 9, "foot": (x, 0.6)}, {"id": 3, "foot": (0.19, 0.996)}]}  # noqa: E731
+    assert [hub._room_people("inhouse", walk(x)) for x in (0.5, 0.52, 0.6, 0.6)] == [0, 0, 1, 1]  # 走過之後坐著不動也還算
+    assert hub._room_people("inhouse", {"engine": "pi", "person": True}) == 1  # 沒有追蹤資料：照舊
+
+
+def test_away_hold_survives_restart(app_module):
+    hub = app_module.hub
+    hub._away_hold = 123.0
+    assert hub.store.data["away_hold"] == 123.0
+    hub._away_hold = None
+    assert hub._away_hold is None
