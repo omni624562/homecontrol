@@ -221,7 +221,7 @@ def test_arrive_rules_by_person_and_empty_house(hub, monkeypatch):
 
 
 def test_arrive_rule_time_range_and_days(hub, monkeypatch):
-    from plughub import hub as hubmod
+    from plughub import presence as hubmod
     from plughub.hub import arrive_rule
 
     _arrive_setup(hub, monkeypatch)
