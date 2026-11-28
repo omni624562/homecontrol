@@ -69,6 +69,7 @@ SOUNDS = {"alarm": "聽到煙霧／火災警報聲", "glass": "聽到玻璃破�
 SOUND_DEFAULT = {"alarm": "urgent", "glass": "urgent", "scream": "urgent", "dog": "normal"}
 FEET_KEEP = 10  # 一次來訪留最前面、最後面各幾筆腳的位置（每秒 5 筆）
 DOOR_NEAR = 0.06  # 腳離「大門」區域這麼近（畫面寬高的比例）算在家門口
+DOOR_FAR = 0.12  # 腳離「大門」區域這麼遠，算已經離開家門口（樓梯、別戶那頭）
 ITEM_ONE = {"包裹", "垃圾袋", "推車"}  # 「多了一個包裹」
 ITEM_TAKEN = {"包裹", "袋子", "外送餐點", "垃圾袋"}  # 被拿走時可以另外決定要不要通知（act.taken）
 
@@ -215,6 +216,7 @@ class Hub:
         self._door_seen: dict[str, float] = {}  # 門口的攝影機 → 已經算過的追蹤時間
         self._door_live = 0.0  # 門口的攝影機上次有在追蹤的時間
         self._door_out = 0.0  # 上次看到有人從大門出去的時間
+        self.store.data.pop("home_count", None)  # 重開期間的進出沒算到：人數重新從「手機在家」的人數開始
         self._sound_seen: dict[str, float] = {}  # 攝影機 → 已經處理過的最後一個聲音事件
         self.activity = Activity(self.store.dir)  # 活動熱圖
         self._act_seen: dict[str, float] = {}  # 很久沒動靜：攝影機 → {last 上次有動, prev 上次的框, alerted}
@@ -2677,6 +2679,18 @@ class Hub:
         """這台攝影機畫面裡的家門（「大門」區域）。"""
         return next((z for z in cam.get("zones") or [] if z.get("kind") == "door" and (z.get("id") == "door" or z.get("home"))), None)
 
+    @staticmethod
+    def _door_where(cam: dict[str, Any], door: dict[str, Any], foot: tuple[float, float]) -> str | None:
+        """腳在哪：「home」家門口、「away」離開的那頭（電梯之類別的門，或離家門夠遠）、None 說不準。
+        家門跟電梯緊貼著時，離哪個近算哪個（走進電梯不能當成走進家門）。"""
+        d = zonelib.dist(foot, door["poly"])
+        other = min((zonelib.dist(foot, z["poly"]) for z in cam.get("zones") or [] if z.get("kind") == "door" and z is not door and z.get("poly")), default=float("inf"))
+        if d <= DOOR_NEAR and d < other:
+            return "home"
+        if d > DOOR_FAR or (other <= DOOR_NEAR and other <= d):
+            return "away"
+        return None
+
     def _door_feed(self, cam: dict[str, Any], now: float) -> None:
         """門口的攝影機：每個人從哪出現、在哪消失 → 進來／出去各幾人（doorcount.py）。"""
         door = self._home_door(cam)
@@ -2692,7 +2706,7 @@ class Hub:
                 dc.feed(float(t), pts)
                 last = float(t)
         self._door_seen[cam["id"]] = last
-        ways = [w for w, _ in dc.flush(max(now, last), lambda f: zonelib.near(f, door["poly"], DOOR_NEAR))]
+        ways = [w for w, _ in dc.flush(max(now, last), lambda f: self._door_where(cam, door, f))]
         if not ways:
             return
         n_in, n_out = ways.count("in"), ways.count("out")
@@ -2713,7 +2727,8 @@ class Hub:
         3. 大門口算起來家裡還有人（沒看到他出去）→ 有人在家；但家裡 1 小時都沒動靜就不等了
         """
         room_t, room_cam = self._room_seen
-        counting = now - self._door_live < DOOR_LIVE
+        decides = bool((self.store.data["settings"].get("presence") or {}).get("door_decides"))  # 還在對錄影驗證：先只記錄，不拿來決定
+        counting = decides and now - self._door_live < DOOR_LIVE
         n = self.home_count
         if counting and n == 0 and self._door_out and room_t <= self._door_out + 30:
             return None
