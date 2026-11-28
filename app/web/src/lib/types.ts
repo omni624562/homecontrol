@@ -317,6 +317,7 @@ export interface PresenceEvent {
   name?: string;
   home?: boolean;
   scene?: string;
+  stay?: boolean; // 手機斷線，但大門口沒看到這個人出去：先當作還在家
   door?: "in" | "out"; // 大門口看到有人進來／出去：k 人，n = 之後家裡估計幾個人（why 是攝影機名稱）
   k?: number;
   hold?: boolean; // 手機都不在、但攝影機剛看到人：「出門」先不執行
