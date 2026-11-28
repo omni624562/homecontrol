@@ -450,3 +450,36 @@ def test_everyone_out_false_while_holding(app_module, monkeypatch):
     hub._away_hold = time.time()
     assert not hub.everyone_out()
     hub._away_hold = None
+
+
+def test_arrive_rule_skips_lights_in_daytime(app_module, monkeypatch):
+    """白天回家：規則裡的燈不開，其他照開；規則關掉「燈只在天黑後開」就都開。"""
+    import asyncio
+    from types import SimpleNamespace
+    hub = app_module.hub
+    plugs = {"a": SimpleNamespace(id="a", online=True, is_on=False), "b": SimpleNamespace(id="b", online=True, is_on=False)}
+    names = {"a": "餐桌燈", "b": "餐桌fan"}
+    on = []
+
+    async def set_power(pid, v):
+        on.append(pid)
+
+    async def changed():
+        pass
+
+    monkeypatch.setattr(hub, "plugs", plugs)
+    monkeypatch.setattr(hub, "name", lambda p: names[p.id])
+    monkeypatch.setattr(hub.store, "meta", lambda pid: SimpleNamespace(icon=None))
+    monkeypatch.setattr(hub, "set_power", set_power)
+    monkeypatch.setattr(hub, "changed", changed)
+    monkeypatch.setattr(hub.notifier, "send", lambda *a, **k: None)
+    monkeypatch.setattr(hub, "is_dark", lambda: False)
+    asyncio.run(hub._arrive_plugs({"plugs": ["a", "b"]}, "ERIC回家了"))
+    assert on == ["b"]
+    on.clear()
+    asyncio.run(hub._arrive_plugs({"plugs": ["a", "b"], "lights_dark": False}, "ERIC回家了"))
+    assert on == ["a", "b"]
+    on.clear()
+    monkeypatch.setattr(hub, "is_dark", lambda: True)
+    asyncio.run(hub._arrive_plugs({"plugs": ["a", "b"]}, "ERIC回家了"))
+    assert on == ["a", "b"]

@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useState, type ReactNode } from "react";
 import { AlertCircle, Archive, House, BarChart3, ListChecks, Bell, Cctv, Download, Lock, Plus, ShieldCheck, Trash2, CheckCircle2, CloudSun, KeyRound, MessageCircle, ChevronLeft, ChevronRight, ExternalLink, EyeOff, Link2, Loader2, Zap, CalendarClock, MessageSquareText, Mic, Moon, Palette, Search, Wifi, WifiOff } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -42,6 +42,41 @@ function SCard({ id, icon: I, title, badge, children }: { id?: string; icon: Rea
       </div>
       <div className="divide-y">{children}</div>
     </Card>
+  );
+}
+
+// 關著沒在用的功能：收成最下面一列，點開才看得到（進到這頁那一刻關著的才收；在裡面打開不會跳走）
+function Fold({ items }: { items: { name: string; off: boolean; node: ReactNode }[] }) {
+  const [folded] = useState(() => new Set(items.filter((x) => x.off).map((x) => x.name)));
+  const off = items.filter((x) => folded.has(x.name));
+  return (
+    <>
+      {items.filter((x) => !folded.has(x.name)).map((x) => <Fragment key={x.name}>{x.node}</Fragment>)}
+      {off.length > 0 && (
+        <details className="group">
+          <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-sm text-muted-foreground hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset sm:px-5 [&::-webkit-details-marker]:hidden">
+            <ChevronRight className="size-4 shrink-0 transition-transform group-open:rotate-90" />
+            <span className="min-w-0 flex-1 truncate">沒在用的功能（{off.length}）：{off.map((x) => x.name).join("、")}</span>
+          </summary>
+          <div className="divide-y border-t">{off.map((x) => <Fragment key={x.name}>{x.node}</Fragment>)}</div>
+        </details>
+      )}
+    </>
+  );
+}
+
+// 整張卡片關著沒在用：收成一列
+function FoldCard({ name, off, children }: { name: string; off: boolean; children: ReactNode }) {
+  const [folded] = useState(off);
+  if (!folded) return <>{children}</>;
+  return (
+    <details className="group">
+      <summary className="flex cursor-pointer list-none items-center gap-2 rounded-xl border bg-card px-4 py-3 text-sm text-muted-foreground hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:px-5 [&::-webkit-details-marker]:hidden">
+        <ChevronRight className="size-4 shrink-0 transition-transform group-open:rotate-90" />
+        <span className="flex-1">沒在用的功能：{name}</span>
+      </summary>
+      <div className="mt-2">{children}</div>
+    </details>
   );
 }
 
@@ -620,7 +655,7 @@ function AutoCards({ s }: { s: HubState }) {
       <SCard id="s-arrive" icon={House} title="回家自動開">
         <ArriveRules s={s} />
       </SCard>
-      <GoodnightCard s={s} />
+      <FoldCard name="晚安檢查" off={(s.settings.goodnight as { mode?: string } | undefined)?.mode === "none"}><GoodnightCard s={s} /></FoldCard>
       <SCard id="s-auto" icon={CalendarClock} title="其他自動化">
         <SRow label="停電後恢復插座" hint="停電回來，插座開關跟停電前不一樣就改回來（6 小時內）；高風險電器不會自動打開">
           <Switch checked={s.settings.power_restore !== false} onCheckedChange={(v) => put({ power_restore: v }, v ? "停電後會恢復插座" : "停電後不自動恢復")} aria-label="停電後恢復插座" />
@@ -1155,12 +1190,6 @@ export function SettingsPage() {
             <SRow wrap label="開太久提醒" hint="插座開超過這麼久，名稱下方會變橘色（常開的不算）">
               <SettingNumber k="long_on_hours" step={1} unit="小時" label="開太久提醒" />
             </SRow>
-            <SRow label="開太久也通知手機" hint="每次開著只講一次；常開的、「出門」情境裡設成不動的不算">
-              <Switch checked={remind.long_on !== false} onCheckedChange={(v) => putRemind("long_on", v, "開太久通知")} aria-label="開太久也通知手機" />
-            </SRow>
-            <SRow label="使用時間和平常不一樣" hint="某個電器最近 3 天開得比它自己平常久；每天早上 9 點檢查">
-              <Switch checked={remind.anomaly !== false} onCheckedChange={(v) => putRemind("anomaly", v, "使用時間異常通知")} aria-label="使用時間異常通知" />
-            </SRow>
             {metered && (
               <SRow wrap label="功率過高通知" hint="有計量的插座超過這個瓦數 1 分鐘就通知">
                 <SettingNumber k="overload_watts" step={50} unit="W" label="功率過高通知" />
@@ -1176,18 +1205,34 @@ export function SettingsPage() {
               hint={state.notify?.line ? `已設定${state.notify.name ? `・${state.notify.name}` : ""}` : "還沒設定・不用另外裝 App"}
               onClick={() => setSheet("line")}
             />
+            <Fold items={[
+              { name: "開太久通知手機", off: remind.long_on === false, node: (
+            <SRow label="開太久也通知手機" hint="每次開著只講一次；常開的、「出門」情境裡設成不動的不算">
+              <Switch checked={remind.long_on !== false} onCheckedChange={(v) => putRemind("long_on", v, "開太久通知")} aria-label="開太久也通知手機" />
+            </SRow>
+              ) },
+              { name: "使用時間異常通知", off: remind.anomaly === false, node: (
+            <SRow label="使用時間和平常不一樣" hint="某個電器最近 3 天開得比它自己平常久；每天早上 9 點檢查">
+              <Switch checked={remind.anomaly !== false} onCheckedChange={(v) => putRemind("anomaly", v, "使用時間異常通知")} aria-label="使用時間異常通知" />
+            </SRow>
+              ) },
+              { name: "每週摘要", off: !weekly, node: (
             <SRow wrap label="每週摘要" hint="每週日晚上 8 點，用通知傳這週插座開了多久、開最久的和網路狀況">
               <div className="flex items-center gap-3">
                 <ReportPreview url="/api/weekly" title="這週的家" empty="這週還沒有資料" />
                 <Switch checked={weekly} onCheckedChange={(v) => put({ weekly: v }, v ? "每週摘要已打開" : "每週摘要已關閉")} aria-label="每週摘要" />
               </div>
             </SRow>
+              ) },
+              { name: "每月報告", off: set.monthly === false, node: (
             <SRow wrap label="每月報告" hint="每月 1 號早上 9 點，傳上個月插座開了多久、開最久的電器、網路斷線和常斷線的插座">
               <div className="flex items-center gap-3">
                 <ReportPreview url="/api/report/monthly" title="上個月的家" empty="上個月還沒有資料" />
                 <Switch checked={set.monthly !== false} onCheckedChange={(v) => put({ monthly: v }, v ? "每月報告已打開" : "每月報告已關閉")} aria-label="每月報告" />
               </div>
             </SRow>
+              ) },
+            ]} />
           </SCard>);
   const lifeCard = (
           <SCard id="s-life" icon={CloudSun} title="天氣與生活資訊">

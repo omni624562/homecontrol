@@ -977,6 +977,8 @@ def _arrive_clean(x: dict[str, Any], old: dict[str, Any] | None = None) -> dict[
         r["scene"] = x["scene"] if x["scene"] and store.scene(x["scene"]) else None
     if "for_min" in x:
         r["for_min"] = int(_num(x["for_min"] or 0, 0, 720))
+    if "lights_dark" in x:
+        r["lights_dark"] = bool(x["lights_dark"])
     if r["kind"] == "plugs" and not r["plugs"]:
         raise HTTPException(400, "至少選一個插座")
     if r["kind"] == "scene" and not r["scene"]:
