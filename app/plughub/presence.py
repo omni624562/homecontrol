@@ -25,6 +25,7 @@ _LOGGER = logging.getLogger("plughub.hub")
 PRESENCE_LOG_MAX = 3000  # 誰在家的變化紀錄：最多這麼多筆、最多留 PRESENCE_LOG_DAYS 天（找回家習慣用）
 PRESENCE_LOG_DAYS = 60
 ARRIVE_LOOK = 15 * 60  # 回家後這麼久內手動打開的插座，算「回家會開的」
+ARRIVE_KEEP_OFF = 2 * 3600  # 秒：家裡有人時，這麼久內被人手動關掉的插座，別人回家不去開它
 ARRIVE_SOURCES = ("app", "matter", "button")
 DOOR_BEFORE = 600  # 秒：手機最後連線前這麼久內（到現在）大門口看到人出去，這個人才算出門（手機常比人早睡著）
 DOOR_WAIT = 1800  # 秒：大門口沒看到人出去，手機斷線這麼久、家裡也沒動靜，還是算出門（門口漏看）
@@ -39,7 +40,7 @@ SOURCE: contextvars.ContextVar[str] = contextvars.ContextVar("source", default="
 
 def arrive_rule(**kw: Any) -> dict[str, Any]:
     """一條「回家自動開」規則（沒給的用預設值）。"""
-    r = {"id": uuid.uuid4().hex[:8], "enabled": True, "who": "any", "only_empty": False, "only_occupied": False, "when": "all", "start": "", "end": "",
+    r = {"id": uuid.uuid4().hex[:8], "enabled": True, "who": "any", "when": "all", "start": "", "end": "",
          "days": "all", "kind": "plugs", "plugs": [], "scene": None, "for_min": 0, "lights_dark": True, "last": None}
     r.update(kw)
     return r
@@ -379,7 +380,7 @@ class PresenceMixin:
         rules: list[dict[str, Any]] = []
         pres = self.store.data["settings"].get("presence") or {}
         if pres.get("home_scene") and self.store.scene(pres["home_scene"]):
-            rules.append(arrive_rule(who="any", only_empty=True, when="dark" if pres.get("home_dark_only") else "all",
+            rules.append(arrive_rule(who="any", when="dark" if pres.get("home_dark_only") else "all",
                                      kind="scene", scene=pres["home_scene"]))
         slots = {"day": ("range", "06:00", "18:00"), "night": ("dark", "", ""), "late": ("range", "00:00", "06:00")}
         for pid, a in (self.store.data["settings"].get("face_actions") or {}).items():
@@ -411,8 +412,6 @@ class PresenceMixin:
             who = r.get("who") or "any"
             if who != "any" and who not in ids:
                 continue
-            if (r.get("only_empty") and not was_empty) or (r.get("only_occupied") and was_empty):
-                continue
             days = r.get("days") or "all"
             if (days == "weekday" and wd >= 5) or (days == "weekend" and wd < 5):
                 continue
@@ -426,18 +425,21 @@ class PresenceMixin:
             if r.get("kind") == "scene":
                 self._presence_scene(r.get("scene"), why)
             else:
-                self._spawn(self._arrive_plugs(r, why))
+                self._spawn(self._arrive_plugs(r, why, occupied=not was_empty))
 
-    async def _arrive_plugs(self, r: dict[str, Any], why: str) -> None:
+    async def _arrive_plugs(self, r: dict[str, Any], why: str, occupied: bool = False) -> None:
         SOURCE.set("auto")
         done = []
         dark = self.is_dark()
+        kept_off = self._just_turned_off() if occupied else set()  # 家裡有人：他剛關掉的不要又打開
         for pid in r.get("plugs") or []:
             plug = self.plugs.get(pid)
             if not plug or not plug.online or plug.is_on:
                 continue  # 已經開著的不動
             if not dark and r.get("lights_dark", True) and self.is_light(plug):
                 continue  # 白天回家不用開燈
+            if pid in kept_off:
+                continue
             try:
                 if r.get("for_min"):
                     await self.set_timer(pid, int(r["for_min"]) * 60)
@@ -451,6 +453,13 @@ class PresenceMixin:
             self._presence_log({"scene": what, "why": why, "n": len(done)})
             self.notifier.send(why, f"已經{what}" + (f"，{r['for_min']} 分鐘後自動關" if r.get("for_min") else ""))
             await self.changed()
+
+    def _just_turned_off(self) -> set[str]:
+        """最近有人手動關掉、到現在還關著的插座（家裡有人時，別人回家不要又把它打開）。"""
+        last: dict[str, tuple[bool, str]] = {}
+        for _ts, pid, on, src in self.store.energy.switches(time.time() - ARRIVE_KEEP_OFF):
+            last[pid] = (on, src)
+        return {pid for pid, (on, src) in last.items() if not on and src in ARRIVE_SOURCES}
 
     def is_light(self, plug: Plug) -> bool:
         """這個插座接的是燈嗎：自己選的圖示，或照名稱猜。"""

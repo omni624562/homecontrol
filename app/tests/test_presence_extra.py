@@ -187,7 +187,7 @@ def _arrive_setup(hub, monkeypatch):
     ran, opened = [], []
     monkeypatch.setattr(hub, "_presence_scene", lambda sid, why: ran.append((sid, why)))
 
-    async def fake_arrive_plugs(r, why):
+    async def fake_arrive_plugs(r, why, occupied=False):
         opened.append((tuple(r["plugs"]), why))
 
     monkeypatch.setattr(hub, "_arrive_plugs", fake_arrive_plugs)
@@ -203,14 +203,14 @@ def test_arrive_rules_by_person_and_empty_house(hub, monkeypatch):
     now, ran, opened = _arrive_setup(hub, monkeypatch)
     monkeypatch.setattr(hub, "is_dark", lambda: True)
     hub.store.data["arrive_rules"] = [
-        arrive_rule(id="a", who="any", only_empty=True, kind="scene", scene="s-home"),
+        arrive_rule(id="a", who="p1", kind="scene", scene="s-home"),
         arrive_rule(id="b", who="p2", kind="plugs", plugs=["fan"], when="dark"),
         arrive_rule(id="c", who="p2", kind="plugs", plugs=["tv"], enabled=False),
     ]
-    hub.router.clients[PIXEL]["seen"] = now  # ERIC 先回家：家裡原本沒人 → 執行 a；b 是 May 的
+    hub.router.clients[PIXEL]["seen"] = now  # ERIC 回家 → 執行 a；b 是 May 的
     hub._router_presence(now)
     assert ran == [("s-home", "ERIC回家了")] and opened == []
-    hub.router.clients[MOM]["seen"] = now  # May 回家：家裡已經有人 → a 不做；b 做；c 暫停
+    hub.router.clients[MOM]["seen"] = now  # May 回家：a 是 ERIC 的不做；b 做；c 暫停
     hub._router_presence(now)
     assert len(ran) == 1 and opened == [(("fan",), "May回家了")]
     assert hub.store.data["arrive_rules"][1]["last"]
@@ -250,7 +250,7 @@ def test_migrate_old_home_settings(hub):
     hub.store.data["settings"]["face_actions"] = {"p1": {"night": "s-n", "notify": True}}
     hub._migrate_arrive_rules()
     rules = hub.store.data["arrive_rules"]
-    assert [(r["who"], r["only_empty"], r["when"], r["scene"]) for r in rules] == [("any", True, "dark", "s-home"), ("p1", False, "dark", "s-n")]
+    assert [(r["who"], r["when"], r["scene"]) for r in rules] == [("any", "dark", "s-home"), ("p1", "dark", "s-n")]
     assert hub.store.data["settings"]["presence"]["home_scene"] is None
     assert hub.store.data["settings"]["face_actions"] == {"p1": {"notify": True}}
 
@@ -485,12 +485,32 @@ def test_arrive_rule_skips_lights_in_daytime(app_module, monkeypatch):
     assert on == ["a", "b"]
 
 
-def test_arrive_rule_only_when_someone_already_home(hub, monkeypatch):
-    from plughub.hub import arrive_rule
+def test_arrive_keeps_off_what_someone_home_just_turned_off(app_module, monkeypatch):
+    """家裡有人、他剛手動關掉餐桌燈：別人回家不要又打開；家裡原本沒人就照開。"""
+    import asyncio
+    from types import SimpleNamespace
+    hub = app_module.hub
+    plugs = {"a": SimpleNamespace(id="a", online=True, is_on=False), "b": SimpleNamespace(id="b", online=True, is_on=False), "c": SimpleNamespace(id="c", online=True, is_on=False)}
+    on = []
 
-    now, ran, opened = _arrive_setup(hub, monkeypatch)
-    hub.store.data["arrive_rules"] = [arrive_rule(id="o", who="any", only_occupied=True, kind="scene", scene="s-home")]
-    hub._arrive(["p1"], was_empty=True)  # 家裡原本沒人：不做
-    assert ran == []
-    hub._arrive(["p2"], was_empty=False)  # 家裡原本有人：做
-    assert len(ran) == 1
+    async def set_power(pid, v):
+        on.append(pid)
+
+    async def changed():
+        pass
+
+    now = time.time()
+    monkeypatch.setattr(hub, "plugs", plugs)
+    monkeypatch.setattr(hub, "name", lambda p: p.id)
+    monkeypatch.setattr(hub.store, "meta", lambda pid: SimpleNamespace(icon=None))
+    monkeypatch.setattr(hub, "set_power", set_power)
+    monkeypatch.setattr(hub, "changed", changed)
+    monkeypatch.setattr(hub.notifier, "send", lambda *a, **k: None)
+    monkeypatch.setattr(hub, "is_dark", lambda: True)
+    # a：有人 10 分鐘前手動關的；b：排程關的；c：手動關了又被開、再被排程關
+    monkeypatch.setattr(hub.store.energy, "switches", lambda since: [(now - 600, "a", False, "app"), (now - 500, "b", False, "auto"), (now - 400, "c", False, "app"), (now - 300, "c", True, "app"), (now - 200, "c", False, "auto")])
+    asyncio.run(hub._arrive_plugs({"plugs": ["a", "b", "c"]}, "May回家了", occupied=True))
+    assert on == ["b", "c"]
+    on.clear()
+    asyncio.run(hub._arrive_plugs({"plugs": ["a", "b", "c"]}, "May回家了", occupied=False))
+    assert on == ["a", "b", "c"]

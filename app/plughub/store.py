@@ -49,7 +49,7 @@ DEFAULTS: dict[str, Any] = {
     "people": [],
     # 動靜自動化：[{"id","room","plug","start":"23:00","end":"06:00"（空白=整天）,"off_min":5,"need_home":true,"enabled":true}]
     "motion_rules": [],
-    # 回家自動開：[{"id","enabled","who":"any"/家人 ID,"only_empty":家裡原本沒人才做,"only_occupied":家裡原本有人才做,"when":"all"/"dark"/"range","start","end",
+    # 回家自動開：[{"id","enabled","who":"any"/家人 ID,"when":"all"/"dark"/"range","start","end",
     #   "days":"all"/"weekday"/"weekend","kind":"plugs"/"scene","plugs":[插座 ID],"scene":情境 ID,"for_min":開多久（0=不自動關）,"last":上次執行}]
     # None = 還沒從舊設定（誰在家的「有人回家時」、認臉的回家動作）搬過來
     "arrive_rules": None,

@@ -496,7 +496,7 @@ class Assistant:
             """已經有的「回家自動開」和「動靜自動化」規則，以及建規則要用的家人 ID、房間 ID（平面圖上的房間）。"""
             ppl, rooms = people_ids(), fp_rooms()
             arrive = [{"id": r["id"], "enabled": r.get("enabled", True), "who": ppl.get(r.get("who"), "任何人") if r.get("who") != "any" else "任何人",
-                       "only_when_home_was_empty": r.get("only_empty"), "when": r.get("when"), "start": r.get("start"), "end": r.get("end"),
+                       "when": r.get("when"), "start": r.get("start"), "end": r.get("end"),
                        "days": r.get("days"), "kind": r.get("kind"), "plugs": [hub.name(hub.plugs[p]) for p in r.get("plugs") or [] if p in hub.plugs],
                        "scene": (hub.store.scene(r["scene"]) or {}).get("name") if r.get("scene") else None, "on_for_minutes": r.get("for_min") or None}
                       for r in hub.store.data.get("arrive_rules") or []]
@@ -513,7 +513,7 @@ class Assistant:
         @beta_async_tool
         async def propose_arrive_rule(who: str = "any", plug_ids: list[str] | None = None, scene_id: str | None = None,
                                       when: str = "all", start: str | None = None, end: str | None = None, days: str = "all",
-                                      only_when_home_was_empty: bool = False, on_for_minutes: int = 0, rule_id: str | None = None,
+                                      on_for_minutes: int = 0, rule_id: str | None = None,
                                       reason: str | None = None) -> str:
             """產生一條「回家自動開」規則草稿（家人的手機連上家裡 Wi-Fi 就算回家），使用者按「建立」才會加上去。
 
@@ -525,7 +525,6 @@ class Assistant:
                 start: 自訂時段開始 "HH:MM"
                 end: 自訂時段結束 "HH:MM"（可以跨午夜）
                 days: "all" 每天、"weekday" 平日、"weekend" 週末
-                only_when_home_was_empty: 只有家裡原本沒人時才做
                 on_for_minutes: 打開幾分鐘後自動關（0 = 不關）
                 rule_id: 要修改的舊規則 ID（get_automations 的 arrive_rules）；新規則不填
                 reason: 為什麼建議這個（從習慣建議時用；一句話附次數）
@@ -552,11 +551,11 @@ class Assistant:
                 kind = "plugs"
             body = {"who": who, "kind": kind, "plugs": plugs, "scene": scene_id if kind == "scene" else None, "when": when,
                     "start": start if when == "range" else "", "end": end if when == "range" else "", "days": days,
-                    "only_empty": bool(only_when_home_was_empty), "for_min": max(0, min(720, int(on_for_minutes or 0))), "enabled": True}
+                    "for_min": max(0, min(720, int(on_for_minutes or 0))), "enabled": True}
             who_t = ppl.get(who, "任何人")
             when_t = {"all": "", "dark": "、天黑後", "range": f"、{start}～{end}"}[when] + {"all": "", "weekday": "（平日）", "weekend": "（週末）"}[days]
             what = f"執行「{hub.store.scene(scene_id)['name']}」" if kind == "scene" else f"打開 {'、'.join(hub.name(hub.plugs[p]) for p in plugs)}"
-            extra = ("，家裡原本沒人才做" if only_when_home_was_empty else "") + (f"，{body['for_min']} 分鐘後關" if body["for_min"] else "")
+            extra = (f"，{body['for_min']} 分鐘後關" if body["for_min"] else "")
             pend("arrive", f"{'修改回家規則：' if old else ''}{who_t}回家{when_t} → {what}{extra}", body=body, rule_id=rule_id,
                  **({"reason": reason[:200]} if reason else {}))
             return "草稿好了，等使用者按「建立」" if not old else "修改草稿好了，等使用者按「修改」"
