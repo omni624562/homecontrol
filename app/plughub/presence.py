@@ -409,9 +409,11 @@ class PresenceMixin:
         if mode == "off":
             async def go() -> None:
                 SOURCE.set("auto")
-                results = await asyncio.gather(*(self.set_power(p.id, False) for p in on), return_exceptions=True)
-                done = sum(1 for r in results if not isinstance(r, Exception))
-                self.notifier.send("沒人在家，已經關掉電器", f"關了 {done} 個：{names}")
+                done, owed = await self.switch_all({p.id: False for p in on}, "沒人在家", cond="away")
+                got = "、".join(self.name(self.plugs[i]) for i in done[:8]) + (f" 等 {len(done)} 個" if len(done) > 8 else "")
+                text = "；".join(x for x in (f"關了 {len(done)} 個：{got}" if done else "", self.owed_text(owed)) if x)
+                if text:  # 都沒有 = 這段時間已經被關掉了
+                    self.notifier.send("沒人在家，已經關掉電器" if done else "沒人在家，有電器沒關成", text, "default" if not owed else "high")
                 await self.changed()
 
             self._spawn(go())
@@ -434,13 +436,12 @@ class PresenceMixin:
 
         async def go() -> None:
             SOURCE.set("auto")
-            results = await asyncio.gather(*(self.set_power(p.id, False) for p in on), return_exceptions=True)
-            failed = [self.name(p) for p, r in zip(on, results) if isinstance(r, Exception)]
-            done = [self.name(p) for p, r in zip(on, results) if not isinstance(r, Exception)]
-            if done:
-                self.notifier.send("沒人在家，已關掉高風險電器", "、".join(done), "high")
-            if failed:
-                self.notifier.send("⚠️ 高風險電器關不掉！", f"{'、'.join(failed)} 沒有回應，請盡快處理", "urgent")
+            ok, owed = await self.switch_all({p.id: False for p in on}, "沒人在家", cond="away")
+            if ok:
+                self.notifier.send("沒人在家，已關掉高風險電器", "、".join(self.name(self.plugs[i]) for i in ok), "high")
+            if owed:
+                failed = "、".join(self.name(self.plugs[i]) for i in owed)
+                self.notifier.send("⚠️ 高風險電器關不掉！", f"{failed} 沒有回應，請盡快處理；它一有回應會自動補關", "urgent")
             await self.changed()
 
         self._spawn(go())
