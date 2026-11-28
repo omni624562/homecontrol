@@ -15,12 +15,12 @@ type Days = "all" | "weekday" | "weekend";
 type Kind = "plugs" | "scene";
 export interface ArriveRule {
   id: string; enabled: boolean; who: string; only_empty: boolean; when: When; start: string; end: string;
-  days: Days; kind: Kind; plugs: string[]; scene: string | null; for_min: number; last: number | null;
+  days: Days; kind: Kind; plugs: string[]; scene: string | null; for_min: number; lights_dark?: boolean; last: number | null;
 }
 interface Suggestion { who: string; name: string; plug: string; plug_name: string; hits: number; n: number }
 interface Data { rules: ArriveRule[]; suggestions: Suggestion[] }
 
-const BLANK: Omit<ArriveRule, "id" | "last"> = { enabled: true, who: "any", only_empty: false, when: "all", start: "17:00", end: "22:00", days: "all", kind: "plugs", plugs: [], scene: null, for_min: 0 };
+const BLANK: Omit<ArriveRule, "id" | "last"> = { enabled: true, who: "any", only_empty: false, when: "all", start: "17:00", end: "22:00", days: "all", kind: "plugs", plugs: [], scene: null, for_min: 0, lights_dark: true };
 const FOR_MIN: [number, string][] = [[0, "不自動關"], [10, "10 分鐘"], [30, "30 分鐘"], [60, "1 小時"], [120, "2 小時"], [180, "3 小時"]];
 
 async function call(method: string, path: string, body?: unknown, ok?: string): Promise<Data | null> {
@@ -141,6 +141,12 @@ export function ArriveRules({ s }: { s: HubState }) {
               <SelectContent>{FOR_MIN.map(([m, t]) => <SelectItem key={m} value={String(m)}>{t}</SelectItem>)}</SelectContent>
             </Select>
           </Field>
+        )}
+        {r.kind === "plugs" && r.when !== "dark" && (
+          <label className="flex items-center gap-3 text-sm">
+            <span className="flex-1">燈只在天黑後開<span className="block text-xs text-muted-foreground">白天回家只開其他電器；名稱或圖示是燈的才算</span></span>
+            <Switch checked={r.lights_dark !== false} onCheckedChange={(v) => set({ lights_dark: v })} aria-label="燈只在天黑後開" />
+          </label>
         )}
         <div className="flex justify-end gap-2">
           <Button variant="ghost" size="sm" onClick={() => setEdit(null)}>取消</Button>

@@ -2876,10 +2876,13 @@ class Hub:
     async def _arrive_plugs(self, r: dict[str, Any], why: str) -> None:
         SOURCE.set("auto")
         done = []
+        dark = self.is_dark()
         for pid in r.get("plugs") or []:
             plug = self.plugs.get(pid)
             if not plug or not plug.online or plug.is_on:
                 continue  # 已經開著的不動
+            if not dark and r.get("lights_dark", True) and self.is_light(plug):
+                continue  # 白天回家不用開燈
             try:
                 if r.get("for_min"):
                     await self.set_timer(pid, int(r["for_min"]) * 60)
@@ -2893,6 +2896,14 @@ class Hub:
             self._presence_log({"scene": what, "why": why, "n": len(done)})
             self.notifier.send(why, f"已經{what}" + (f"，{r['for_min']} 分鐘後自動關" if r.get("for_min") else ""))
             await self.changed()
+
+    def is_light(self, plug: Plug) -> bool:
+        """這個插座接的是燈嗎：自己選的圖示，或照名稱猜。"""
+        icon = self.store.meta(plug.id).icon or ""
+        if icon:
+            return any(k in icon for k in ("lamp", "light", "led", "bulb"))
+        name = self.name(plug).lower()
+        return "燈" in name or "lamp" in name or "light" in name
 
     def arrive_suggestions(self) -> list[dict[str, Any]]:
         """回家習慣：某人回家後 15 分鐘內，常手動打開同一個插座（至少 3 次、超過 4 成），而且還沒有規則管 → 建議做成規則。"""
@@ -3901,7 +3912,7 @@ def merge_same(clients: list[dict[str, Any]], same: dict[str, str]) -> list[dict
 def arrive_rule(**kw: Any) -> dict[str, Any]:
     """一條「回家自動開」規則（沒給的用預設值）。"""
     r = {"id": uuid.uuid4().hex[:8], "enabled": True, "who": "any", "only_empty": False, "when": "all", "start": "", "end": "",
-         "days": "all", "kind": "plugs", "plugs": [], "scene": None, "for_min": 0, "last": None}
+         "days": "all", "kind": "plugs", "plugs": [], "scene": None, "for_min": 0, "lights_dark": True, "last": None}
     r.update(kw)
     return r
 
