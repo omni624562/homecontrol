@@ -213,13 +213,14 @@ class Hub:
         self._cam_started = time.time()  # 剛開機還沒看到人：從這時候開始算「沒人多久」
         self._still: dict[str, dict[str, Any]] = {}
         self._room_seen: tuple[float, str] = (0.0, "")  # 房間的攝影機上次看到人：(時間, 攝影機名稱)
+        self._cam_moved: dict[str, float] = {}  # 房間的攝影機 → 上次看到「會動的人」的時間
         self._room_from: dict[str, dict[Any, tuple[float, float]]] = {}  # 房間的攝影機 → 追蹤中的每個人第一次看到時腳在哪（有沒有在動）
         self._doorcount: dict[str, doorcount.DoorCount] = {}  # 門口的攝影機 → 進出人數的追蹤
         self._door_seen: dict[str, float] = {}  # 門口的攝影機 → 已經算過的追蹤時間
         self._door_live = 0.0  # 門口的攝影機上次有在追蹤的時間
         self._door_out = 0.0  # 上次看到有人從大門出去的時間
         self._door_outs: list[float] = []  # 大門口看到有人出去的時間（一筆一個人）；配給一個手機斷線的家人就拿掉
-        self.store.data.pop("home_count", None)  # 重開期間的進出沒算到：人數重新從「手機在家」的人數開始
+        self.store.data.pop("home_count", None)  # 舊版的「家裡估計幾個人」：不準，拿掉了
         self._sound_seen: dict[str, float] = {}  # 攝影機 → 已經處理過的最後一個聲音事件
         self.activity = Activity(self.store.dir)  # 活動熱圖
         self._act_seen: dict[str, float] = {}  # 很久沒動靜：攝影機 → {last 上次有動, prev 上次的框, alerted}
@@ -1480,10 +1481,9 @@ class Hub:
             self._activity_feed(c, now)
             st = self.cameras.state.get(c["id"], {})
             if c.get("role", "room") == "room":
-                n = self._room_people(c["id"], st)
-                if n:
+                if self._room_people(c["id"], st):
                     self._room_seen = (now, c.get("name") or c["id"])
-                    self._home_count_set(max(self.home_count, n))  # 房間裡同時看到幾個人，家裡至少就有幾個
+                    self._cam_moved[c["id"]] = now
             if c.get("role") == "entry":
                 self._door_feed(c, now)
         self.activity.maybe_save()
@@ -1596,7 +1596,9 @@ class Hub:
             score = round(vision.door_score(sig, refs), 2) if refs else None
             s["score"] = score
             if kind == "door":
-                if score is not None and vision.door_track(s, score) == "open":
+                act = z.get("act") or {}
+                # 沒設通知也沒設情境的門（例如電梯）：一天開幾十次，不寫進紀錄
+                if score is not None and vision.door_track(s, score) == "open" and (act.get("scene") or act.get("notify", "off") != "off"):
                     self._zone_fire(cam, z, f"{z['name']}開了", z.get("act") or {}, now, jpeg)
                 continue
             ev = zonelib.object_track(s, score, float(sig.sum()), now, someone)
@@ -1756,8 +1758,7 @@ class Hub:
         if mode == "always" and not wait:
             self.notifier.send(f"{name}：{label}", at)
         elif mode == "away":
-            people = self.people_report()
-            if people and all(p.get("home") is False for p in people) and key not in self._zone_pending:
+            if self.everyone_out() and key not in self._zone_pending:
                 self._zone_pending[key] = {"t": now, "title": f"⚠️ 沒人在家，{name}：{label}", "msg": at, "entry": entry}
                 if not self._probe_busy:
                     self._probe_busy = True
@@ -2077,7 +2078,7 @@ class Hub:
         people = self.people_report()
         if any(p.get("home") for p in people):
             self._cam_quiet.clear()  # 有家人在家：之後再發生就是新的一件事
-        if not cam.get("alert", True) or not people or any(p.get("home") is not False for p in people):
+        if not cam.get("alert", True) or not self.everyone_out():
             return
         if self._cam_quiet_hit(cam["id"], now):
             return
@@ -2118,6 +2119,10 @@ class Hub:
             if now - seen < camera.ARRIVE_WAIT:
                 continue
             del self._cam_pending[cid]
+            st = self.cameras.state.get(cid, {})
+            if (cam or {}).get("role", "room") == "room" and st.get("engine") == "stream" and self._cam_moved.get(cid, 0) < seen - 5:
+                _LOGGER.info("攝影機 %s 看到的「人」從頭到尾沒動過（多半是東西），不通知", name)
+                continue
             self._cam_alert[cid] = now
             self._cam_quiet[cid] = now
             at = datetime.fromtimestamp(seen).strftime("%H:%M")
@@ -2646,8 +2651,6 @@ class Hub:
                     arrived_ids.append(p["id"])
         for pid in [k for k in self._presence if k not in {p["id"] for p in people}]:
             del self._presence[pid]
-        if "home_count" not in self.store.data:  # 第一次算人數：從「手機在家」的人數開始
-            self._home_count_set(sum(1 for p in people if self._presence[p["id"]]["home"]))
         if not changed:
             return False
         self._dirty = True
@@ -2665,8 +2668,6 @@ class Hub:
             self._away_end(arrived)
         if after:
             self._away_hold = None
-        if arrived_ids or first:  # 手機回來了（或剛開始算）：家裡至少有「手機在家」這麼多人
-            self._home_count_set(max(self.home_count, sum(1 for p in people if self._presence[p["id"]]["home"])))
         if arrived_ids:
             self._arrive(arrived_ids, was_empty=not before)
         return True
@@ -2714,16 +2715,7 @@ class Hub:
             self._dirty = True
         return None
 
-    # ---- 家裡估計幾個人：大門口算進出，手機、房間的攝影機往上修正 ----
-
-    @property
-    def home_count(self) -> int:
-        return int((self.store.data.get("home_count") or {}).get("n") or 0)
-
-    def _home_count_set(self, n: int) -> None:
-        if n != self.home_count or "home_count" not in self.store.data:
-            self.store.data["home_count"] = {"n": max(0, n), "t": round(time.time())}
-            self._dirty = True
+    # ---- 大門口：誰進來、誰出去 ----
 
     @staticmethod
     def _home_door(cam: dict[str, Any]) -> dict[str, Any] | None:
@@ -2761,15 +2753,14 @@ class Hub:
         if not ways:
             return
         n_in, n_out = ways.count("in"), ways.count("out")
-        self._home_count_set(max(0, self.home_count + n_in - n_out))
         if n_out:
             self._door_out = now
             self._door_outs = [t for t in self._door_outs if now - t < 7200] + [now] * n_out
         name = cam.get("name") or cam["id"]
         for way, k in (("in", n_in), ("out", n_out)):
             if k:
-                self._presence_log({"door": way, "k": k, "n": self.home_count, "why": name})
-        _LOGGER.info("%s：進來 %d 人、出去 %d 人，家裡估計 %d 人", name, n_in, n_out, self.home_count)
+                self._presence_log({"door": way, "k": k, "why": name})
+        _LOGGER.info("%s：進來 %d 人、出去 %d 人", name, n_in, n_out)
 
     def home_evidence(self, now: float, since: float) -> str | None:
         """手機都不在 Wi-Fi，但看起來還有人在家的理由（沒有就回 None）：房間的攝影機 15 分鐘內看到人在動。
@@ -2780,9 +2771,14 @@ class Hub:
             return f"{room_cam} {max(1, round((now - room_t) / 60))} 分鐘內看到人"
         return None
 
+    def everyone_out(self) -> bool:
+        """大家都出門了嗎：每個家人都確定不在家，而且沒有「手機都斷線但家裡好像有人」在等。
+        「沒人在家」的通知、警報都問這裡（各判斷各的會一邊修好、另一邊照樣誤報）。"""
+        people = self.people_report()
+        return bool(people) and all(p.get("home") is False for p in people) and self._away_hold is None
+
     def _away_done(self, cfg: dict[str, Any], why: str) -> None:
-        """確定大家都出門了：人數歸零（估計值會慢慢跑掉，這時候最確定），執行「出門」。"""
-        self._home_count_set(0)
+        """確定大家都出門了：執行「出門」。"""
         self._presence_scene(cfg.get("away_scene"), why)
 
     def _away_hold_check(self, now: float) -> None:
