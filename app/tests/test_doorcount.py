@@ -11,7 +11,7 @@ PIXEL = "EA:1C:F4:0C:26:B4"
 
 
 def near(p):
-    return p[0] <= 0.26
+    return "home" if p[0] <= 0.26 else "away"
 
 
 def walk(dc, tid, t0, xs):
@@ -57,6 +57,12 @@ def test_two_people_counted_separately():
     assert [w for w, _ in dc.flush(110, near)] == ["out", "out"]
 
 
+def test_too_short_to_tell_direction():
+    dc = DoorCount()
+    end = walk(dc, 1, 100, [0.9, 0.7, 0.5, 0.3, 0.2, 0.1, 0.1])  # 7 筆：頭尾各 1 秒重疊
+    assert dc.flush(end + 4, near) == []
+
+
 def test_classify_majority():
     assert classify([(0.1, 0.5)] * 3 + [(0.5, 0.5)] * 2, [(0.9, 0.5)] * 5, near) == "out"
     assert classify([], [], near) is None
@@ -70,6 +76,8 @@ def hub(app_module, monkeypatch):
     h.ran = []
     monkeypatch.setattr(h, "_presence_scene", lambda sid, why: h.ran.append(why))
     monkeypatch.setattr(h.cameras, "state", {})
+    h.store.data["settings"].setdefault("presence", {})["door_decides"] = True
+    h.store.data.pop("home_count", None)
     return h
 
 
@@ -165,3 +173,42 @@ def test_count_starts_from_phones_when_presence_restored(hub):
     hub.store.data.pop("home_count", None)
     hub._router_presence(now + 5)
     assert hub.home_count == 1 and "home_count" in hub.store.data
+
+
+# 真的畫面（2026-11-28 重跑錄影得到的腳的位置）：家門在左邊牆面，上緣緊貼著電梯
+REAL = {"id": "outdoor", "name": "大門口", "role": "entry", "zones": [
+    {"id": "door", "kind": "door", "poly": [[0.07, 0.23], [0.13, 0.22], [0.22, 0.59], [0.15, 0.61]]},
+    {"id": "lift", "kind": "door", "poly": [[0.17, 0.18], [0.14, 0.07], [0.27, 0.03], [0.28, 0.29], [0.19, 0.33]]},
+]}
+RIGHT_DOOR = [(0.41, 0.50), (0.40, 0.55), (0.39, 0.60), (0.40, 0.52), (0.41, 0.51)]  # 鄰居的門（樓梯後面）
+INTO_LIFT = [(0.20, 0.28), (0.19, 0.27), (0.18, 0.30), (0.18, 0.29), (0.20, 0.24)]  # 走進電梯：離家門區域只有 3～6%
+OUT_OF_LIFT = [(0.21, 0.36), (0.22, 0.34), (0.23, 0.41), (0.21, 0.33), (0.23, 0.37)]
+AT_HOME_DOOR = [(0.21, 0.56), (0.20, 0.55), (0.19, 0.56), (0.18, 0.53), (0.17, 0.51)]
+
+
+def real(hub, first, last):
+    return classify(first, last, lambda f: hub._door_where(REAL, REAL["zones"][0], f))
+
+
+def test_neighbour_taking_lift_not_counted(hub):
+    assert real(hub, RIGHT_DOOR, INTO_LIFT) is None  # 以前：算成「進來」
+    assert real(hub, INTO_LIFT[::-1], RIGHT_DOOR) is None  # 以前：算成「出去」
+
+
+def test_family_between_lift_and_home_door(hub):
+    assert real(hub, OUT_OF_LIFT, AT_HOME_DOOR) == "in"
+    assert real(hub, AT_HOME_DOOR, INTO_LIFT) == "out"
+    assert real(hub, AT_HOME_DOOR, AT_HOME_DOOR) is None
+
+
+def test_count_only_observes_by_default(hub):
+    """還沒驗證完：人數照記，但不拿來擋「出門」。"""
+    hub.store.data["settings"]["presence"]["door_decides"] = False
+    now = time.time()
+    home(hub, now, ("May", PIXEL), ("ERIC", "AA:BB:CC:00:00:01"))
+    t = feed(hub, now, 7, OUT)
+    assert hub.home_count == 1 and hub.store.data["presence_log"][-1]["door"] == "out"
+    for c in hub.router.clients.values():
+        c["seen"] = t - 700
+    hub._router_presence(t + 1)
+    assert hub.ran == ["大家都出門了"]
