@@ -224,18 +224,30 @@ export function MapCanvas({
   }
 
   const badgeAt: Record<string, { x: number; y: number }> = {};
+  const badgeOut = new Set<string>(); // 名牌放不進房間、擺在外面的房間
+  const badgeText = (p: MapPerson, out: boolean) => `${p.name}${p.sure ? "" : "?"}${out ? `・${p.roomName}` : ""}`;
   if (!edit) {
     for (const r of rooms) {
       const here = people.filter((p) => p.room === r.id);
       if (!here.length) continue;
-      const ws = here.map((p) => textW(p.sure ? p.name : `${p.name}?`, 12 * k) + 24 * k);
-      const total = ws.reduce((a, b) => a + b, 0) + 6 * k * (ws.length - 1), hh = 22 * k, m = 8 * k, top = topEdge(r);
+      const hh = 22 * k, m = 8 * k, top = topEdge(r);
+      let ws = here.map((p) => textW(badgeText(p, false), 12 * k) + 24 * k);
+      let total = ws.reduce((a, b) => a + b, 0) + 6 * k * (ws.length - 1);
       const at = (x: number, y: number): Box => ({ x0: x, y0: y, x1: x + total, y1: y + hh });
-      const b = pickBox(
+      const outside = () => [at(top.right - total, top.y - hh - 4 * k), at(top.left, top.y - hh - 4 * k), at(r.x + r.w / 2 - total / 2, r.y + r.h + 4 * k)];
+      let b = pickBox(
         r,
         [at(top.right - m - total, top.y + m), at(top.left + m, top.y + m), at(r.x + r.w - m - total, r.y + r.h - m - hh), at(r.x + m, r.y + r.h - m - hh), at(r.x + r.w / 2 - total / 2, r.y + r.h / 2 - hh / 2)],
-        [at(top.right - total, top.y - hh - 4 * k), at(top.left, top.y - hh - 4 * k), at(r.x + r.w / 2 - total / 2, r.y + r.h + 4 * k)],
+        outside(),
       );
+      if (b.y1 <= top.y || b.y0 >= r.y + r.h) {
+        // 房間太小放不下、名牌被擠到隔壁房間的位置：寫上是哪一間，才不會看成他在隔壁
+        badgeOut.add(r.id);
+        ws = here.map((p) => textW(badgeText(p, true), 12 * k) + 24 * k);
+        total = ws.reduce((a, b) => a + b, 0) + 6 * k * (ws.length - 1);
+        const [first, ...rest] = outside();
+        b = pickBox(r, [first], rest);
+      }
       taken.push(b);
       let x = b.x0;
       here.forEach((p, i) => {
@@ -602,7 +614,7 @@ export function MapCanvas({
         // 人：名牌放在上面算好的空位（預設區域右上角），同一間有好幾個人就排成一列
         const here = people.filter((p) => p.room === r.id);
         return here.map((p) => {
-          const label = p.sure ? p.name : `${p.name}?`;
+          const label = badgeText(p, badgeOut.has(r.id));
           const w = textW(label, 12 * k) + 24 * k, h = 22 * k;
           const { x, y: by } = badgeAt[p.id];
           const top = { y: by - 8 * k };
